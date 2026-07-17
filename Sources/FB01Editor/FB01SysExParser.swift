@@ -57,6 +57,7 @@ public enum FB01SysExMessage: Equatable, Sendable {
     case configurationDump(systemChannel: Int, number: Int, packet: FB01SysExPacket)
     case allConfigurationsDump(systemChannel: Int, packets: [FB01SysExPacket])
     case voiceBankDump(systemChannel: Int, bank: Int?, packets: [FB01SysExPacket])
+    case voiceRAMDumpData(systemChannel: Int, byteCount: Int, data: [UInt8], checksum: UInt8)
     case voiceBankDumpData(systemChannel: Int, bank: Int, byteCount: Int, data: [UInt8], checksum: UInt8)
     case unitIDDump(systemChannel: Int, packet: FB01SysExPacket)
     case raw([UInt8])
@@ -97,6 +98,11 @@ public enum FB01SysExMessage: Equatable, Sendable {
                 let bankByte = bank.map(UInt8.init) ?? 0x00
                 let packetBytes = try packets.flatMap { try $0.encodedBytes }
                 return envelope([FB01.fb01Substatus, UInt8(systemChannel), 0x0C, 0x00, 0x00, bankByte] + packetBytes)
+            case let .voiceRAMDumpData(systemChannel, byteCount, data, checksum):
+                let count = try FB01.byteCountPair(for: byteCount)
+                let data = try data.map { try FB01.validateSevenBit($0) }
+                let checksum = try FB01.validateSevenBit(checksum)
+                return envelope([UInt8(systemChannel), 0x0C, count.high, count.low] + data + [checksum])
             case let .voiceBankDumpData(systemChannel, bank, byteCount, data, checksum):
                 let count = try FB01.byteCountPair(for: byteCount)
                 let data = try data.map { try FB01.validateSevenBit($0) }
@@ -145,7 +151,7 @@ public enum FB01SysExMessage: Equatable, Sendable {
     private static func parseCommand(body: [UInt8]) throws -> FB01Command? {
         guard !body.isEmpty else { return nil }
 
-        if body.count == 3, (0x20...0x2F).contains(body[0]), body[1] == 0x0C {
+        if body.count == 2, (0x20...0x2F).contains(body[0]), body[1] == 0x0C {
             return .requestVoiceRAM1(systemChannel: Int(body[0] & 0x0F))
         }
 
@@ -187,6 +193,14 @@ public enum FB01SysExMessage: Equatable, Sendable {
     }
 
     private static func parseDump(body: [UInt8]) throws -> FB01SysExMessage? {
+        if body.count >= 7, (0x00...0x0F).contains(body[0]), body[1] == 0x0C {
+            let systemChannel = Int(body[0] & 0x0F)
+            let count = try FB01.packetByteCount(high: body[2], low: body[3])
+            let data = try body[4..<body.index(before: body.endIndex)].map { try FB01.validateSevenBit($0) }
+            let checksum = try FB01.validateSevenBit(body[body.index(before: body.endIndex)])
+            return .voiceRAMDumpData(systemChannel: systemChannel, byteCount: count, data: data, checksum: checksum)
+        }
+
         guard body.count >= 8, body[0] == FB01.fb01Substatus else { return nil }
 
         let systemChannel = Int(body[1] & 0x0F)

@@ -10,6 +10,14 @@ import Testing
     #expect(try message.bytes == bytes)
 }
 
+@Test func parsesGeneratedVoiceRAMRequestBytes() throws {
+    let bytes = try FB01Command.requestVoiceRAM1(systemChannel: 2).bytes
+    let message = try FB01SysExMessage(bytes: bytes)
+
+    #expect(message == .command(.requestVoiceRAM1(systemChannel: 2)))
+    #expect(try message.bytes == bytes)
+}
+
 @Test func parsesSingleInstrumentVoiceDump() throws {
     let rawVoice = Array(0..<64).map(UInt8.init)
     let packet = try FB01SysExPacket(payload: FB01.nibbleEncode(rawVoice))
@@ -222,6 +230,33 @@ import Testing
         "Clarine",
         "Glocken",
     ])
+}
+
+@Test func parsesCapturedVoiceRAMFixture() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-ram1",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+    #expect(artifact.kind == .voiceBank)
+    #expect(artifact.messages.count == 1)
+
+    guard case let .voiceRAMDumpData(systemChannel, byteCount, data, checksum) = artifact.messages[0] else {
+        Issue.record("Expected captured voice RAM dump")
+        return
+    }
+
+    #expect(systemChannel == 0)
+    #expect(byteCount == 64)
+    #expect(data.count == 6_352)
+    #expect(checksum == 0x5C)
+    #expect(try artifact.sysexBytes == Array(Data(contentsOf: fixtureURL)))
+
+    let voiceBank = try FB01VoiceBankData(bank: 0, data: data)
+    #expect(voiceBank.voices.count == 48)
 }
 
 @Test func preservesCapturedVoiceBank7ResponseAsRawSysEx() throws {

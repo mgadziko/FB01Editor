@@ -205,6 +205,8 @@ struct MessageView: View {
                 ConfigurationView(systemChannel: systemChannel, packet: packet)
             case let .configurationDump(systemChannel, number, packet):
                 ConfigurationView(systemChannel: systemChannel, packet: packet, label: "Stored Configuration \(number)")
+            case let .voiceRAMDumpData(systemChannel, byteCount, data, checksum):
+                VoiceBankView(systemChannel: systemChannel, bank: 0, byteCount: byteCount, data: data, checksum: checksum, label: "Voice RAM 1")
             case let .voiceBankDumpData(systemChannel, bank, byteCount, data, checksum):
                 VoiceBankView(systemChannel: systemChannel, bank: bank, byteCount: byteCount, data: data, checksum: checksum)
             default:
@@ -265,6 +267,7 @@ struct VoiceBankView: View {
     var byteCount: Int
     var data: [UInt8]
     var checksum: UInt8
+    var label: String = "Voice Bank"
 
     var body: some View {
         Group {
@@ -272,7 +275,7 @@ struct VoiceBankView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     SummaryPanel(rows: [
                         KeyValueRow("Type", "Voice Bank"),
-                        KeyValueRow("Bank", "\(voiceBank.bank)"),
+                        KeyValueRow("Bank", label == "Voice Bank" ? "\(voiceBank.bank)" : label),
                         KeyValueRow("System Channel", "\(systemChannel + 1)"),
                         KeyValueRow("Byte Count", "\(byteCount)"),
                         KeyValueRow("Data Bytes", "\(data.count)"),
@@ -283,7 +286,7 @@ struct VoiceBankView: View {
                 }
             } else {
                 SummaryPanel(rows: [
-                    KeyValueRow("Type", "Voice Bank"),
+                    KeyValueRow("Type", label),
                     KeyValueRow("Error", "Invalid voice bank payload"),
                 ])
             }
@@ -423,7 +426,7 @@ private extension FB01SysExMessage {
         case .currentConfigurationDump: "Current Configuration Dump"
         case .configurationDump: "Stored Configuration Dump"
         case .allConfigurationsDump: "All Configurations Dump"
-        case .voiceBankDump, .voiceBankDumpData: "Voice Bank Dump"
+        case .voiceBankDump, .voiceRAMDumpData, .voiceBankDumpData: "Voice Bank Dump"
         case .unitIDDump: "Unit ID Dump"
         case .raw: "Raw SysEx"
         }

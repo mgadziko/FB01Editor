@@ -88,7 +88,9 @@ Observed hardware behavior:
 - Numbered voice-bank requests use bank numbers `1...7` per the FB-01 service manual.
 - Banks 1 through 6 returned 6363-byte dumps with the working interface.
 - Bank 7 returned the short response `F0 43 60 04 F7`, which is preserved as a raw SysEx fixture.
+- The separate `voice-ram1` request returned a 6360-byte dump. This appears to be the user/RAM bank path described separately from numbered voice-bank requests, and is preserved as `voice-ram1.syx`.
 - `Tests/FB01EditorTests/Fixtures/voice-bank-1.syx` through `voice-bank-6.syx` are captured numbered voice-bank fixtures. They are recognized, exact-byte round-tripped, and decoded into 48 voice entries each.
+- `Tests/FB01EditorTests/Fixtures/voice-ram1.syx` is recognized as voice RAM dump data and decoded through the same 48-voice table model.
 - `FB01EditorApp` displays a voice table when a captured voice-bank dump is opened.
 
 ## Recovered Context

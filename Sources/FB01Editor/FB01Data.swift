@@ -34,7 +34,11 @@ public struct FB01VoiceBankData: Equatable, Sendable {
     public var data: [UInt8]
 
     public init(bank: Int, data: [UInt8]) throws {
-        self.bank = Int(try FB01.validateVoiceBank(bank))
+        guard (0...7).contains(bank) else {
+            throw FB01SysExError.valueOutOfRange(name: "voiceBank", value: bank, range: 0...7)
+        }
+
+        self.bank = bank
         self.data = try data.map { try FB01.validateSevenBit($0) }
 
         let lastNameByteIndex = Self.nameNibbleOffset

@@ -61,7 +61,7 @@ public struct FB01Artifact: Equatable, Sendable {
         switch message {
         case .instrumentVoiceDump:
             return .singleVoice
-        case .voiceBankDump, .voiceBankDumpData:
+        case .voiceBankDump, .voiceRAMDumpData, .voiceBankDumpData:
             return .voiceBank
         case .currentConfigurationDump:
             return .currentConfiguration
