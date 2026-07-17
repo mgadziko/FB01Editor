@@ -145,7 +145,36 @@ import Testing
     #expect(instrument0.pmdControllerAssignment == .modulationWheel)
 }
 
-@Test func parsesCapturedVoiceBankFixture() throws {
+@Test func parsesCapturedVoiceBankFixtures() throws {
+    for bank in 1...6 {
+        let fixtureURL = Bundle.module.url(
+            forResource: "voice-bank-\(bank)",
+            withExtension: "syx",
+            subdirectory: "Fixtures"
+        )!
+
+        let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+        #expect(artifact.kind == .voiceBank)
+        #expect(artifact.messages.count == 1)
+
+        guard case let .voiceBankDumpData(systemChannel, parsedBank, byteCount, data, _) = artifact.messages[0] else {
+            Issue.record("Expected captured voice bank dump")
+            continue
+        }
+
+        #expect(systemChannel == 0)
+        #expect(parsedBank == bank)
+        #expect(byteCount == 64)
+        #expect(data.count == 6_352)
+        #expect(try artifact.sysexBytes == Array(Data(contentsOf: fixtureURL)))
+
+        let voiceBank = try FB01VoiceBankData(bank: parsedBank, data: data)
+        #expect(voiceBank.voices.count == 48)
+    }
+}
+
+@Test func decodesCapturedVoiceBankNames() throws {
     let fixtureURL = Bundle.module.url(
         forResource: "voice-bank-2",
         withExtension: "syx",
@@ -193,4 +222,25 @@ import Testing
         "Clarine",
         "Glocken",
     ])
+}
+
+@Test func preservesCapturedVoiceBank7ResponseAsRawSysEx() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-7-response",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+    #expect(artifact.kind == .rawSysEx)
+    #expect(artifact.messages.count == 1)
+
+    guard case let .raw(bytes) = artifact.messages[0] else {
+        Issue.record("Expected raw SysEx response")
+        return
+    }
+
+    #expect(bytes == [0xF0, 0x43, 0x60, 0x04, 0xF7])
+    #expect(try artifact.sysexBytes == bytes)
 }

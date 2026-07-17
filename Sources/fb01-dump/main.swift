@@ -497,7 +497,7 @@ func printUsage() {
     print("""
     fb01-dump list
     fb01-dump listen [--source <index-or-name>] [--output <file.syx>] [--count <n>] [--timeout <seconds>]
-    fb01-dump request voice-bank --bank <0-6> [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
+    fb01-dump request voice-bank --bank <1-7> [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
     fb01-dump request voice-ram1 [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
     fb01-dump request current-configuration [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
     fb01-dump request unit-id [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]

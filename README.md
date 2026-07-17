@@ -80,14 +80,15 @@ swift run fb01-dump request current-configuration --source 0 --destination 0 --o
 swift run fb01-dump request voice-bank --bank 2 --source 0 --destination 0 --output voice-bank-2.syx
 ```
 
-If manual front-panel dumps work but computer-originated requests time out, verify the MIDI Out to FB-01 MIDI In cable direction, the FB-01 system channel, and whether the interface is passing outbound SysEx.
+If manual front-panel dumps work but computer-originated requests time out, verify the MIDI Out to FB-01 MIDI In cable direction, the FB-01 system channel, and whether the interface is passing outbound SysEx. The tested generic `USB Midi Cable` interface was unreliable for Mac-originated SysEx requests; a different interface enumerating as `USB MIDI Device` handled note bursts, current-configuration requests, and voice-bank requests successfully.
 
 Observed hardware behavior:
 
-- Current configuration requests work with the tested USB MIDI cable.
+- Current configuration requests return 171-byte dumps with the working `USB MIDI Device` interface.
 - Numbered voice-bank requests use bank numbers `1...7` per the FB-01 service manual.
-- Banks 2 through 6 returned 6363-byte dumps during testing; bank 1 timed out and bank 7 returned a short 5-byte response.
-- `Tests/FB01EditorTests/Fixtures/voice-bank-2.syx` is the first captured numbered voice-bank fixture. It is recognized, exact-byte round-tripped, and decoded into 48 voice names.
+- Banks 1 through 6 returned 6363-byte dumps with the working interface.
+- Bank 7 returned the short response `F0 43 60 04 F7`, which is preserved as a raw SysEx fixture.
+- `Tests/FB01EditorTests/Fixtures/voice-bank-1.syx` through `voice-bank-6.syx` are captured numbered voice-bank fixtures. They are recognized, exact-byte round-tripped, and decoded into 48 voice entries each.
 - `FB01EditorApp` displays a voice table when a captured voice-bank dump is opened.
 
 ## Recovered Context
