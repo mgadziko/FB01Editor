@@ -61,6 +61,15 @@ swift run FB01EditorApp
 
 It opens `.syx` files, shows artifact/message metadata, displays decoded current configuration fields, displays voice banks in a selectable browser with a read-only voice detail panel, exports the original SysEx bytes, and exports the selected voice as a standalone single-voice SysEx file. It does not send MIDI or write to the FB-01.
 
+To build a launchable local `.app` bundle:
+
+```sh
+./scripts/build-macos-app.sh
+open ".build/release/FB01 Editor.app"
+```
+
+The script creates an ad-hoc signed development bundle at `.build/release/FB01 Editor.app`.
+
 ## MIDI Capture And Safe Dump Requests
 
 The `fb01-dump` executable is the first CoreMIDI tool. Manual capture is receive-only:
