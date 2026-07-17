@@ -5,19 +5,39 @@ import PackageDescription
 
 let package = Package(
     name: "FB01Editor",
+    platforms: [
+        .macOS(.v14),
+    ],
     products: [
         .library(
             name: "FB01Editor",
             targets: ["FB01Editor"]
+        ),
+        .executable(
+            name: "fb01-dump",
+            targets: ["fb01-dump"]
+        ),
+        .executable(
+            name: "FB01EditorApp",
+            targets: ["FB01EditorApp"]
         ),
     ],
     targets: [
         .target(
             name: "FB01Editor"
         ),
+        .executableTarget(
+            name: "fb01-dump",
+            dependencies: ["FB01Editor"]
+        ),
+        .executableTarget(
+            name: "FB01EditorApp",
+            dependencies: ["FB01Editor"]
+        ),
         .testTarget(
             name: "FB01EditorTests",
-            dependencies: ["FB01Editor"]
+            dependencies: ["FB01Editor"],
+            resources: [.copy("Fixtures")]
         ),
     ],
     swiftLanguageModes: [.v6]

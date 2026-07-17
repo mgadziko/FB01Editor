@@ -94,3 +94,53 @@ import Testing
         _ = try FB01SysExMessage(bytes: bytes)
     }
 }
+
+@Test func parsesCapturedCurrentConfigurationFixture() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "current-configuration-single",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+    #expect(artifact.kind == .currentConfiguration)
+    #expect(artifact.messages.count == 1)
+
+    guard case let .currentConfigurationDump(systemChannel, packet) = artifact.messages[0] else {
+        Issue.record("Expected current configuration dump")
+        return
+    }
+
+    let configuration = try FB01ConfigurationData(bytes: packet.payload)
+    #expect(systemChannel == 0)
+    #expect(packet.payload.count == 160)
+    #expect(packet.checksum == 0x55)
+    #expect(configuration.name == "single")
+    #expect(configuration.combineModeEnabled == false)
+    #expect(configuration.lfoSpeed == 102)
+    #expect(configuration.amplitudeModulationDepth == 4)
+    #expect(configuration.pitchModulationDepth == 33)
+    #expect(configuration.lfoWaveform == 2)
+    #expect(configuration.keyCodeReceiveMode == .all)
+
+    let instruments = configuration.instruments
+    #expect(instruments.count == 8)
+    #expect(instruments.map(\.midiChannel) == Array(0...7))
+    #expect(instruments.map(\.noteCount) == [8, 0, 0, 0, 0, 0, 0, 0])
+
+    let instrument0 = instruments[0]
+    #expect(instrument0.lowKeyLimit == 0)
+    #expect(instrument0.highKeyLimit == 127)
+    #expect(instrument0.voiceBank == 2)
+    #expect(instrument0.voiceNumber == 5)
+    #expect(instrument0.detune == 0)
+    #expect(instrument0.octaveTranspose == 0)
+    #expect(instrument0.outputLevel == 127)
+    #expect(instrument0.pan == 64)
+    #expect(instrument0.lfoEnabled == false)
+    #expect(instrument0.portamentoTime == 0)
+    #expect(instrument0.pitchBendRange == 5)
+    #expect(instrument0.monoPolyMode == .poly)
+    #expect(instrument0.pmdControllerAssignment == .modulationWheel)
+}

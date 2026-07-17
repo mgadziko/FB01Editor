@@ -39,3 +39,39 @@ The core is shaped around separately saveable artifacts:
 - parse checksum-protected dump packets
 - classify dump messages into artifact kinds for future file save/open workflows
 - round-trip artifacts through `.syx` files without requiring connected hardware
+
+## Configuration Model Coverage
+
+The first real FB-01 fixture is a captured current configuration named `single`.
+`FB01ConfigurationData` currently decodes:
+
+- configuration name
+- combine mode
+- shared LFO speed, AMD, PMD, waveform, and key-code receive mode
+- all 8 instrument definition blocks
+- per-instrument note allocation, MIDI channel, key limits, voice bank/number, detune, octave transpose, output level, pan, LFO enable, portamento, pitch bend range, mono/poly mode, and PMD controller assignment
+
+## macOS App Shell
+
+`FB01EditorApp` is a read-only SwiftUI librarian shell:
+
+```sh
+swift run FB01EditorApp
+```
+
+It opens `.syx` files, shows artifact/message metadata, displays decoded current configuration fields, and exports the original SysEx bytes. It does not send MIDI or write to the FB-01.
+
+## Receive-Only MIDI Capture
+
+The `fb01-dump` executable is the first CoreMIDI tool. It is intentionally receive-only:
+
+```sh
+swift run fb01-dump list
+swift run fb01-dump listen --source "USB Midi Cable" --output fb01-dump.syx --count 1
+```
+
+Use the FB-01 front panel to send a bulk dump while `listen` is running. The tool saves complete SysEx messages, then classifies them with the library parser. Request/send/write-back features should wait until captured dumps are verified.
+
+## Recovered Context
+
+`fb01editor-context.json` is a handoff file from the original Codex task. It records the recovered project context, the SysEx research summary, the initial commit boundary, and the planned hardware-safe capture milestone.

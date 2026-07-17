@@ -1,0 +1,202 @@
+{
+  "schema": "codex_context_handoff_v1",
+  "createdAtLocal": "2026-07-16",
+  "purpose": "Portable handoff context for continuing the Yamaha FB-01 editor work after Codex sidebar navigation opened a blank project context.",
+  "originalTask": {
+    "title": "Research FB-01 SysEx",
+    "threadId": "019f6e42-e584-7040-9e8e-fc87a06a1ce0",
+    "hostId": "local",
+    "recordedCwd": "/Users/ricercar/Documents/GitHub",
+    "sidebarProjectLabel": "Coding Creations",
+    "note": "The old task is still readable through the task API, but opening it from the app appeared to route to a fresh/blank project composer. The actual repo is nested under the recorded cwd."
+  },
+  "repository": {
+    "path": "/Users/ricercar/Documents/GitHub/FB01Editor",
+    "currentName": "FB01Editor",
+    "previousName": "FB01-editor",
+    "language": "Swift",
+    "packageName": "FB01Editor",
+    "branch": "main",
+    "headCommit": {
+      "shortHash": "be51aa5",
+      "subject": "Initial FB-01 SysEx core"
+    },
+    "statusAtHandoff": "clean",
+    "knownFiles": [
+      "Package.swift",
+      "README.md",
+      "Sources/FB01Editor/FB01Artifact.swift",
+      "Sources/FB01Editor/FB01Data.swift",
+      "Sources/FB01Editor/FB01SysEx.swift",
+      "Sources/FB01Editor/FB01SysExParser.swift",
+      "Tests/FB01EditorTests/FB01SysExParserTests.swift",
+      "Tests/FB01EditorTests/FB01SysExTests.swift"
+    ]
+  },
+  "researchSummary": {
+    "feasibility": "A Yamaha FB-01 voice/config editor for macOS is feasible. The device exposes SysEx parameter changes, dump requests, bulk dumps, store commands, and unit/config/voice data flows that are enough for an editor/librarian.",
+    "transportPlan": "Use CoreMIDI on macOS after the offline SysEx model is reliable.",
+    "importantSafetyNotes": [
+      "Start with receive/capture and parsing before any write/send features.",
+      "Handle Yamaha checksums and voice-data nibble packing/unpacking correctly.",
+      "Treat memory-protect, throttled SysEx sending, explicit slot selection, compare/confirm, and read-back-after-write as required for safe writes.",
+      "The FB-01 has an 8-instrument configuration model, not just a single-patch workflow."
+    ],
+    "sourceMemory": [
+      "Yamaha FB-01 owner manual/manual-library references",
+      "Manualzz OCR of the owner manual",
+      "VOGONS service-manual-derived command map by Scali"
+    ]
+  },
+  "sysexCommandMapFromResearch": {
+    "placeholders": {
+      "ss": "system channel 0-15",
+      "nn": "MIDI channel 0-15",
+      "iii": "instrument 0-7",
+      "pp": "parameter number",
+      "dd": "7-bit data byte",
+      "lo_hi": "split 8-bit value as two 4-bit MIDI-safe nibbles",
+      "xx": "bank/config number",
+      "ee": "checksum"
+    },
+    "instrumentMessages": [
+      {
+        "purpose": "Instrument parameter change, 1-byte",
+        "pattern": "F0 43 75 0s 18+iii pp dd F7"
+      },
+      {
+        "purpose": "Instrument/voice parameter change, 2-byte",
+        "pattern": "F0 43 75 0s 18+iii 40+pp lo hi F7"
+      },
+      {
+        "purpose": "Request/dump current instrument voice data",
+        "pattern": "F0 43 75 0s 28+iii 40 00 F7"
+      },
+      {
+        "purpose": "Store current instrument voice into voice RAM",
+        "pattern": "F0 43 75 0s 28+iii 00 vv F7"
+      }
+    ],
+    "systemAndConfigurationMessages": [
+      {
+        "purpose": "System parameter change",
+        "pattern": "F0 43 75 0s 10 pp dd F7"
+      },
+      {
+        "purpose": "Voice RAM 1 bulk dump request",
+        "pattern": "F0 43 2s 0C F7"
+      },
+      {
+        "purpose": "Each voice bank bulk dump request",
+        "pattern": "F0 43 75 0s 20 00 xx F7"
+      },
+      {
+        "purpose": "Current configuration dump request",
+        "pattern": "F0 43 75 0s 20 01 00 F7"
+      },
+      {
+        "purpose": "Configuration memory dump request",
+        "pattern": "F0 43 75 0s 20 02 xx F7"
+      },
+      {
+        "purpose": "All 16 configurations dump request",
+        "pattern": "F0 43 75 0s 20 03 00 F7"
+      },
+      {
+        "purpose": "Unit ID dump request",
+        "pattern": "F0 43 75 0s 20 04 00 F7"
+      },
+      {
+        "purpose": "Store current config",
+        "pattern": "F0 43 75 0s 20 40 xx F7"
+      }
+    ],
+    "bulkDataMessages": [
+      {
+        "purpose": "48-voice RAM bulk data",
+        "generalForm": "F0 43 ... 0C ... data ... checksum F7"
+      },
+      {
+        "purpose": "48 voices to specific bank",
+        "generalForm": "F0 43 75 0s 0C 00 00 xx ... data ... checksum F7"
+      },
+      {
+        "purpose": "Current configuration data",
+        "generalForm": "F0 43 75 0s 00 01 00 ... data ... checksum F7"
+      },
+      {
+        "purpose": "One configuration memory",
+        "generalForm": "F0 43 75 0s 00 02 xx ... data ... checksum F7"
+      },
+      {
+        "purpose": "All configuration memory",
+        "generalForm": "F0 43 75 0s 00 03 00 ... data ... checksum F7"
+      },
+      {
+        "purpose": "One instrument voice bulk data",
+        "generalForm": "F0 43 75 0s 08+iii 00 00 ... data ... checksum F7"
+      }
+    ],
+    "midiChannelParameterMessages": [
+      {
+        "purpose": "Parameter change by MIDI channel, 1-byte",
+        "pattern": "F0 43 10+nn 15 pp dd F7"
+      },
+      {
+        "purpose": "Parameter change by MIDI channel, 2-byte",
+        "pattern": "F0 43 10+nn 15 40+pp lo hi F7"
+      }
+    ],
+    "encodingNotes": [
+      "Voice data uses two-byte nibble pairs because some internal voice bytes use the high bit.",
+      "Configuration data can be sent as normal 7-bit bytes because its format does not set the high bit.",
+      "One parser ambiguity encountered: byte 0C can mean voice bank bulk or instrument 4 voice depending on the rest of the frame; current code prefers the bank shape when the extra bank byte and packet stream are present."
+    ]
+  },
+  "implementedMilestones": [
+    {
+      "milestone": "Initial offline core",
+      "summary": "Created a Swift package with typed FB-01 SysEx command builders, Yamaha checksum helpers, MIDI-safe nibble packing/unpacking, early voice/config/bulk packet containers, and byte-level tests.",
+      "verification": "swift test passed with 7 tests before the repo rename."
+    },
+    {
+      "milestone": "Repo rename",
+      "summary": "Renamed /Users/ricercar/Documents/GitHub/FB01-editor to /Users/ricercar/Documents/GitHub/FB01Editor and normalized Package.swift package name to FB01Editor.",
+      "verification": "Cleared stale .build cache and swift test passed with 7 tests from the new path."
+    },
+    {
+      "milestone": "Incoming parser and separate artifacts",
+      "summary": "Added incoming SysEx parsing/classification, file-level artifact modeling, and tests for separate voice-bank/config artifacts plus .syx file round-trip.",
+      "verification": "swift test passed with 13 tests."
+    },
+    {
+      "milestone": "Initial commit",
+      "summary": "Committed the offline core baseline before hardware testing.",
+      "verification": "Commit be51aa5 Initial FB-01 SysEx core; worktree clean; swift test passed with 13 tests immediately before commit."
+    }
+  ],
+  "designDecisions": [
+    "Build an offline editor/librarian core before requiring the FB-01 hardware.",
+    "Treat single voices, voice banks, current configurations, stored configurations, configuration sets, unit ID dumps, and raw SysEx as distinct artifact kinds.",
+    "Plan file handling so voice banks and configurations can be saved as separate files, avoiding a monolithic document model.",
+    "Use a layered parser: reliable SysEx splitter/classifier first, then packet decoding for dump families that can be safely identified.",
+    "Delay write-back until read/capture/import/export are trustworthy."
+  ],
+  "nextRecommendedStep": {
+    "title": "Add a hardware-safe CoreMIDI capture path",
+    "summary": "Add a small CoreMIDI layer and command-line executable target, tentatively fb01-dump, before adding any write/send features.",
+    "tasks": [
+      "Add a CoreMIDI wrapper that lists MIDI sources and destinations.",
+      "Add an executable target, likely fb01-dump.",
+      "Implement device listing.",
+      "Implement listening for incoming SysEx.",
+      "Save received SysEx messages as .syx files.",
+      "Parse/classify received dumps using the existing FB01Editor core.",
+      "Test by using the FB-01 front panel to manually send a bulk dump into the Mac.",
+      "Only after capture works, add request commands from the Mac.",
+      "Only after read-back is trustworthy, add guarded write-back."
+    ],
+    "suggestedCommitAfter": "Add CoreMIDI SysEx capture tool"
+  },
+  "importPrompt": "Continue the Yamaha FB-01 editor work in /Users/ricercar/Documents/GitHub/FB01Editor. Use this JSON as recovered context. The repo is a Swift package on main at commit be51aa5 (Initial FB-01 SysEx core), with a clean worktree and 13 passing tests at the last verified point. The next step is to add a hardware-safe CoreMIDI capture path: a CLI target like fb01-dump that can list MIDI devices, listen for incoming SysEx, save .syx files, and parse/classify dumps using the existing core. Do not add write/send features until receive/capture and read-back are trustworthy."
+}
