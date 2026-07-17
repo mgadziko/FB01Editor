@@ -101,7 +101,7 @@ public enum FB01 {
         return (UInt8(count / 128), UInt8(count % 128))
     }
 
-    private static func validate(_ value: Int, name: String, range: ClosedRange<Int>) throws -> UInt8 {
+    static func validate(_ value: Int, name: String, range: ClosedRange<Int>) throws -> UInt8 {
         guard range.contains(value) else {
             throw FB01SysExError.valueOutOfRange(name: name, value: value, range: range)
         }

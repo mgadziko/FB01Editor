@@ -53,13 +53,13 @@ The first real FB-01 fixture is a captured current configuration named `single`.
 
 ## macOS App Shell
 
-`FB01EditorApp` is a read-only SwiftUI librarian shell:
+`FB01EditorApp` is a safe SwiftUI librarian/editor shell:
 
 ```sh
 swift run FB01EditorApp
 ```
 
-It opens one or more `.syx` files from the File menu, shows them in a source library, displays decoded current configuration fields, displays voice banks in a selectable browser with a read-only voice detail panel, saves the selected source's original SysEx bytes from the File menu, and exports the selected voice as a standalone single-voice SysEx file. It can also fetch the current configuration, Banks 1-7, and Voice RAM 1 from the connected FB-01 into the same read-only source browser, with a choice to replace or append when sources are already open. Sources can be renamed, removed, or cleared locally. It does not write to the FB-01.
+It opens one or more `.syx` files from the File menu, shows them in a source library, displays decoded current configuration fields, displays voice banks in a selectable browser with a local voice editor, saves the selected source's original SysEx bytes from the File menu, and exports the selected voice as a standalone single-voice SysEx file. The first local editor controls cover voice name, algorithm, feedback, and LFO speed. It can also fetch the current configuration, Banks 1-7, and Voice RAM 1 from the connected FB-01 into the same source browser, with a choice to replace or append when sources are already open. Sources can be renamed, removed, or cleared locally. It does not write to the FB-01.
 
 To build a launchable local `.app` bundle:
 
@@ -101,10 +101,10 @@ Observed hardware behavior:
 - The separate `voice-ram1` request returned a 6360-byte dump. This appears to be the user/RAM bank path described separately from numbered voice-bank requests, and is preserved as `voice-ram1.syx`.
 - `Tests/FB01EditorTests/Fixtures/voice-bank-1.syx` through `voice-bank-7.syx` are captured numbered voice-bank fixtures. They are recognized, exact-byte round-tripped, and decoded into 48 voice entries each.
 - `Tests/FB01EditorTests/Fixtures/voice-ram1.syx` is recognized as voice RAM dump data and decoded through the same 48-voice table model.
-- `FB01EditorApp` displays a selectable voice browser and read-only voice detail panel when a captured voice-bank dump is opened.
+- `FB01EditorApp` displays a selectable voice browser and local voice editor when a captured voice-bank dump is opened.
 - `FB01EditorApp` can open multiple `.syx` files at once and adds each opened bank, configuration, or single voice to the source library.
 - Source-library entries can be renamed, removed individually, or cleared from the app without touching disk files or the FB-01.
-- The selected voice can be exported as a standalone single-voice SysEx artifact without writing anything to the FB-01.
+- The selected voice can be edited locally and exported as a standalone single-voice SysEx artifact without writing anything to the FB-01.
 - `FB01EditorApp` has a manual `Fetch Banks` action that requests current configuration, Banks 1-7, and Voice RAM 1, then shows the fetched dumps in a source sidebar. Source and destination MIDI endpoints are selectable from the toolbar and remembered between launches. This is still read-only and does not perform any store/write-back commands.
 
 ## Recovered Context

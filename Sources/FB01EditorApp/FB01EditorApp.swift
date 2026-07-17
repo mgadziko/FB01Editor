@@ -902,17 +902,34 @@ struct VoiceBankBrowser: View {
 struct VoiceDetailView: View {
     var systemChannel: Int
     var summary: FB01VoiceSummary
+    @State private var editableVoice: FB01VoiceData
+    @State private var nameText: String
+    @State private var editError: String?
     @State private var exportError: String?
+
+    init(systemChannel: Int, summary: FB01VoiceSummary) {
+        self.systemChannel = systemChannel
+        self.summary = summary
+        _editableVoice = State(initialValue: summary.voice)
+        _nameText = State(initialValue: summary.voice.name)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
-                Text(summary.name.isEmpty ? "Untitled" : summary.name)
+                Text(editableVoice.name.isEmpty ? "Untitled" : editableVoice.name)
                     .font(.title3.weight(.semibold))
                 Spacer()
                 Text("Voice \(summary.number)")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
+                if editableVoice != summary.voice {
+                    Button {
+                        resetVoice()
+                    } label: {
+                        Label("Reset", systemImage: "arrow.uturn.backward")
+                    }
+                }
                 Button {
                     exportVoice()
                 } label: {
@@ -921,18 +938,43 @@ struct VoiceDetailView: View {
             }
 
             SummaryPanel(rows: [
-                KeyValueRow("Name", summary.voice.name),
-                KeyValueRow("Algorithm", "\(summary.voice.algorithm + 1)"),
-                KeyValueRow("Feedback", "\(summary.voice.feedbackLevel)"),
-                KeyValueRow("Transpose", "\(summary.voice.transpose)"),
-                KeyValueRow("LFO", "Speed \(summary.voice.lfoSpeed), Wave \(summary.voice.lfoWaveform + 1), Sync \(summary.voice.lfoSyncEnabled ? "On" : "Off")"),
-                KeyValueRow("Modulation", "AMD \(summary.voice.amplitudeModulationDepth), PMD \(summary.voice.pitchModulationDepth), AMS \(summary.voice.amplitudeModulationSensitivity), PMS \(summary.voice.pitchModulationSensitivity)"),
+                KeyValueRow("Name", editableVoice.name),
+                KeyValueRow("Algorithm", "\(editableVoice.algorithm + 1)"),
+                KeyValueRow("Feedback", "\(editableVoice.feedbackLevel)"),
+                KeyValueRow("Transpose", "\(editableVoice.transpose)"),
+                KeyValueRow("LFO", "Speed \(editableVoice.lfoSpeed), Wave \(editableVoice.lfoWaveform + 1), Sync \(editableVoice.lfoSyncEnabled ? "On" : "Off")"),
+                KeyValueRow("Modulation", "AMD \(editableVoice.amplitudeModulationDepth), PMD \(editableVoice.pitchModulationDepth), AMS \(editableVoice.amplitudeModulationSensitivity), PMS \(editableVoice.pitchModulationSensitivity)"),
                 KeyValueRow("Operators", enabledOperatorsText),
                 KeyValueRow("Output", outputText),
-                KeyValueRow("User Code", "\(summary.voice.userCode)"),
+                KeyValueRow("User Code", "\(editableVoice.userCode)"),
             ])
 
-            OperatorTable(operators: summary.voice.operators)
+            VoiceEditorControls(
+                name: Binding(
+                    get: { nameText },
+                    set: { setName($0) }
+                ),
+                algorithm: Binding(
+                    get: { editableVoice.algorithm + 1 },
+                    set: { setAlgorithm($0 - 1) }
+                ),
+                feedback: Binding(
+                    get: { editableVoice.feedbackLevel },
+                    set: { setFeedback($0) }
+                ),
+                lfoSpeed: Binding(
+                    get: { editableVoice.lfoSpeed },
+                    set: { setLFOSpeed($0) }
+                )
+            )
+
+            OperatorTable(operators: editableVoice.operators)
+
+            if let editError {
+                Text(editError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
 
             if let exportError {
                 Text(exportError)
@@ -940,30 +982,68 @@ struct VoiceDetailView: View {
                     .foregroundStyle(.red)
             }
         }
+        .onChange(of: summary.voice.bytes) { _, _ in
+            resetVoice()
+        }
     }
 
     private var enabledOperatorsText: String {
-        summary.voice.operatorEnabled.enumerated()
+        editableVoice.operatorEnabled.enumerated()
             .filter(\.element)
             .map { "\($0.offset + 1)" }
             .joined(separator: ", ")
     }
 
     private var outputText: String {
-        "Left \(summary.voice.leftOutputEnabled ? "On" : "Off"), Right \(summary.voice.rightOutputEnabled ? "On" : "Off")"
+        "Left \(editableVoice.leftOutputEnabled ? "On" : "Off"), Right \(editableVoice.rightOutputEnabled ? "On" : "Off")"
+    }
+
+    private func resetVoice() {
+        editableVoice = summary.voice
+        nameText = summary.voice.name
+        editError = nil
+        exportError = nil
+    }
+
+    private func setName(_ value: String) {
+        let limited = String(value.prefix(FB01VoiceData.nameLength))
+        nameText = limited
+        updateVoice { try $0.settingName(limited) }
+    }
+
+    private func setAlgorithm(_ value: Int) {
+        updateVoice { try $0.settingAlgorithm(value) }
+    }
+
+    private func setFeedback(_ value: Int) {
+        updateVoice { try $0.settingFeedbackLevel(value) }
+    }
+
+    private func setLFOSpeed(_ value: Int) {
+        updateVoice { try $0.settingLFOSpeed(value) }
+    }
+
+    private func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
+        do {
+            editableVoice = try edit(editableVoice)
+            editError = nil
+            exportError = nil
+        } catch {
+            editError = "Edit failed: \(error)"
+        }
     }
 
     private func exportVoice() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.sysex]
-        panel.nameFieldStringValue = "voice-\(summary.number)-\(safeFileName(summary.name)).syx"
+        panel.nameFieldStringValue = "voice-\(summary.number)-\(safeFileName(editableVoice.name)).syx"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
         }
 
         do {
-            let artifact = try summary.voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
+            let artifact = try editableVoice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
             try artifact.writeSysEx(to: url)
             exportError = nil
         } catch {
@@ -979,6 +1059,56 @@ struct VoiceDetailView: View {
             .unicodeScalars
             .map { allowed.contains($0) ? Character($0) : "-" }
             .reduce("") { $0 + String($1) }
+    }
+}
+
+struct VoiceEditorControls: View {
+    @Binding var name: String
+    @Binding var algorithm: Int
+    @Binding var feedback: Int
+    @Binding var lfoSpeed: Int
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+            GridRow {
+                label("Name")
+                TextField("Name", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 180)
+            }
+
+            GridRow {
+                label("Algorithm")
+                Stepper(value: $algorithm, in: 1...8) {
+                    Text("\(algorithm)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("Feedback")
+                Stepper(value: $feedback, in: 0...7) {
+                    Text("\(feedback)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("LFO Speed")
+                Stepper(value: $lfoSpeed, in: 0...255) {
+                    Text("\(lfoSpeed)")
+                        .monospacedDigit()
+                }
+            }
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
     }
 }
 

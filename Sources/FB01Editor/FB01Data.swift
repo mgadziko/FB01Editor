@@ -24,6 +24,39 @@ public struct FB01VoiceData: Equatable, Sendable {
         return FB01Artifact(message: .instrumentVoiceDump(systemChannel: systemChannel, instrument: instrument, packet: packet))
     }
 
+    public func settingName(_ name: String) throws -> FB01VoiceData {
+        var copy = bytes
+        let allowed = name.prefix(Self.nameLength).map { character -> UInt8 in
+            guard character.unicodeScalars.count == 1,
+                  let scalar = character.unicodeScalars.first,
+                  scalar.isASCII,
+                  (0x20...0x7E).contains(UInt8(scalar.value)) else {
+                return 0x20
+            }
+            return UInt8(scalar.value)
+        }
+        copy.replaceSubrange(0..<Self.nameLength, with: allowed + Array(repeating: 0x20, count: Self.nameLength - allowed.count))
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingLFOSpeed(_ value: Int) throws -> FB01VoiceData {
+        try settingByte(at: 0x08, value: value, name: "lfoSpeed", range: 0...255)
+    }
+
+    public func settingFeedbackLevel(_ value: Int) throws -> FB01VoiceData {
+        let feedback = try FB01.validate(value, name: "feedbackLevel", range: 0...7)
+        var copy = bytes
+        copy[0x0C] = (copy[0x0C] & 0xC7) | (feedback << 3)
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingAlgorithm(_ value: Int) throws -> FB01VoiceData {
+        let algorithm = try FB01.validate(value, name: "algorithm", range: 0...7)
+        var copy = bytes
+        copy[0x0C] = (copy[0x0C] & 0xF8) | algorithm
+        return try FB01VoiceData(bytes: copy)
+    }
+
     public var name: String {
         String(bytes: bytes.prefix(Self.nameLength), encoding: .ascii)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -54,6 +87,12 @@ public struct FB01VoiceData: Equatable, Sendable {
             let offset = 0x10 + index * Self.operatorBlockByteCount
             return FB01VoiceOperatorData(index: index, bytes: Array(bytes[offset..<(offset + Self.operatorBlockByteCount)]))
         }
+    }
+
+    private func settingByte(at offset: Int, value: Int, name: String, range: ClosedRange<Int>) throws -> FB01VoiceData {
+        var copy = bytes
+        copy[offset] = try FB01.validate(value, name: name, range: range)
+        return try FB01VoiceData(bytes: copy)
     }
 }
 

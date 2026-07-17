@@ -289,6 +289,45 @@ import Testing
     #expect(try FB01Artifact(sysexBytes: exported.sysexBytes) == exported)
 }
 
+@Test func editsVoiceDataAndExportsEditedSingleVoiceArtifact() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-3",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+    guard case let .voiceBankDumpData(_, bank, _, data, _) = artifact.messages[0] else {
+        Issue.record("Expected captured voice bank dump")
+        return
+    }
+
+    let voiceBank = try FB01VoiceBankData(bank: bank, data: data)
+    let brass = voiceBank.voices[0].voice
+    let edited = try brass
+        .settingName("EDITED!")
+        .settingAlgorithm(2)
+        .settingFeedbackLevel(3)
+        .settingLFOSpeed(99)
+
+    #expect(edited.name == "EDITED!")
+    #expect(edited.algorithm == 2)
+    #expect(edited.feedbackLevel == 3)
+    #expect(edited.lfoSpeed == 99)
+    #expect(edited.leftOutputEnabled == brass.leftOutputEnabled)
+    #expect(edited.rightOutputEnabled == brass.rightOutputEnabled)
+
+    let exported = try edited.instrumentVoiceArtifact(systemChannel: 0, instrument: 0)
+
+    guard case let .instrumentVoiceDump(_, _, packet) = exported.messages[0] else {
+        Issue.record("Expected exported instrument voice dump")
+        return
+    }
+
+    #expect(try FB01.nibbleDecode(packet.payload) == edited.bytes)
+    #expect(try FB01Artifact(sysexBytes: exported.sysexBytes) == exported)
+}
+
 @Test func parsesCapturedVoiceRAMFixture() throws {
     let fixtureURL = Bundle.module.url(
         forResource: "voice-ram1",
