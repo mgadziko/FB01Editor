@@ -59,7 +59,7 @@ The first real FB-01 fixture is a captured current configuration named `single`.
 swift run FB01EditorApp
 ```
 
-It opens `.syx` files, shows artifact/message metadata, displays decoded current configuration fields, displays voice banks in a selectable browser with a read-only voice detail panel, exports the original SysEx bytes, and exports the selected voice as a standalone single-voice SysEx file. It can also fetch the current configuration, Banks 1-7, and Voice RAM 1 from the connected FB-01 into a read-only source browser. It does not write to the FB-01.
+It opens `.syx` files from the File menu, shows artifact/message metadata, displays decoded current configuration fields, displays voice banks in a selectable browser with a read-only voice detail panel, saves the original SysEx bytes from the File menu, and exports the selected voice as a standalone single-voice SysEx file. It can also fetch the current configuration, Banks 1-7, and Voice RAM 1 from the connected FB-01 into a read-only source browser. It does not write to the FB-01.
 
 To build a launchable local `.app` bundle:
 

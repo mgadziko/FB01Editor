@@ -5,13 +5,27 @@ import UniformTypeIdentifiers
 
 @main
 struct FB01EditorApplication: App {
+    @StateObject private var document = DocumentModel()
+
     var body: some Scene {
         WindowGroup("FB01 Editor") {
-            ContentView()
+            ContentView(document: document)
                 .frame(minWidth: 840, minHeight: 540)
         }
         .commands {
             CommandGroup(replacing: .newItem) { }
+            CommandGroup(after: .newItem) {
+                Button("Open SysEx...") {
+                    document.openSysEx()
+                }
+                .keyboardShortcut("o", modifiers: .command)
+
+                Button("Save SysEx...") {
+                    document.saveSysEx()
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .disabled(!document.hasDocument)
+            }
         }
     }
 }
@@ -133,7 +147,7 @@ final class DocumentModel: ObservableObject {
         }
     }
 
-    func exportSysEx() {
+    func saveSysEx() {
         guard let artifact else { return }
 
         let panel = NSSavePanel()
@@ -148,7 +162,7 @@ final class DocumentModel: ObservableObject {
             try artifact.writeSysEx(to: url)
             errorMessage = nil
         } catch {
-            errorMessage = "Export failed: \(error)"
+            errorMessage = "Save failed: \(error)"
         }
     }
 
@@ -196,7 +210,7 @@ private extension UTType {
 }
 
 struct ContentView: View {
-    @StateObject private var document = DocumentModel()
+    @ObservedObject var document: DocumentModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -241,19 +255,6 @@ struct ToolbarView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button {
-                document.openSysEx()
-            } label: {
-                Label("Open", systemImage: "folder")
-            }
-
-            Button {
-                document.exportSysEx()
-            } label: {
-                Label("Export", systemImage: "square.and.arrow.down")
-            }
-            .disabled(!document.hasDocument)
-
             Button {
                 document.fetchAllBanksFromDevice()
             } label: {
