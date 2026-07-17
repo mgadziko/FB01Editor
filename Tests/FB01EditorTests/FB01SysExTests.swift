@@ -24,7 +24,7 @@ import Testing
 
 @Test func buildsCommonDumpRequests() throws {
     #expect(try FB01Command.requestVoiceRAM1(systemChannel: 4).bytes == [0xF0, 0x43, 0x24, 0x0C, 0xF7])
-    #expect(try FB01Command.requestVoiceBank(systemChannel: 0, bank: 6).bytes == [0xF0, 0x43, 0x75, 0x00, 0x20, 0x00, 0x06, 0xF7])
+    #expect(try FB01Command.requestVoiceBank(systemChannel: 0, bank: 7).bytes == [0xF0, 0x43, 0x75, 0x00, 0x20, 0x00, 0x07, 0xF7])
     #expect(try FB01Command.requestCurrentConfiguration(systemChannel: 0).bytes == [0xF0, 0x43, 0x75, 0x00, 0x20, 0x01, 0x00, 0xF7])
     #expect(try FB01Command.requestConfiguration(systemChannel: 0, number: 19).bytes == [0xF0, 0x43, 0x75, 0x00, 0x20, 0x02, 0x13, 0xF7])
     #expect(try FB01Command.requestAllConfigurations(systemChannel: 0).bytes == [0xF0, 0x43, 0x75, 0x00, 0x20, 0x03, 0x00, 0xF7])
@@ -54,7 +54,7 @@ import Testing
 
 @Test func rejectsOutOfRangeCommandValues() {
     #expect(throws: FB01SysExError.self) {
-        _ = try FB01Command.requestVoiceBank(systemChannel: 0, bank: 7).bytes
+        _ = try FB01Command.requestVoiceBank(systemChannel: 0, bank: 0).bytes
     }
 
     #expect(throws: FB01SysExError.self) {

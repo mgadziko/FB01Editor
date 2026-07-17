@@ -28,7 +28,7 @@ public enum FB01 {
     }
 
     public static func validateVoiceBank(_ value: Int) throws -> UInt8 {
-        try validate(value, name: "voiceBank", range: 0...6)
+        try validate(value, name: "voiceBank", range: 1...7)
     }
 
     public static func validateVoiceNumber(_ value: Int) throws -> UInt8 {

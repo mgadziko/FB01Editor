@@ -82,6 +82,13 @@ swift run fb01-dump request voice-bank --bank 2 --source 0 --destination 0 --out
 
 If manual front-panel dumps work but computer-originated requests time out, verify the MIDI Out to FB-01 MIDI In cable direction, the FB-01 system channel, and whether the interface is passing outbound SysEx.
 
+Observed hardware behavior:
+
+- Current configuration requests work with the tested USB MIDI cable.
+- Numbered voice-bank requests use bank numbers `1...7` per the FB-01 service manual.
+- Banks 2 through 6 returned 6363-byte dumps during testing; bank 1 timed out and bank 7 returned a short 5-byte response.
+- `Tests/FB01EditorTests/Fixtures/voice-bank-2.syx` is the first captured numbered voice-bank fixture. It is recognized and exact-byte round-tripped, but individual voice decoding is still pending.
+
 ## Recovered Context
 
 `fb01editor-context.json` is a handoff file from the original Codex task. It records the recovered project context, the SysEx research summary, the initial commit boundary, and the planned hardware-safe capture milestone.

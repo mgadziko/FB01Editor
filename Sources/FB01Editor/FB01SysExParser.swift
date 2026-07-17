@@ -57,6 +57,7 @@ public enum FB01SysExMessage: Equatable, Sendable {
     case configurationDump(systemChannel: Int, number: Int, packet: FB01SysExPacket)
     case allConfigurationsDump(systemChannel: Int, packets: [FB01SysExPacket])
     case voiceBankDump(systemChannel: Int, bank: Int?, packets: [FB01SysExPacket])
+    case voiceBankDumpData(systemChannel: Int, bank: Int, byteCount: Int, data: [UInt8], checksum: UInt8)
     case unitIDDump(systemChannel: Int, packet: FB01SysExPacket)
     case raw([UInt8])
 
@@ -96,6 +97,11 @@ public enum FB01SysExMessage: Equatable, Sendable {
                 let bankByte = bank.map(UInt8.init) ?? 0x00
                 let packetBytes = try packets.flatMap { try $0.encodedBytes }
                 return envelope([FB01.fb01Substatus, UInt8(systemChannel), 0x0C, 0x00, 0x00, bankByte] + packetBytes)
+            case let .voiceBankDumpData(systemChannel, bank, byteCount, data, checksum):
+                let count = try FB01.byteCountPair(for: byteCount)
+                let data = try data.map { try FB01.validateSevenBit($0) }
+                let checksum = try FB01.validateSevenBit(checksum)
+                return envelope([FB01.fb01Substatus, UInt8(systemChannel), 0x00, 0x00, UInt8(bank), count.high, count.low] + data + [checksum])
             case let .unitIDDump(systemChannel, packet):
                 return try envelope([FB01.fb01Substatus, UInt8(systemChannel), 0x00, 0x04, 0x00] + packet.encodedBytes)
             case .raw(let bytes):
@@ -191,6 +197,14 @@ public enum FB01SysExMessage: Equatable, Sendable {
         }
 
         if messageNumber == 0x00 {
+            if body[3] == 0x00, body.count >= 9 {
+                let bank = Int(body[4])
+                let count = try FB01.packetByteCount(high: body[5], low: body[6])
+                let data = try body[7..<body.index(before: body.endIndex)].map { try FB01.validateSevenBit($0) }
+                let checksum = try FB01.validateSevenBit(body[body.index(before: body.endIndex)])
+                return .voiceBankDumpData(systemChannel: systemChannel, bank: bank, byteCount: count, data: data, checksum: checksum)
+            }
+
             switch body[3] {
             case 0x01 where body[4] == 0x00:
                 return .currentConfigurationDump(systemChannel: systemChannel, packet: try FB01SysExPacket(encoded: body[5...]))

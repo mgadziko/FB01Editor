@@ -364,7 +364,7 @@ private extension FB01SysExMessage {
         case .currentConfigurationDump: "Current Configuration Dump"
         case .configurationDump: "Stored Configuration Dump"
         case .allConfigurationsDump: "All Configurations Dump"
-        case .voiceBankDump: "Voice Bank Dump"
+        case .voiceBankDump, .voiceBankDumpData: "Voice Bank Dump"
         case .unitIDDump: "Unit ID Dump"
         case .raw: "Raw SysEx"
         }

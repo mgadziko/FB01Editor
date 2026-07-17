@@ -144,3 +144,28 @@ import Testing
     #expect(instrument0.monoPolyMode == .poly)
     #expect(instrument0.pmdControllerAssignment == .modulationWheel)
 }
+
+@Test func parsesCapturedVoiceBankFixture() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-2",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+    #expect(artifact.kind == .voiceBank)
+    #expect(artifact.messages.count == 1)
+
+    guard case let .voiceBankDumpData(systemChannel, bank, byteCount, data, checksum) = artifact.messages[0] else {
+        Issue.record("Expected captured voice bank dump")
+        return
+    }
+
+    #expect(systemChannel == 0)
+    #expect(bank == 2)
+    #expect(byteCount == 64)
+    #expect(data.count == 6_352)
+    #expect(checksum == 0x5C)
+    #expect(try artifact.sysexBytes == Array(Data(contentsOf: fixtureURL)))
+}
