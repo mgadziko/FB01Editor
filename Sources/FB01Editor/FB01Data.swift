@@ -2,6 +2,9 @@ import Foundation
 
 public struct FB01VoiceData: Equatable, Sendable {
     public static let byteCount = 64
+    public static let nameLength = 7
+    public static let operatorCount = 4
+    public static let operatorBlockByteCount = 8
 
     public var bytes: [UInt8]
 
@@ -15,20 +18,77 @@ public struct FB01VoiceData: Equatable, Sendable {
     public var nibbleEncodedBytes: [UInt8] {
         FB01.nibbleEncode(bytes)
     }
+
+    public var name: String {
+        String(bytes: bytes.prefix(Self.nameLength), encoding: .ascii)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ""
+    }
+
+    public var userCode: Int { Int(bytes[0x07]) }
+    public var lfoSpeed: Int { Int(bytes[0x08]) }
+    public var loadLFODataEnabled: Bool { bytes[0x09] & 0x80 == 0x80 }
+    public var amplitudeModulationDepth: Int { Int(bytes[0x09] & 0x7F) }
+    public var lfoSyncEnabled: Bool { bytes[0x0A] & 0x80 == 0x80 }
+    public var pitchModulationDepth: Int { Int(bytes[0x0A] & 0x7F) }
+    public var operatorEnabled: [Bool] {
+        (0..<Self.operatorCount).map { index in
+            bytes[0x0B] & (1 << (index + 3)) != 0
+        }
+    }
+    public var leftOutputEnabled: Bool { bytes[0x0C] & 0x80 == 0x80 }
+    public var rightOutputEnabled: Bool { bytes[0x0C] & 0x40 == 0x40 }
+    public var feedbackLevel: Int { Int((bytes[0x0C] >> 3) & 0x07) }
+    public var algorithm: Int { Int(bytes[0x0C] & 0x07) }
+    public var pitchModulationSensitivity: Int { Int((bytes[0x0D] >> 4) & 0x07) }
+    public var amplitudeModulationSensitivity: Int { Int(bytes[0x0D] & 0x03) }
+    public var lfoWaveform: Int { Int((bytes[0x0E] >> 5) & 0x03) }
+    public var transpose: Int { Int(Int8(bitPattern: bytes[0x0F])) }
+    public var operators: [FB01VoiceOperatorData] {
+        (0..<Self.operatorCount).map { index in
+            let offset = 0x10 + index * Self.operatorBlockByteCount
+            return FB01VoiceOperatorData(index: index, bytes: Array(bytes[offset..<(offset + Self.operatorBlockByteCount)]))
+        }
+    }
 }
 
 public struct FB01VoiceSummary: Equatable, Identifiable, Sendable {
     public var id: Int { number }
     public var number: Int
-    public var name: String
+    public var voice: FB01VoiceData
     public var encodedRecordBytes: [UInt8]
+
+    public var name: String { voice.name }
+}
+
+public struct FB01VoiceOperatorData: Equatable, Sendable {
+    public var index: Int
+    public var bytes: [UInt8]
+
+    public var totalLevel: Int { Int(bytes[0x00] & 0x7F) }
+    public var keyboardLevelScalingTypeBit0: Bool { bytes[0x01] & 0x80 == 0x80 }
+    public var velocitySensitivityForTotalLevel: Int { Int((bytes[0x01] >> 4) & 0x07) }
+    public var keyboardLevelScalingDepth: Int { Int((bytes[0x02] >> 4) & 0x0F) }
+    public var totalLevelAdjust: Int { Int(bytes[0x02] & 0x0F) }
+    public var keyboardLevelScalingTypeBit1: Bool { bytes[0x03] & 0x80 == 0x80 }
+    public var detune1: Int { Int((bytes[0x03] >> 4) & 0x07) }
+    public var multiple: Int { Int(bytes[0x03] & 0x0F) }
+    public var keyboardRateScalingDepth: Int { Int((bytes[0x04] >> 5) & 0x07) }
+    public var attackRate: Int { Int(bytes[0x04] & 0x1F) }
+    public var carrier: Bool { bytes[0x05] & 0x80 == 0x80 }
+    public var velocitySensitivityForAttackRate: Int { Int((bytes[0x05] >> 4) & 0x07) }
+    public var decay1Rate: Int { Int(bytes[0x05] & 0x0F) }
+    public var detune2: Int { Int((bytes[0x06] >> 5) & 0x03) }
+    public var decay2Rate: Int { Int(bytes[0x06] & 0x1F) }
+    public var sustainLevel: Int { Int((bytes[0x07] >> 4) & 0x0F) }
+    public var releaseRate: Int { Int(bytes[0x07] & 0x0F) }
 }
 
 public struct FB01VoiceBankData: Equatable, Sendable {
     public static let voiceCount = 48
+    public static let bankHeaderByteCount = 64
     public static let encodedRecordByteCount = 131
-    public static let nameNibbleOffset = 67
-    public static let nameLength = 7
+    public static let encodedRecordPrefixByteCount = 3
 
     public var bank: Int
     public var data: [UInt8]
@@ -41,37 +101,43 @@ public struct FB01VoiceBankData: Equatable, Sendable {
         self.bank = bank
         self.data = try data.map { try FB01.validateSevenBit($0) }
 
-        let lastNameByteIndex = Self.nameNibbleOffset
-            + (Self.voiceCount - 1) * Self.encodedRecordByteCount
-            + (Self.nameLength * 2 - 1)
-        guard self.data.indices.contains(lastNameByteIndex) else {
-            throw FB01SysExError.invalidPayloadLength(expected: lastNameByteIndex + 1, actual: self.data.count)
+        let expectedLength = Self.bankHeaderByteCount + Self.voiceCount * Self.encodedRecordByteCount
+        guard self.data.count == expectedLength else {
+            throw FB01SysExError.invalidPayloadLength(expected: expectedLength, actual: self.data.count)
         }
+
+        for index in 0..<Self.voiceCount {
+            let recordStart = Self.bankHeaderByteCount + index * Self.encodedRecordByteCount
+            let recordEnd = recordStart + Self.encodedRecordByteCount
+            _ = try Self.decodeVoiceRecord(Array(self.data[recordStart..<recordEnd]))
+        }
+    }
+
+    public var headerBytes: [UInt8] {
+        Array(data.prefix(Self.bankHeaderByteCount))
     }
 
     public var voices: [FB01VoiceSummary] {
         (0..<Self.voiceCount).map { index in
-            let recordStart = index * Self.encodedRecordByteCount
-            let recordEnd = min(recordStart + Self.encodedRecordByteCount, data.count)
+            let recordStart = Self.bankHeaderByteCount + index * Self.encodedRecordByteCount
+            let recordEnd = recordStart + Self.encodedRecordByteCount
+            let encodedRecordBytes = Array(data[recordStart..<recordEnd])
+            let voice = try! Self.decodeVoiceRecord(encodedRecordBytes)
             return FB01VoiceSummary(
                 number: index + 1,
-                name: voiceName(at: index),
-                encodedRecordBytes: Array(data[recordStart..<recordEnd])
+                voice: voice,
+                encodedRecordBytes: encodedRecordBytes
             )
         }
     }
 
-    private func voiceName(at index: Int) -> String {
-        let offset = Self.nameNibbleOffset + index * Self.encodedRecordByteCount
-        let bytes = (0..<Self.nameLength).map { characterIndex in
-            let low = data[offset + characterIndex * 2] & 0x0F
-            let high = data[offset + characterIndex * 2 + 1] & 0x0F
-            return low | (high << 4)
+    private static func decodeVoiceRecord(_ encodedRecordBytes: [UInt8]) throws -> FB01VoiceData {
+        guard encodedRecordBytes.count == Self.encodedRecordByteCount else {
+            throw FB01SysExError.invalidPayloadLength(expected: Self.encodedRecordByteCount, actual: encodedRecordBytes.count)
         }
 
-        return String(bytes: bytes, encoding: .ascii)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            ?? ""
+        let nibbleBytes = Array(encodedRecordBytes.dropFirst(Self.encodedRecordPrefixByteCount))
+        return try FB01VoiceData(bytes: FB01.nibbleDecode(nibbleBytes))
     }
 }
 

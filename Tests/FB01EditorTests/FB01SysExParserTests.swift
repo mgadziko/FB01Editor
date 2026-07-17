@@ -208,6 +208,7 @@ import Testing
 
     let voiceBank = try FB01VoiceBankData(bank: bank, data: data)
     #expect(voiceBank.voices.count == 48)
+    #expect(voiceBank.headerBytes.count == 64)
     #expect(voiceBank.voices.prefix(20).map(\.name) == [
         "Brass",
         "Horn",
@@ -230,6 +231,31 @@ import Testing
         "Clarine",
         "Glocken",
     ])
+
+    let brass = voiceBank.voices[0]
+    #expect(brass.encodedRecordBytes.count == 131)
+    #expect(brass.voice.name == "Brass")
+    #expect(brass.voice.lfoSpeed == 200)
+    #expect(brass.voice.loadLFODataEnabled == true)
+    #expect(brass.voice.amplitudeModulationDepth == 0)
+    #expect(brass.voice.lfoSyncEnabled == false)
+    #expect(brass.voice.pitchModulationDepth == 50)
+    #expect(brass.voice.operatorEnabled == [true, true, true, true])
+    #expect(brass.voice.feedbackLevel == 7)
+    #expect(brass.voice.algorithm == 5)
+    #expect(brass.voice.pitchModulationSensitivity == 3)
+    #expect(brass.voice.amplitudeModulationSensitivity == 0)
+    #expect(brass.voice.lfoWaveform == 2)
+    #expect(brass.voice.transpose == 0)
+
+    let firstOperator = brass.voice.operators[0]
+    #expect(firstOperator.totalLevel == 18)
+    #expect(firstOperator.multiple == 1)
+    #expect(firstOperator.attackRate == 13)
+    #expect(firstOperator.decay1Rate == 9)
+    #expect(firstOperator.decay2Rate == 4)
+    #expect(firstOperator.sustainLevel == 1)
+    #expect(firstOperator.releaseRate == 8)
 }
 
 @Test func parsesCapturedVoiceRAMFixture() throws {

@@ -59,7 +59,7 @@ The first real FB-01 fixture is a captured current configuration named `single`.
 swift run FB01EditorApp
 ```
 
-It opens `.syx` files, shows artifact/message metadata, displays decoded current configuration fields, and exports the original SysEx bytes. It does not send MIDI or write to the FB-01.
+It opens `.syx` files, shows artifact/message metadata, displays decoded current configuration fields, displays voice banks in a selectable browser with a read-only voice detail panel, and exports the original SysEx bytes. It does not send MIDI or write to the FB-01.
 
 ## MIDI Capture And Safe Dump Requests
 
@@ -92,7 +92,7 @@ Observed hardware behavior:
 - The separate `voice-ram1` request returned a 6360-byte dump. This appears to be the user/RAM bank path described separately from numbered voice-bank requests, and is preserved as `voice-ram1.syx`.
 - `Tests/FB01EditorTests/Fixtures/voice-bank-1.syx` through `voice-bank-7.syx` are captured numbered voice-bank fixtures. They are recognized, exact-byte round-tripped, and decoded into 48 voice entries each.
 - `Tests/FB01EditorTests/Fixtures/voice-ram1.syx` is recognized as voice RAM dump data and decoded through the same 48-voice table model.
-- `FB01EditorApp` displays a voice table when a captured voice-bank dump is opened.
+- `FB01EditorApp` displays a selectable voice browser and read-only voice detail panel when a captured voice-bank dump is opened.
 
 ## Recovered Context
 

@@ -268,13 +268,14 @@ struct VoiceBankView: View {
     var data: [UInt8]
     var checksum: UInt8
     var label: String = "Voice Bank"
+    @State private var selectedVoiceNumber = 1
 
     var body: some View {
         Group {
             if let voiceBank = try? FB01VoiceBankData(bank: bank, data: data) {
                 VStack(alignment: .leading, spacing: 14) {
                     SummaryPanel(rows: [
-                        KeyValueRow("Type", "Voice Bank"),
+                        KeyValueRow("Type", label),
                         KeyValueRow("Bank", label == "Voice Bank" ? "\(voiceBank.bank + 1)" : label),
                         KeyValueRow("System Channel", "\(systemChannel + 1)"),
                         KeyValueRow("Byte Count", "\(byteCount)"),
@@ -282,7 +283,7 @@ struct VoiceBankView: View {
                         KeyValueRow("Checksum", String(format: "0x%02X", checksum)),
                     ])
 
-                    VoiceTable(voices: voiceBank.voices)
+                    VoiceBankBrowser(voices: voiceBank.voices, selectedVoiceNumber: $selectedVoiceNumber)
                 }
             } else {
                 SummaryPanel(rows: [
@@ -294,28 +295,152 @@ struct VoiceBankView: View {
     }
 }
 
-struct VoiceTable: View {
+struct VoiceBankBrowser: View {
     var voices: [FB01VoiceSummary]
+    @Binding var selectedVoiceNumber: Int
+
+    private var selectedVoice: FB01VoiceSummary? {
+        voices.first { $0.number == selectedVoiceNumber } ?? voices.first
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Voices")
+                    .font(.headline)
+
+                VStack(spacing: 2) {
+                    ForEach(voices) { voice in
+                        Button {
+                            selectedVoiceNumber = voice.number
+                        } label: {
+                            HStack(spacing: 8) {
+                                Text("\(voice.number)")
+                                    .frame(width: 28, alignment: .trailing)
+                                    .foregroundStyle(.secondary)
+                                Text(voice.name.isEmpty ? "Untitled" : voice.name)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .font(.system(.body, design: .monospaced))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(
+                                selectedVoiceNumber == voice.number
+                                    ? Color.accentColor.opacity(0.18)
+                                    : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 6)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(width: 220, alignment: .topLeading)
+
+            Divider()
+
+            if let selectedVoice {
+                VoiceDetailView(summary: selectedVoice)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+}
+
+struct VoiceDetailView: View {
+    var summary: FB01VoiceSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(summary.name.isEmpty ? "Untitled" : summary.name)
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Text("Voice \(summary.number)")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+
+            SummaryPanel(rows: [
+                KeyValueRow("Name", summary.voice.name),
+                KeyValueRow("Algorithm", "\(summary.voice.algorithm)"),
+                KeyValueRow("Feedback", "\(summary.voice.feedbackLevel)"),
+                KeyValueRow("Transpose", "\(summary.voice.transpose)"),
+                KeyValueRow("LFO", "Speed \(summary.voice.lfoSpeed), Wave \(summary.voice.lfoWaveform), Sync \(summary.voice.lfoSyncEnabled ? "On" : "Off")"),
+                KeyValueRow("Modulation", "AMD \(summary.voice.amplitudeModulationDepth), PMD \(summary.voice.pitchModulationDepth), AMS \(summary.voice.amplitudeModulationSensitivity), PMS \(summary.voice.pitchModulationSensitivity)"),
+                KeyValueRow("Operators", enabledOperatorsText),
+                KeyValueRow("Output", outputText),
+                KeyValueRow("User Code", "\(summary.voice.userCode)"),
+            ])
+
+            OperatorTable(operators: summary.voice.operators)
+        }
+    }
+
+    private var enabledOperatorsText: String {
+        summary.voice.operatorEnabled.enumerated()
+            .filter(\.element)
+            .map { "\($0.offset + 1)" }
+            .joined(separator: ", ")
+    }
+
+    private var outputText: String {
+        "Left \(summary.voice.leftOutputEnabled ? "On" : "Off"), Right \(summary.voice.rightOutputEnabled ? "On" : "Off")"
+    }
+}
+
+struct OperatorTable: View {
+    var operators: [FB01VoiceOperatorData]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Voices")
+            Text("Operators")
                 .font(.headline)
 
-            LazyVGrid(columns: [
-                GridItem(.fixed(48), alignment: .leading),
-                GridItem(.adaptive(minimum: 112), alignment: .leading),
-            ], alignment: .leading, spacing: 8) {
-                ForEach(voices) { voice in
-                    Text("\(voice.number)")
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Text(voice.name)
-                        .font(.system(.body, design: .monospaced))
-                        .lineLimit(1)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 7) {
+                GridRow {
+                    header("#")
+                    header("TL")
+                    header("Mul")
+                    header("AR")
+                    header("D1R")
+                    header("D2R")
+                    header("SL")
+                    header("RR")
+                    header("Carrier")
+                }
+
+                Divider()
+                    .gridCellColumns(9)
+
+                ForEach(operators, id: \.index) { op in
+                    GridRow {
+                        cell("\(op.index + 1)")
+                        cell("\(op.totalLevel)")
+                        cell("\(op.multiple)")
+                        cell("\(op.attackRate)")
+                        cell("\(op.decay1Rate)")
+                        cell("\(op.decay2Rate)")
+                        cell("\(op.sustainLevel)")
+                        cell("\(op.releaseRate)")
+                        cell(op.carrier ? "Yes" : "No")
+                    }
                 }
             }
+            .font(.system(.body, design: .monospaced))
         }
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+
+    private func cell(_ title: String) -> some View {
+        Text(title)
+            .lineLimit(1)
     }
 }
 
