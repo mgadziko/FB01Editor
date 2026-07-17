@@ -78,6 +78,9 @@ public enum FB01MIDIRequestKind: Equatable, Sendable {
 }
 
 public enum FB01MIDI {
+    private static let requestLock = NSLock()
+    private static let clientStore = FB01MIDIClientStore()
+
     public static func availableSources() -> [FB01MIDIEndpoint] {
         (0..<MIDIGetNumberOfSources()).map { index in
             let endpoint = MIDIGetSource(index)
@@ -131,33 +134,13 @@ public enum FB01MIDI {
         systemChannel: Int = 0,
         timeoutPerRequest: TimeInterval = 20
     ) throws -> [[UInt8]] {
-        var messages: [[UInt8]] = []
-        messages.append(try request(
-            .currentConfiguration,
+        try requestBatch(
+            [.currentConfiguration] + (1...7).map { .voiceBank($0) } + [.voiceRAM1],
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
             systemChannel: systemChannel,
-            timeout: timeoutPerRequest
-        ))
-
-        for bank in 1...7 {
-            messages.append(try request(
-                .voiceBank(bank),
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel,
-                timeout: timeoutPerRequest
-            ))
-        }
-
-        messages.append(try request(
-            .voiceRAM1,
-            sourceIndex: sourceIndex,
-            destinationIndex: destinationIndex,
-            systemChannel: systemChannel,
-            timeout: timeoutPerRequest
-        ))
-        return messages
+            timeoutPerRequest: timeoutPerRequest
+        )
     }
 
     public static func requestStoredConfigurations(
@@ -166,16 +149,63 @@ public enum FB01MIDI {
         systemChannel: Int = 0,
         timeoutPerRequest: TimeInterval = 15
     ) throws -> [[UInt8]] {
-        var messages: [[UInt8]] = []
+        try requestBatch(
+            (1...20).map { .configuration($0) },
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            timeoutPerRequest: timeoutPerRequest
+        )
+    }
 
-        for number in 1...20 {
-            messages.append(try request(
-                .configuration(number),
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel,
-                timeout: timeoutPerRequest
-            ))
+    private static func requestBatch(
+        _ kinds: [FB01MIDIRequestKind],
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        timeoutPerRequest: TimeInterval
+    ) throws -> [[UInt8]] {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+
+        let source = try sourceEndpoint(at: sourceIndex)
+        let destination = try destinationEndpoint(at: destinationIndex)
+        let state = FB01SysExCaptureState()
+        let client = try clientStore.client()
+
+        var inputPort = MIDIPortRef()
+        try check(MIDIInputPortCreateWithBlock(client, "FB01EditorMIDIBatchInput" as CFString, &inputPort) { packetList, _ in
+            state.append(packetList: packetList)
+        }, "MIDIInputPortCreateWithBlock")
+        defer { MIDIPortDispose(inputPort) }
+
+        var outputPort = MIDIPortRef()
+        try check(MIDIOutputPortCreate(client, "FB01EditorMIDIBatchOutput" as CFString, &outputPort), "MIDIOutputPortCreate")
+        defer { MIDIPortDispose(outputPort) }
+
+        try check(MIDIPortConnectSource(inputPort, source, nil), "MIDIPortConnectSource")
+
+        var messages: [[UInt8]] = []
+        messages.reserveCapacity(kinds.count)
+
+        for kind in kinds {
+            _ = state.drain()
+            try send(bytes: kind.bytes(systemChannel: systemChannel), to: destination, outputPort: outputPort)
+
+            let start = Date()
+            var received: [UInt8]?
+            while Date().timeIntervalSince(start) < timeoutPerRequest {
+                RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+                if let message = state.drain().first {
+                    received = message
+                    break
+                }
+            }
+
+            guard let received else {
+                throw FB01MIDIError.timedOut(kind.displayName)
+            }
+            messages.append(received)
         }
 
         return messages
@@ -189,14 +219,14 @@ public enum FB01MIDI {
         timeout: TimeInterval,
         maxMessages: Int
     ) throws -> [[UInt8]] {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+
         let source = try sourceEndpoint(at: sourceIndex)
         let destination = try destinationEndpoint(at: destinationIndex)
         let requestBytes = try kind.bytes(systemChannel: systemChannel)
         let state = FB01SysExCaptureState()
-
-        var client = MIDIClientRef()
-        try check(MIDIClientCreateWithBlock("FB01EditorMIDI" as CFString, &client) { _ in }, "MIDIClientCreateWithBlock")
-        defer { MIDIClientDispose(client) }
+        let client = try clientStore.client()
 
         var inputPort = MIDIPortRef()
         try check(MIDIInputPortCreateWithBlock(client, "FB01EditorMIDIInput" as CFString, &inputPort) { packetList, _ in
@@ -235,7 +265,7 @@ public enum FB01MIDI {
         return MIDIGetDestination(index)
     }
 
-    private static func check(_ status: OSStatus, _ operation: String) throws {
+    fileprivate static func check(_ status: OSStatus, _ operation: String) throws {
         guard status == noErr else {
             throw FB01MIDIError.commandFailed(operation, status)
         }
@@ -284,6 +314,25 @@ public enum FB01MIDI {
     }
 }
 
+private final class FB01MIDIClientStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sharedClient: MIDIClientRef?
+
+    func client() throws -> MIDIClientRef {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let sharedClient {
+            return sharedClient
+        }
+
+        var client = MIDIClientRef()
+        try FB01MIDI.check(MIDIClientCreateWithBlock("FB01EditorMIDI" as CFString, &client) { _ in }, "MIDIClientCreateWithBlock")
+        sharedClient = client
+        return client
+    }
+}
+
 private final class FB01SysExCaptureState: @unchecked Sendable {
     private let lock = NSLock()
     private var buffer: [UInt8] = []
@@ -304,6 +353,14 @@ private final class FB01SysExCaptureState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return messages
+    }
+
+    func drain() -> [[UInt8]] {
+        lock.lock()
+        defer { lock.unlock() }
+        let snapshot = messages
+        messages.removeAll(keepingCapacity: true)
+        return snapshot
     }
 
     private func append(bytes: [UInt8]) {

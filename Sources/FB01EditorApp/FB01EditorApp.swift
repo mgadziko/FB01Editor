@@ -472,9 +472,9 @@ final class DocumentModel: ObservableObject {
 
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = "The source library already contains \(sources.count) source\(sources.count == 1 ? "" : "s"). Replace them or append the fetched \(noun)?"
-        alert.addButton(withTitle: "Replace")
-        alert.addButton(withTitle: "Append")
+        alert.informativeText = "The source library already contains \(sources.count) source\(sources.count == 1 ? "" : "s"). Replace Library removes those sources before fetching. Add to Library keeps them and adds the fetched \(noun) after them."
+        alert.addButton(withTitle: "Replace Library")
+        alert.addButton(withTitle: "Add to Library")
         alert.addButton(withTitle: "Cancel")
 
         switch alert.runModal() {
