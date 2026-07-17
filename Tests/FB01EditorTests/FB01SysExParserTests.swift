@@ -179,6 +179,69 @@ import Testing
     #expect(instrument0.pmdControllerAssignment == .modulationWheel)
 }
 
+@Test func editsConfigurationDataAndRebuildsChecksum() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "current-configuration-single",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+    guard case let .currentConfigurationDump(systemChannel, packet) = artifact.messages[0] else {
+        Issue.record("Expected current configuration dump")
+        return
+    }
+
+    var configuration = try FB01ConfigurationData(bytes: packet.payload)
+    var instrument = configuration.instruments[0]
+    instrument = try instrument
+        .settingMIDIChannel(4)
+        .settingVoiceBank(7)
+        .settingVoiceNumber(42)
+        .settingOutputLevel(96)
+        .settingPan(33)
+        .settingMonoPolyMode(.mono)
+        .settingPMDControllerAssignment(.breathController)
+
+    configuration = try configuration
+        .settingName("EDITCFG")
+        .settingCombineModeEnabled(true)
+        .settingKeyCodeReceiveMode(.odd)
+        .settingLFOSpeed(77)
+        .settingAmplitudeModulationDepth(12)
+        .settingPitchModulationDepth(34)
+        .settingLFOWaveform(1)
+        .replacingInstrument(instrument)
+
+    let editedPacket = try FB01SysExPacket(payload: configuration.bytes)
+    let editedMessage = FB01SysExMessage.currentConfigurationDump(systemChannel: systemChannel, packet: editedPacket)
+    let reparsed = try FB01Artifact(sysexBytes: editedMessage.bytes)
+
+    guard case let .currentConfigurationDump(_, reparsedPacket) = reparsed.messages[0] else {
+        Issue.record("Expected edited current configuration dump")
+        return
+    }
+
+    let reparsedConfiguration = try FB01ConfigurationData(bytes: reparsedPacket.payload)
+    #expect(reparsedPacket.checksum == FB01.checksum(for: configuration.bytes))
+    #expect(reparsedConfiguration.name == "EDITCFG")
+    #expect(reparsedConfiguration.combineModeEnabled)
+    #expect(reparsedConfiguration.keyCodeReceiveMode == .odd)
+    #expect(reparsedConfiguration.lfoSpeed == 77)
+    #expect(reparsedConfiguration.amplitudeModulationDepth == 12)
+    #expect(reparsedConfiguration.pitchModulationDepth == 34)
+    #expect(reparsedConfiguration.lfoWaveform == 1)
+
+    let reparsedInstrument = reparsedConfiguration.instruments[0]
+    #expect(reparsedInstrument.midiChannel == 4)
+    #expect(reparsedInstrument.voiceBank == 7)
+    #expect(reparsedInstrument.voiceNumber == 42)
+    #expect(reparsedInstrument.outputLevel == 96)
+    #expect(reparsedInstrument.pan == 33)
+    #expect(reparsedInstrument.monoPolyMode == .mono)
+    #expect(reparsedInstrument.pmdControllerAssignment == .breathController)
+}
+
 @Test func parsesCapturedVoiceBankFixtures() throws {
     for bank in 1...7 {
         let fixtureURL = Bundle.module.url(

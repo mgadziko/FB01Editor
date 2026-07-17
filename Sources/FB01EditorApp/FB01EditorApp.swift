@@ -31,6 +31,18 @@ struct FB01EditorApplication: App {
                 }
                 .disabled(!document.canSaveConfigurationSet)
             }
+
+            CommandMenu("Device") {
+                Button("Send Selected Configuration to Current Edit Buffer...") {
+                    document.sendSelectedConfigurationToCurrentEditBuffer()
+                }
+                .disabled(!document.canSendSelectedConfiguration)
+
+                Button("Store Selected Configuration to Slot...") {
+                    document.storeSelectedConfigurationToDeviceSlot()
+                }
+                .disabled(!document.canStoreSelectedConfiguration)
+            }
         }
     }
 }
@@ -67,6 +79,14 @@ final class DocumentModel: ObservableObject {
 
     var canSaveConfigurationSet: Bool {
         sources.contains { $0.storedConfigurationNumber != nil }
+    }
+
+    var canSendSelectedConfiguration: Bool {
+        selectedSource?.editableConfigurationPayload != nil && !isBusy
+    }
+
+    var canStoreSelectedConfiguration: Bool {
+        canSendSelectedConfiguration
     }
 
     var selectedSource: LibrarySource? {
@@ -393,6 +413,105 @@ final class DocumentModel: ObservableObject {
         errorMessage = nil
     }
 
+    func configuration(sourceID: LibrarySource.ID, fallback: FB01ConfigurationData) -> FB01ConfigurationData {
+        sources.first { $0.id == sourceID }?.editedConfiguration ?? fallback
+    }
+
+    func updateConfiguration(sourceID: LibrarySource.ID, configuration: FB01ConfigurationData) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }),
+              !sources[index].isReadOnlyStoredConfiguration else {
+            return
+        }
+
+        sources[index].editedConfiguration = configuration
+        if sources[index].isConfigurationSource, !configuration.name.isEmpty {
+            sources[index].title = sources[index].configurationDisplayTitle(withName: configuration.name)
+        }
+        selectedSourceID = sources[index].id
+        statusMessage = "Edited \(sources[index].title) locally."
+        errorMessage = nil
+    }
+
+    func resetConfiguration(sourceID: LibrarySource.ID) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        sources[index].editedConfiguration = nil
+        sources[index].title = sources[index].artifact.messages.first?.sourceTitle(index: 1) ?? sources[index].title
+        selectedSourceID = sources[index].id
+        statusMessage = "Reset local configuration edit."
+        errorMessage = nil
+    }
+
+    func sendSelectedConfigurationToCurrentEditBuffer() {
+        guard let selectedSource,
+              let payload = selectedSource.editableConfigurationPayload else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Send Configuration to FB-01?"
+        alert.informativeText = "This sends the selected configuration to the FB-01 current edit buffer through \(selectedDestinationName). It does not store it in a numbered slot."
+        alert.addButton(withTitle: "Send")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        sendConfigurationPayload(
+            payload,
+            systemChannel: selectedSource.configurationSystemChannel ?? 0,
+            statusPrefix: "Sent configuration to current edit buffer"
+        )
+    }
+
+    func storeSelectedConfigurationToDeviceSlot() {
+        guard let selectedSource,
+              let payload = selectedSource.editableConfigurationPayload else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Store Configuration to FB-01 Slot"
+        alert.informativeText = "Choose a writable configuration slot. The app will send the selected configuration to the current edit buffer, then store it to that slot."
+        alert.addButton(withTitle: "Store")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
+        for number in 1...16 {
+            popup.addItem(withTitle: "Configuration \(number)")
+        }
+        if let storedNumber = selectedSource.storedConfigurationNumber, storedNumber < 16 {
+            popup.selectItem(at: storedNumber)
+        }
+        alert.accessoryView = popup
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        let slot = popup.indexOfSelectedItem
+        do {
+            let currentMessage = FB01SysExMessage.currentConfigurationDump(
+                systemChannel: selectedSource.configurationSystemChannel ?? 0,
+                packet: try FB01SysExPacket(payload: payload.bytes)
+            )
+            let storeCommand = FB01SysExMessage.command(.storeCurrentConfiguration(
+                systemChannel: selectedSource.configurationSystemChannel ?? 0,
+                number: slot
+            ))
+            let messages = try [currentMessage.bytes, storeCommand.bytes]
+            sendMIDI(messages, statusMessage: "Stored configuration to slot \(slot + 1) on \(selectedDestinationName).")
+        } catch {
+            errorMessage = "Store configuration failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
     private func load(urls: [URL]) {
         var loadedSources: [LibrarySource] = []
         var failures: [String] = []
@@ -486,6 +605,43 @@ final class DocumentModel: ObservableObject {
             return nil
         }
     }
+
+    private func sendConfigurationPayload(_ payload: FB01ConfigurationData, systemChannel: Int, statusPrefix: String) {
+        do {
+            let message = FB01SysExMessage.currentConfigurationDump(
+                systemChannel: systemChannel,
+                packet: try FB01SysExPacket(payload: payload.bytes)
+            )
+            sendMIDI([try message.bytes], statusMessage: "\(statusPrefix) on \(selectedDestinationName).")
+        } catch {
+            errorMessage = "Send configuration failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    private func sendMIDI(_ messages: [[UInt8]], statusMessage successMessage: String) {
+        guard !isBusy else { return }
+
+        let destinationIndex = selectedDestinationIndex
+        isFetchingFromDevice = true
+        statusMessage = "Sending MIDI..."
+        errorMessage = nil
+
+        Task {
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendSysEx(messages, destinationIndex: destinationIndex)
+                }.value
+                statusMessage = successMessage
+                errorMessage = nil
+            } catch {
+                errorMessage = "MIDI send failed: \(error)"
+                statusMessage = nil
+            }
+
+            isFetchingFromDevice = false
+        }
+    }
 }
 
 enum SourceInsertionMode {
@@ -499,9 +655,10 @@ struct LibrarySource: Identifiable, Equatable {
     var subtitle: String
     var artifact: FB01Artifact
     var editedVoices: [Int: FB01VoiceData] = [:]
+    var editedConfiguration: FB01ConfigurationData?
 
     var isEdited: Bool {
-        !editedVoices.isEmpty
+        !editedVoices.isEmpty || editedConfiguration != nil
     }
 
     var isSingleVoiceSource: Bool {
@@ -520,12 +677,90 @@ struct LibrarySource: Identifiable, Equatable {
         return number
     }
 
+    var isConfigurationSource: Bool {
+        guard artifact.messages.count == 1 else {
+            return false
+        }
+
+        switch artifact.messages[0] {
+        case .currentConfigurationDump, .configurationDump:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isReadOnlyStoredConfiguration: Bool {
+        guard let storedConfigurationNumber else {
+            return false
+        }
+        return storedConfigurationNumber >= 16
+    }
+
+    var editableConfigurationPayload: FB01ConfigurationData? {
+        if let editedConfiguration {
+            return editedConfiguration
+        }
+
+        guard artifact.messages.count == 1 else {
+            return nil
+        }
+
+        switch artifact.messages[0] {
+        case let .currentConfigurationDump(_, packet),
+             let .configurationDump(_, _, packet):
+            return try? FB01ConfigurationData(bytes: packet.payload)
+        default:
+            return nil
+        }
+    }
+
+    var configurationSystemChannel: Int? {
+        guard artifact.messages.count == 1 else {
+            return nil
+        }
+
+        switch artifact.messages[0] {
+        case let .currentConfigurationDump(systemChannel, _),
+             let .configurationDump(systemChannel, _, _):
+            return systemChannel
+        default:
+            return nil
+        }
+    }
+
+    func configurationDisplayTitle(withName name: String) -> String {
+        if let storedConfigurationNumber {
+            return "Configuration \(storedConfigurationNumber + 1): \(name)"
+        }
+        return name.isEmpty ? "Current Configuration" : name
+    }
+
     func artifactForSaving() throws -> FB01Artifact {
-        guard artifact.messages.count == 1, !editedVoices.isEmpty else {
+        guard artifact.messages.count == 1, isEdited else {
             return artifact
         }
 
         switch artifact.messages[0] {
+        case let .currentConfigurationDump(systemChannel, _):
+            guard let editedConfiguration else {
+                return artifact
+            }
+            return FB01Artifact(message: .currentConfigurationDump(
+                systemChannel: systemChannel,
+                packet: try FB01SysExPacket(payload: editedConfiguration.bytes)
+            ))
+
+        case let .configurationDump(systemChannel, number, _):
+            guard let editedConfiguration else {
+                return artifact
+            }
+            return FB01Artifact(message: .configurationDump(
+                systemChannel: systemChannel,
+                number: number,
+                packet: try FB01SysExPacket(payload: editedConfiguration.bytes)
+            ))
+
         case let .instrumentVoiceDump(systemChannel, instrument, _):
             guard let editedVoice = editedVoices[instrument + 1] else {
                 return artifact
@@ -926,9 +1161,9 @@ struct MessageView: View {
             case let .instrumentVoiceDump(systemChannel, instrument, packet):
                 SingleVoiceView(document: document, sourceID: sourceID, systemChannel: systemChannel, instrument: instrument, packet: packet)
             case let .currentConfigurationDump(systemChannel, packet):
-                ConfigurationView(systemChannel: systemChannel, packet: packet)
+                ConfigurationView(document: document, sourceID: sourceID, systemChannel: systemChannel, packet: packet)
             case let .configurationDump(systemChannel, number, packet):
-                ConfigurationView(systemChannel: systemChannel, packet: packet, label: "Stored Configuration \(number + 1)")
+                ConfigurationView(document: document, sourceID: sourceID, systemChannel: systemChannel, packet: packet, number: number, label: "Stored Configuration \(number + 1)")
             case let .voiceRAMDumpData(systemChannel, byteCount, data, checksum):
                 VoiceBankView(document: document, sourceID: sourceID, systemChannel: systemChannel, bank: 0, byteCount: byteCount, data: data, checksum: checksum, label: "Voice RAM 1")
             case let .voiceBankDumpData(systemChannel, bank, byteCount, data, checksum):
@@ -950,14 +1185,29 @@ struct MessageView: View {
 }
 
 struct ConfigurationView: View {
+    @ObservedObject var document: DocumentModel
+    var sourceID: LibrarySource.ID
     var systemChannel: Int
     var packet: FB01SysExPacket
+    var number: Int?
     var label: String = "Current Configuration"
+
+    private var isReadOnly: Bool {
+        (number ?? -1) >= 16
+    }
 
     var body: some View {
         Group {
             if let configuration = try? FB01ConfigurationData(bytes: packet.payload) {
-                configurationBody(configuration)
+                ConfigurationDetailView(
+                    document: document,
+                    sourceID: sourceID,
+                    systemChannel: systemChannel,
+                    packet: packet,
+                    originalConfiguration: configuration,
+                    label: label,
+                    isReadOnly: isReadOnly
+                )
             } else {
                 SummaryPanel(rows: [
                     KeyValueRow("Type", label),
@@ -966,22 +1216,359 @@ struct ConfigurationView: View {
             }
         }
     }
+}
 
-    private func configurationBody(_ configuration: FB01ConfigurationData) -> some View {
-            VStack(alignment: .leading, spacing: 14) {
-                SummaryPanel(rows: [
-                    KeyValueRow("Type", label),
-                    KeyValueRow("Name", configuration.name),
-                    KeyValueRow("System Channel", "\(systemChannel + 1)"),
-                    KeyValueRow("Checksum", String(format: "0x%02X", packet.checksum)),
-                    KeyValueRow("Payload Bytes", "\(packet.payload.count)"),
-                    KeyValueRow("Combine", configuration.combineModeEnabled ? "On" : "Off"),
-                    KeyValueRow("Key-Code Mode", configuration.keyCodeReceiveMode.displayName),
-                    KeyValueRow("LFO", "Speed \(configuration.lfoSpeed), AMD \(configuration.amplitudeModulationDepth), PMD \(configuration.pitchModulationDepth), Wave \(configuration.lfoWaveform)"),
-                ])
+struct ConfigurationDetailView: View {
+    @ObservedObject var document: DocumentModel
+    var sourceID: LibrarySource.ID
+    var systemChannel: Int
+    var packet: FB01SysExPacket
+    var originalConfiguration: FB01ConfigurationData
+    var label: String
+    var isReadOnly: Bool
+    @State private var nameText: String
+    @State private var editError: String?
 
-                InstrumentTable(instruments: configuration.instruments)
+    init(
+        document: DocumentModel,
+        sourceID: LibrarySource.ID,
+        systemChannel: Int,
+        packet: FB01SysExPacket,
+        originalConfiguration: FB01ConfigurationData,
+        label: String,
+        isReadOnly: Bool
+    ) {
+        self.document = document
+        self.sourceID = sourceID
+        self.systemChannel = systemChannel
+        self.packet = packet
+        self.originalConfiguration = originalConfiguration
+        self.label = label
+        self.isReadOnly = isReadOnly
+        _nameText = State(initialValue: document.configuration(sourceID: sourceID, fallback: originalConfiguration).name)
+    }
+
+    private var editableConfiguration: FB01ConfigurationData {
+        document.configuration(sourceID: sourceID, fallback: originalConfiguration)
+    }
+
+    private var isEdited: Bool {
+        editableConfiguration != originalConfiguration
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(editableConfiguration.name.isEmpty ? label : editableConfiguration.name)
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Text(isReadOnly ? "Read Only" : "Local Edit Only")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                if isEdited && !isReadOnly {
+                    Button {
+                        resetConfiguration()
+                    } label: {
+                        Label("Reset", systemImage: "arrow.uturn.backward")
+                    }
+                }
             }
+
+            SummaryPanel(rows: [
+                KeyValueRow("Type", label),
+                KeyValueRow("Name", editableConfiguration.name),
+                KeyValueRow("System Channel", "\(systemChannel + 1)"),
+                KeyValueRow("Checksum", String(format: "0x%02X", (try? FB01SysExPacket(payload: editableConfiguration.bytes).checksum) ?? packet.checksum)),
+                KeyValueRow("Payload Bytes", "\(packet.payload.count)"),
+                KeyValueRow("Combine", editableConfiguration.combineModeEnabled ? "On" : "Off"),
+                KeyValueRow("Key-Code Mode", editableConfiguration.keyCodeReceiveMode.displayName),
+                KeyValueRow("LFO", "Speed \(editableConfiguration.lfoSpeed), AMD \(editableConfiguration.amplitudeModulationDepth), PMD \(editableConfiguration.pitchModulationDepth), Wave \(editableConfiguration.lfoWaveform + 1)"),
+            ])
+
+            if isReadOnly {
+                InstrumentTable(instruments: editableConfiguration.instruments)
+            } else {
+                ConfigurationEditorControls(
+                    name: Binding(get: { nameText }, set: { setName($0) }),
+                    combineModeEnabled: Binding(get: { editableConfiguration.combineModeEnabled }, set: { setCombineMode($0) }),
+                    keyCodeReceiveMode: Binding(get: { editableConfiguration.keyCodeReceiveMode }, set: { setKeyCodeReceiveMode($0) }),
+                    lfoSpeed: Binding(get: { editableConfiguration.lfoSpeed }, set: { setLFOSpeed($0) }),
+                    amplitudeModulationDepth: Binding(get: { editableConfiguration.amplitudeModulationDepth }, set: { setAmplitudeModulationDepth($0) }),
+                    pitchModulationDepth: Binding(get: { editableConfiguration.pitchModulationDepth }, set: { setPitchModulationDepth($0) }),
+                    lfoWaveform: Binding(get: { editableConfiguration.lfoWaveform }, set: { setLFOWaveform($0) })
+                )
+
+                ConfigurationInstrumentEditor(
+                    instruments: editableConfiguration.instruments,
+                    updateInstrument: updateInstrument
+                )
+            }
+
+            if let editError {
+                Text(editError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+        .onChange(of: sourceID) { _, _ in
+            nameText = editableConfiguration.name
+            editError = nil
+        }
+        .onChange(of: editableConfiguration.name) { _, newName in
+            nameText = newName
+        }
+    }
+
+    private func resetConfiguration() {
+        document.resetConfiguration(sourceID: sourceID)
+        nameText = originalConfiguration.name
+        editError = nil
+    }
+
+    private func setName(_ value: String) {
+        let limited = String(value.prefix(FB01ConfigurationData.nameLength))
+        nameText = limited
+        updateConfiguration { try $0.settingName(limited) }
+    }
+
+    private func setCombineMode(_ value: Bool) {
+        updateConfiguration { try $0.settingCombineModeEnabled(value) }
+    }
+
+    private func setKeyCodeReceiveMode(_ value: FB01KeyCodeReceiveMode) {
+        updateConfiguration { try $0.settingKeyCodeReceiveMode(value) }
+    }
+
+    private func setLFOSpeed(_ value: Int) {
+        updateConfiguration { try $0.settingLFOSpeed(value) }
+    }
+
+    private func setAmplitudeModulationDepth(_ value: Int) {
+        updateConfiguration { try $0.settingAmplitudeModulationDepth(value) }
+    }
+
+    private func setPitchModulationDepth(_ value: Int) {
+        updateConfiguration { try $0.settingPitchModulationDepth(value) }
+    }
+
+    private func setLFOWaveform(_ value: Int) {
+        updateConfiguration { try $0.settingLFOWaveform(value) }
+    }
+
+    private func updateInstrument(_ instrument: FB01InstrumentConfiguration) {
+        updateConfiguration { try $0.replacingInstrument(instrument) }
+    }
+
+    private func updateConfiguration(_ edit: (FB01ConfigurationData) throws -> FB01ConfigurationData) {
+        do {
+            let editedConfiguration = try edit(editableConfiguration)
+            document.updateConfiguration(sourceID: sourceID, configuration: editedConfiguration)
+            editError = nil
+        } catch {
+            editError = "Edit failed: \(error)"
+        }
+    }
+}
+
+struct ConfigurationEditorControls: View {
+    @Binding var name: String
+    @Binding var combineModeEnabled: Bool
+    @Binding var keyCodeReceiveMode: FB01KeyCodeReceiveMode
+    @Binding var lfoSpeed: Int
+    @Binding var amplitudeModulationDepth: Int
+    @Binding var pitchModulationDepth: Int
+    @Binding var lfoWaveform: Int
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+            GridRow {
+                label("Name")
+                TextField("Name", text: $name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 180)
+            }
+
+            GridRow {
+                label("Combine")
+                Toggle("", isOn: $combineModeEnabled)
+                    .labelsHidden()
+            }
+
+            GridRow {
+                label("Key-Code")
+                Picker("", selection: $keyCodeReceiveMode) {
+                    Text("All").tag(FB01KeyCodeReceiveMode.all)
+                    Text("Even").tag(FB01KeyCodeReceiveMode.even)
+                    Text("Odd").tag(FB01KeyCodeReceiveMode.odd)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+            }
+
+            GridRow {
+                label("LFO Speed")
+                Stepper(value: $lfoSpeed, in: 0...127) {
+                    Text("\(lfoSpeed)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("AMD")
+                Stepper(value: $amplitudeModulationDepth, in: 0...127) {
+                    Text("\(amplitudeModulationDepth)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("PMD")
+                Stepper(value: $pitchModulationDepth, in: 0...127) {
+                    Text("\(pitchModulationDepth)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("Wave")
+                Picker("", selection: $lfoWaveform) {
+                    Text("1").tag(0)
+                    Text("2").tag(1)
+                    Text("3").tag(2)
+                    Text("4").tag(3)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+            }
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func label(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
+}
+
+struct ConfigurationInstrumentEditor: View {
+    var instruments: [FB01InstrumentConfiguration]
+    var updateInstrument: (FB01InstrumentConfiguration) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Instruments")
+                .font(.headline)
+
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+                GridRow {
+                    header("#")
+                    header("Notes")
+                    header("MIDI")
+                    header("Voice")
+                    header("Level")
+                    header("Pan")
+                    header("Mode")
+                    header("PMD")
+                }
+
+                Divider()
+                    .gridCellColumns(8)
+
+                ForEach(instruments, id: \.index) { instrument in
+                    ConfigurationInstrumentRow(instrument: instrument, updateInstrument: updateInstrument)
+                }
+            }
+            .font(.system(.body, design: .monospaced))
+        }
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+}
+
+struct ConfigurationInstrumentRow: View {
+    var instrument: FB01InstrumentConfiguration
+    var updateInstrument: (FB01InstrumentConfiguration) -> Void
+
+    var body: some View {
+        GridRow {
+            Text("\(instrument.index + 1)")
+            Text("\(instrument.noteCount)")
+            smallStepper(value: instrument.midiChannel + 1, range: 1...16) { try instrument.settingMIDIChannel($0 - 1) }
+            HStack(spacing: 4) {
+                smallStepper(value: instrument.voiceBank, range: 1...7) { try instrument.settingVoiceBank($0) }
+                Text("/")
+                    .foregroundStyle(.secondary)
+                smallStepper(value: instrument.voiceNumber, range: 0...95) { try instrument.settingVoiceNumber($0) }
+            }
+            smallStepper(value: instrument.outputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
+            smallStepper(value: instrument.pan, range: 0...127) { try instrument.settingPan($0) }
+            Picker("", selection: modeBinding) {
+                Text("Poly").tag(FB01MonoPolyMode.poly)
+                Text("Mono").tag(FB01MonoPolyMode.mono)
+            }
+            .labelsHidden()
+            .frame(width: 74)
+            Picker("", selection: pmdBinding) {
+                Text("Off").tag(FB01PMDControllerAssignment.notAssigned)
+                Text("AT").tag(FB01PMDControllerAssignment.afterTouch)
+                Text("MW").tag(FB01PMDControllerAssignment.modulationWheel)
+                Text("BC").tag(FB01PMDControllerAssignment.breathController)
+                Text("FC").tag(FB01PMDControllerAssignment.footController)
+            }
+            .labelsHidden()
+            .frame(width: 82)
+        }
+    }
+
+    private var modeBinding: Binding<FB01MonoPolyMode> {
+        Binding(
+            get: { instrument.monoPolyMode == .unknown ? .poly : instrument.monoPolyMode },
+            set: { mode in
+                if let updated = try? instrument.settingMonoPolyMode(mode) {
+                    updateInstrument(updated)
+                }
+            }
+        )
+    }
+
+    private var pmdBinding: Binding<FB01PMDControllerAssignment> {
+        Binding(
+            get: { instrument.pmdControllerAssignment == .unknown ? .notAssigned : instrument.pmdControllerAssignment },
+            set: { assignment in
+                if let updated = try? instrument.settingPMDControllerAssignment(assignment) {
+                    updateInstrument(updated)
+                }
+            }
+        )
+    }
+
+    private func smallStepper(
+        value: Int,
+        range: ClosedRange<Int>,
+        update: @escaping (Int) throws -> FB01InstrumentConfiguration
+    ) -> some View {
+        Stepper(value: Binding(
+            get: { value },
+            set: { newValue in
+                if let updated = try? update(newValue) {
+                    updateInstrument(updated)
+                }
+            }
+        ), in: range) {
+            Text("\(value)")
+                .frame(minWidth: 28, alignment: .trailing)
+                .monospacedDigit()
+        }
+        .frame(width: 78)
     }
 }
 

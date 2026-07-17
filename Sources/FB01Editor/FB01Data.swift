@@ -210,6 +210,7 @@ public struct FB01VoiceBankData: Equatable, Sendable {
 
 public struct FB01ConfigurationData: Equatable, Sendable {
     public static let byteCount = 160
+    public static let nameLength = 8
     public static let instrumentCount = 8
     public static let instrumentBlockByteCount = 16
 
@@ -223,10 +224,71 @@ public struct FB01ConfigurationData: Equatable, Sendable {
     }
 
     public var name: String {
-        let nameBytes = bytes.prefix(8).filter { $0 != 0 }
+        let nameBytes = bytes.prefix(Self.nameLength).filter { $0 != 0 }
         return String(bytes: nameBytes, encoding: .ascii)?
             .trimmingCharacters(in: .whitespaces)
             ?? ""
+    }
+
+    public func settingName(_ name: String) throws -> FB01ConfigurationData {
+        var copy = bytes
+        let allowed = name.prefix(Self.nameLength).map { character -> UInt8 in
+            guard character.unicodeScalars.count == 1,
+                  let scalar = character.unicodeScalars.first,
+                  scalar.isASCII,
+                  (0x20...0x7E).contains(UInt8(scalar.value)) else {
+                return 0x20
+            }
+            return UInt8(scalar.value)
+        }
+        copy.replaceSubrange(0..<Self.nameLength, with: allowed + Array(repeating: 0x20, count: Self.nameLength - allowed.count))
+        return try FB01ConfigurationData(bytes: copy)
+    }
+
+    public func settingCombineModeEnabled(_ enabled: Bool) throws -> FB01ConfigurationData {
+        var copy = bytes
+        copy[0x08] = enabled ? (copy[0x08] | 0x01) : (copy[0x08] & 0x7E)
+        return try FB01ConfigurationData(bytes: copy)
+    }
+
+    public func settingLFOSpeed(_ value: Int) throws -> FB01ConfigurationData {
+        try settingSevenBitByte(at: 0x09, value: value, name: "lfoSpeed")
+    }
+
+    public func settingAmplitudeModulationDepth(_ value: Int) throws -> FB01ConfigurationData {
+        try settingSevenBitByte(at: 0x0A, value: value, name: "amplitudeModulationDepth")
+    }
+
+    public func settingPitchModulationDepth(_ value: Int) throws -> FB01ConfigurationData {
+        try settingSevenBitByte(at: 0x0B, value: value, name: "pitchModulationDepth")
+    }
+
+    public func settingLFOWaveform(_ value: Int) throws -> FB01ConfigurationData {
+        let waveform = try FB01.validate(value, name: "lfoWaveform", range: 0...3)
+        var copy = bytes
+        copy[0x0C] = (copy[0x0C] & 0x7C) | waveform
+        return try FB01ConfigurationData(bytes: copy)
+    }
+
+    public func settingKeyCodeReceiveMode(_ mode: FB01KeyCodeReceiveMode) throws -> FB01ConfigurationData {
+        guard mode != .unknown else {
+            throw FB01SysExError.valueOutOfRange(name: "keyCodeReceiveMode", value: Int(mode.rawValue), range: 0...2)
+        }
+
+        var copy = bytes
+        copy[0x0D] = (copy[0x0D] & 0x7C) | mode.rawValue
+        return try FB01ConfigurationData(bytes: copy)
+    }
+
+    public func replacingInstrument(_ instrument: FB01InstrumentConfiguration) throws -> FB01ConfigurationData {
+        guard (0..<Self.instrumentCount).contains(instrument.index) else {
+            throw FB01SysExError.valueOutOfRange(name: "instrument", value: instrument.index, range: 0...(Self.instrumentCount - 1))
+        }
+
+        var copy = bytes
+        let offset = 0x20 + instrument.index * Self.instrumentBlockByteCount
+        copy.replaceSubrange(offset..<(offset + Self.instrumentBlockByteCount), with: instrument.bytes)
+        return try FB01ConfigurationData(bytes: copy)
     }
 
     public var combineModeEnabled: Bool {
@@ -258,6 +320,12 @@ public struct FB01ConfigurationData: Equatable, Sendable {
             let offset = 0x20 + index * Self.instrumentBlockByteCount
             return FB01InstrumentConfiguration(index: index, bytes: Array(bytes[offset..<(offset + Self.instrumentBlockByteCount)]))
         }
+    }
+
+    private func settingSevenBitByte(at offset: Int, value: Int, name: String) throws -> FB01ConfigurationData {
+        var copy = bytes
+        copy[offset] = try FB01.validate(value, name: name, range: 0...127)
+        return try FB01ConfigurationData(bytes: copy)
     }
 }
 
@@ -306,6 +374,48 @@ public struct FB01InstrumentConfiguration: Equatable, Sendable {
     }
     public var pmdControllerAssignment: FB01PMDControllerAssignment {
         FB01PMDControllerAssignment(rawValue: bytes[0x0E]) ?? .unknown
+    }
+
+    public func settingMIDIChannel(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x01, value: value, name: "midiChannel", range: 0...15)
+    }
+
+    public func settingVoiceBank(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x04, value: value, name: "voiceBank", range: 1...7)
+    }
+
+    public func settingVoiceNumber(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x05, value: value, name: "voiceNumber", range: 0...95)
+    }
+
+    public func settingOutputLevel(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x08, value: value, name: "outputLevel", range: 0...127)
+    }
+
+    public func settingPan(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x09, value: value, name: "pan", range: 0...127)
+    }
+
+    public func settingMonoPolyMode(_ mode: FB01MonoPolyMode) throws -> FB01InstrumentConfiguration {
+        guard mode != .unknown else {
+            throw FB01SysExError.valueOutOfRange(name: "monoPolyMode", value: Int(mode.rawValue), range: 0...1)
+        }
+
+        return try settingByte(at: 0x0D, value: Int(mode.rawValue), name: "monoPolyMode", range: 0...1)
+    }
+
+    public func settingPMDControllerAssignment(_ assignment: FB01PMDControllerAssignment) throws -> FB01InstrumentConfiguration {
+        guard assignment != .unknown else {
+            throw FB01SysExError.valueOutOfRange(name: "pmdControllerAssignment", value: Int(assignment.rawValue), range: 0...4)
+        }
+
+        return try settingByte(at: 0x0E, value: Int(assignment.rawValue), name: "pmdControllerAssignment", range: 0...4)
+    }
+
+    private func settingByte(at offset: Int, value: Int, name: String, range: ClosedRange<Int>) throws -> FB01InstrumentConfiguration {
+        var copy = bytes
+        copy[offset] = try FB01.validate(value, name: name, range: range)
+        return FB01InstrumentConfiguration(index: index, bytes: copy)
     }
 }
 

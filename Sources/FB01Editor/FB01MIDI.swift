@@ -158,6 +158,29 @@ public enum FB01MIDI {
         )
     }
 
+    public static func sendSysEx(
+        _ messages: [[UInt8]],
+        destinationIndex: Int = 0,
+        delayBetweenMessages: TimeInterval = 0.2
+    ) throws {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+
+        let destination = try destinationEndpoint(at: destinationIndex)
+        let client = try clientStore.client()
+
+        var outputPort = MIDIPortRef()
+        try check(MIDIOutputPortCreate(client, "FB01EditorMIDISendOutput" as CFString, &outputPort), "MIDIOutputPortCreate")
+        defer { MIDIPortDispose(outputPort) }
+
+        for (index, bytes) in messages.enumerated() {
+            try send(bytes: bytes, to: destination, outputPort: outputPort)
+            if index < messages.index(before: messages.endIndex), delayBetweenMessages > 0 {
+                Thread.sleep(forTimeInterval: delayBetweenMessages)
+            }
+        }
+    }
+
     private static func requestBatch(
         _ kinds: [FB01MIDIRequestKind],
         sourceIndex: Int,
