@@ -1,0 +1,41 @@
+# FB01 Editor
+
+Offline-first editor and librarian core for the Yamaha FB-01 FM sound generator.
+
+The first milestone is intentionally hardware-free:
+
+- model FB-01 voice and configuration data
+- encode and decode documented Yamaha SysEx command forms
+- validate 7-bit MIDI payloads, nibble-packed voice data, and Yamaha checksums
+- add CoreMIDI transport only after the byte-level core is covered by tests
+
+## Current Scope
+
+This package currently contains the `FB01Editor` Swift library. It does not send MIDI yet.
+
+The core is shaped around separately saveable artifacts:
+
+- single instrument voice dumps
+- voice bank dumps
+- current configuration dumps
+- stored configuration dumps
+- configuration sets
+- raw SysEx fallback files
+
+## Early Command Coverage
+
+- instrument parameter changes
+- MIDI-channel parameter changes
+- system parameter changes
+- voice bank and configuration dump requests
+- current instrument/configuration store requests
+- FB-01 voice-byte nibble packing
+- Yamaha 7-bit two's-complement checksums
+
+## Parser Coverage
+
+- split `.syx` byte streams into individual SysEx messages
+- classify generated request/store commands
+- parse checksum-protected dump packets
+- classify dump messages into artifact kinds for future file save/open workflows
+- round-trip artifacts through `.syx` files without requiring connected hardware
