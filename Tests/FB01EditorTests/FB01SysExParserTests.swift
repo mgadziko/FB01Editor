@@ -154,7 +154,7 @@ import Testing
 }
 
 @Test func parsesCapturedVoiceBankFixtures() throws {
-    for bank in 1...6 {
+    for bank in 1...7 {
         let fixtureURL = Bundle.module.url(
             forResource: "voice-bank-\(bank)",
             withExtension: "syx",
@@ -172,7 +172,7 @@ import Testing
         }
 
         #expect(systemChannel == 0)
-        #expect(parsedBank == bank)
+        #expect(parsedBank == bank - 1)
         #expect(byteCount == 64)
         #expect(data.count == 6_352)
         #expect(try artifact.sysexBytes == Array(Data(contentsOf: fixtureURL)))
@@ -184,7 +184,7 @@ import Testing
 
 @Test func decodesCapturedVoiceBankNames() throws {
     let fixtureURL = Bundle.module.url(
-        forResource: "voice-bank-2",
+        forResource: "voice-bank-3",
         withExtension: "syx",
         subdirectory: "Fixtures"
     )!
@@ -259,9 +259,9 @@ import Testing
     #expect(voiceBank.voices.count == 48)
 }
 
-@Test func preservesCapturedVoiceBank7ResponseAsRawSysEx() throws {
+@Test func preservesInvalidBankByte7ResponseAsRawSysEx() throws {
     let fixtureURL = Bundle.module.url(
-        forResource: "voice-bank-7-response",
+        forResource: "invalid-bank-byte-7-response",
         withExtension: "syx",
         subdirectory: "Fixtures"
     )!

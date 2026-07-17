@@ -275,7 +275,7 @@ struct VoiceBankView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     SummaryPanel(rows: [
                         KeyValueRow("Type", "Voice Bank"),
-                        KeyValueRow("Bank", label == "Voice Bank" ? "\(voiceBank.bank)" : label),
+                        KeyValueRow("Bank", label == "Voice Bank" ? "\(voiceBank.bank + 1)" : label),
                         KeyValueRow("System Channel", "\(systemChannel + 1)"),
                         KeyValueRow("Byte Count", "\(byteCount)"),
                         KeyValueRow("Data Bytes", "\(data.count)"),

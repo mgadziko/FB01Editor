@@ -161,7 +161,8 @@ public enum FB01SysExMessage: Equatable, Sendable {
             let systemChannel = Int(body[1] & 0x0F)
             switch body[3] {
             case 0x00:
-                return .requestVoiceBank(systemChannel: systemChannel, bank: Int(body[4]))
+                guard body[4] <= 0x06 else { return nil }
+                return .requestVoiceBank(systemChannel: systemChannel, bank: Int(body[4]) + 1)
             case 0x01 where body[4] == 0x00:
                 return .requestCurrentConfiguration(systemChannel: systemChannel)
             case 0x02:
@@ -212,6 +213,7 @@ public enum FB01SysExMessage: Equatable, Sendable {
 
         if messageNumber == 0x00 {
             if body[3] == 0x00, body.count >= 9 {
+                guard body[4] <= 0x06 else { return nil }
                 let bank = Int(body[4])
                 let count = try FB01.packetByteCount(high: body[5], low: body[6])
                 let data = try body[7..<body.index(before: body.endIndex)].map { try FB01.validateSevenBit($0) }

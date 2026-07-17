@@ -34,8 +34,8 @@ public struct FB01VoiceBankData: Equatable, Sendable {
     public var data: [UInt8]
 
     public init(bank: Int, data: [UInt8]) throws {
-        guard (0...7).contains(bank) else {
-            throw FB01SysExError.valueOutOfRange(name: "voiceBank", value: bank, range: 0...7)
+        guard (0...6).contains(bank) else {
+            throw FB01SysExError.valueOutOfRange(name: "voiceBank", value: bank, range: 0...6)
         }
 
         self.bank = bank

@@ -85,11 +85,12 @@ If manual front-panel dumps work but computer-originated requests time out, veri
 Observed hardware behavior:
 
 - Current configuration requests return 171-byte dumps with the working `USB MIDI Device` interface.
-- Numbered voice-bank requests use bank numbers `1...7` per the FB-01 service manual.
-- Banks 1 through 6 returned 6363-byte dumps with the working interface.
-- Bank 7 returned the short response `F0 43 60 04 F7`, which is preserved as a raw SysEx fixture.
+- The app and CLI use the FB-01's user-facing bank numbers `1...7`; the SysEx request byte is zero-based (`0...6`).
+- Banks 1 through 7 returned 6363-byte dumps with the working interface when requested with SysEx bank bytes `0...6`.
+- Bank 7 returned a 6363-byte dump when requested with SysEx bank byte `6`.
+- A raw request with SysEx bank byte `7` returned the short response `F0 43 60 04 F7`, which is preserved as an invalid-request raw SysEx fixture.
 - The separate `voice-ram1` request returned a 6360-byte dump. This appears to be the user/RAM bank path described separately from numbered voice-bank requests, and is preserved as `voice-ram1.syx`.
-- `Tests/FB01EditorTests/Fixtures/voice-bank-1.syx` through `voice-bank-6.syx` are captured numbered voice-bank fixtures. They are recognized, exact-byte round-tripped, and decoded into 48 voice entries each.
+- `Tests/FB01EditorTests/Fixtures/voice-bank-1.syx` through `voice-bank-7.syx` are captured numbered voice-bank fixtures. They are recognized, exact-byte round-tripped, and decoded into 48 voice entries each.
 - `Tests/FB01EditorTests/Fixtures/voice-ram1.syx` is recognized as voice RAM dump data and decoded through the same 48-voice table model.
 - `FB01EditorApp` displays a voice table when a captured voice-bank dump is opened.
 

@@ -179,7 +179,7 @@ public enum FB01Command: Equatable, Sendable {
             case let .requestVoiceBank(systemChannel, bank):
                 let system = try FB01.validateSystemChannel(systemChannel)
                 let bank = try FB01.validateVoiceBank(bank)
-                return envelope([FB01.fb01Substatus, system, 0x20, 0x00, bank])
+                return envelope([FB01.fb01Substatus, system, 0x20, 0x00, bank - 1])
 
             case let .requestCurrentConfiguration(systemChannel):
                 let system = try FB01.validateSystemChannel(systemChannel)
