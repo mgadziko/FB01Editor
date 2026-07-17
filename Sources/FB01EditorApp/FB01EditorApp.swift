@@ -32,8 +32,8 @@ struct FB01EditorApplication: App {
 
 @MainActor
 final class DocumentModel: ObservableObject {
-    @Published var loadedFileName: String?
-    @Published var artifact: FB01Artifact?
+    @Published var sources: [LibrarySource] = []
+    @Published var selectedSourceID: LibrarySource.ID?
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published var isFetchingFromDevice = false
@@ -56,7 +56,22 @@ final class DocumentModel: ObservableObject {
     }
 
     var hasDocument: Bool {
-        artifact != nil
+        selectedSource != nil
+    }
+
+    var selectedSource: LibrarySource? {
+        guard let selectedSourceID else {
+            return sources.first
+        }
+        return sources.first { $0.id == selectedSourceID } ?? sources.first
+    }
+
+    var selectedArtifact: FB01Artifact? {
+        selectedSource?.artifact
+    }
+
+    var selectedTitle: String? {
+        selectedSource?.title
     }
 
     var selectedSourceName: String {
@@ -101,14 +116,14 @@ final class DocumentModel: ObservableObject {
     func openSysEx() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.sysex, .data]
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
 
-        guard panel.runModal() == .OK, let url = panel.url else {
+        guard panel.runModal() == .OK else {
             return
         }
 
-        load(url: url)
+        load(urls: panel.urls)
     }
 
     func fetchAllBanksFromDevice() {
@@ -134,8 +149,15 @@ final class DocumentModel: ObservableObject {
                     ).flatMap { $0 }
                 }.value
 
-                artifact = try FB01Artifact(sysexBytes: bytes)
-                loadedFileName = "FB-01 Live Fetch"
+                let artifact = try FB01Artifact(sysexBytes: bytes)
+                sources = artifact.messages.enumerated().map { index, message in
+                    LibrarySource(
+                        title: message.sourceTitle(index: index + 1),
+                        subtitle: "FB-01 Live Fetch",
+                        artifact: FB01Artifact(message: message)
+                    )
+                }
+                selectedSourceID = sources.first?.id
                 statusMessage = "Fetched from \(sourceName) -> \(destinationName): current configuration, Banks 1-7, and Voice RAM 1."
                 errorMessage = nil
             } catch {
@@ -148,33 +170,51 @@ final class DocumentModel: ObservableObject {
     }
 
     func saveSysEx() {
-        guard let artifact else { return }
+        guard let selectedSource else { return }
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.sysex]
-        panel.nameFieldStringValue = loadedFileName ?? "fb01-export.syx"
+        panel.nameFieldStringValue = "\(safeFileName(selectedSource.title)).syx"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
         }
 
         do {
-            try artifact.writeSysEx(to: url)
+            try selectedSource.artifact.writeSysEx(to: url)
             errorMessage = nil
         } catch {
             errorMessage = "Save failed: \(error)"
         }
     }
 
-    private func load(url: URL) {
-        do {
-            artifact = try FB01Artifact.readSysEx(from: url)
-            loadedFileName = url.lastPathComponent
+    func selectSource(_ source: LibrarySource) {
+        selectedSourceID = source.id
+    }
+
+    private func load(urls: [URL]) {
+        var loadedSources: [LibrarySource] = []
+        var failures: [String] = []
+
+        for url in urls {
+            do {
+                let artifact = try FB01Artifact.readSysEx(from: url)
+                loadedSources.append(contentsOf: LibrarySource.sources(from: artifact, fileName: url.lastPathComponent))
+            } catch {
+                failures.append("\(url.lastPathComponent): \(error)")
+            }
+        }
+
+        if !loadedSources.isEmpty {
+            sources.append(contentsOf: loadedSources)
+            selectedSourceID = loadedSources.first?.id
+            statusMessage = "Opened \(loadedSources.count) source\(loadedSources.count == 1 ? "" : "s")."
+        }
+
+        if failures.isEmpty {
             errorMessage = nil
-        } catch {
-            artifact = nil
-            loadedFileName = nil
-            errorMessage = "Open failed: \(error)"
+        } else {
+            errorMessage = "Open failed for \(failures.joined(separator: ", "))"
         }
     }
 
@@ -203,6 +243,43 @@ final class DocumentModel: ObservableObject {
         }
         return Int32(UserDefaults.standard.integer(forKey: key))
     }
+
+    private func safeFileName(_ name: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let sanitized = name
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .unicodeScalars
+            .map { allowed.contains($0) ? Character($0) : "-" }
+            .reduce("") { $0 + String($1) }
+        return sanitized.isEmpty ? "fb01-export" : sanitized
+    }
+}
+
+struct LibrarySource: Identifiable, Equatable {
+    var id = UUID()
+    var title: String
+    var subtitle: String
+    var artifact: FB01Artifact
+
+    static func sources(from artifact: FB01Artifact, fileName: String) -> [LibrarySource] {
+        guard artifact.messages.count > 1 else {
+            return [
+                LibrarySource(
+                    title: artifact.messages.first?.sourceTitle(index: 1) ?? fileName,
+                    subtitle: fileName,
+                    artifact: artifact
+                ),
+            ]
+        }
+
+        return artifact.messages.enumerated().map { index, message in
+            LibrarySource(
+                title: message.sourceTitle(index: index + 1),
+                subtitle: fileName,
+                artifact: FB01Artifact(message: message)
+            )
+        }
+    }
 }
 
 private extension UTType {
@@ -219,8 +296,8 @@ struct ContentView: View {
             Divider()
 
             Group {
-                if let artifact = document.artifact {
-                    ArtifactView(artifact: artifact)
+                if !document.sources.isEmpty {
+                    LibraryView(document: document)
                 } else {
                     EmptyStateView()
                 }
@@ -298,7 +375,7 @@ struct ToolbarView: View {
             Divider()
                 .frame(height: 20)
 
-            Text(document.loadedFileName ?? "No File")
+            Text(document.selectedTitle ?? "No Source")
                 .font(.headline)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -332,6 +409,59 @@ struct EmptyStateView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct LibraryView: View {
+    @ObservedObject var document: DocumentModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Sources")
+                    .font(.headline)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 6)
+
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(document.sources) { source in
+                            Button {
+                                document.selectSource(source)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(source.title)
+                                        .font(.body.weight(.medium))
+                                        .lineLimit(1)
+                                    Text(source.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .background(
+                                    document.selectedSource?.id == source.id
+                                        ? Color.accentColor.opacity(0.18)
+                                        : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 6)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(12)
+            .frame(minWidth: 220, idealWidth: 220, maxWidth: 220, maxHeight: .infinity, alignment: .topLeading)
+
+            Divider()
+
+            if let artifact = document.selectedArtifact {
+                ArtifactView(artifact: artifact)
+            }
+        }
     }
 }
 
@@ -443,6 +573,8 @@ struct MessageView: View {
             }
 
             switch message {
+            case let .instrumentVoiceDump(systemChannel, instrument, packet):
+                SingleVoiceView(systemChannel: systemChannel, instrument: instrument, packet: packet)
             case let .currentConfigurationDump(systemChannel, packet):
                 ConfigurationView(systemChannel: systemChannel, packet: packet)
             case let .configurationDump(systemChannel, number, packet):
@@ -500,6 +632,38 @@ struct ConfigurationView: View {
 
                 InstrumentTable(instruments: configuration.instruments)
             }
+    }
+}
+
+struct SingleVoiceView: View {
+    var systemChannel: Int
+    var instrument: Int
+    var packet: FB01SysExPacket
+
+    var body: some View {
+        Group {
+            if let voice = try? FB01VoiceData(bytes: FB01.nibbleDecode(packet.payload)) {
+                VStack(alignment: .leading, spacing: 14) {
+                    SummaryPanel(rows: [
+                        KeyValueRow("Type", "Single Voice"),
+                        KeyValueRow("Name", voice.name),
+                        KeyValueRow("System Channel", "\(systemChannel + 1)"),
+                        KeyValueRow("Instrument", "\(instrument + 1)"),
+                        KeyValueRow("Checksum", String(format: "0x%02X", packet.checksum)),
+                    ])
+
+                    VoiceDetailView(
+                        systemChannel: systemChannel,
+                        summary: FB01VoiceSummary(number: instrument + 1, voice: voice, encodedRecordBytes: [])
+                    )
+                }
+            } else {
+                SummaryPanel(rows: [
+                    KeyValueRow("Type", "Single Voice"),
+                    KeyValueRow("Error", "Invalid voice payload"),
+                ])
+            }
+        }
     }
 }
 
@@ -842,8 +1006,12 @@ private extension FB01SysExMessage {
             return "Voice RAM 1"
         case let .voiceBankDumpData(_, bank, _, _, _):
             return "Bank \(bank + 1)"
-        case .instrumentVoiceDump:
-            return "Single Voice"
+        case let .instrumentVoiceDump(_, instrument, packet):
+            if let voice = try? FB01VoiceData(bytes: FB01.nibbleDecode(packet.payload)),
+               !voice.name.isEmpty {
+                return voice.name
+            }
+            return "Single Voice \(instrument + 1)"
         case .unitIDDump:
             return "Unit ID"
         default:

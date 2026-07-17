@@ -63,6 +63,12 @@ public struct FB01VoiceSummary: Equatable, Identifiable, Sendable {
     public var voice: FB01VoiceData
     public var encodedRecordBytes: [UInt8]
 
+    public init(number: Int, voice: FB01VoiceData, encodedRecordBytes: [UInt8]) {
+        self.number = number
+        self.voice = voice
+        self.encodedRecordBytes = encodedRecordBytes
+    }
+
     public var name: String { voice.name }
 }
 
