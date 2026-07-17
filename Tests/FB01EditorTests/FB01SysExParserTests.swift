@@ -258,6 +258,37 @@ import Testing
     #expect(firstOperator.releaseRate == 8)
 }
 
+@Test func exportsCapturedVoiceAsSingleVoiceArtifact() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-3",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+    guard case let .voiceBankDumpData(_, bank, _, data, _) = artifact.messages[0] else {
+        Issue.record("Expected captured voice bank dump")
+        return
+    }
+
+    let voiceBank = try FB01VoiceBankData(bank: bank, data: data)
+    let brass = voiceBank.voices[0].voice
+    let exported = try brass.instrumentVoiceArtifact(systemChannel: 0, instrument: 0)
+
+    #expect(exported.kind == .singleVoice)
+    #expect(exported.messages.count == 1)
+
+    guard case let .instrumentVoiceDump(systemChannel, instrument, packet) = exported.messages[0] else {
+        Issue.record("Expected exported instrument voice dump")
+        return
+    }
+
+    #expect(systemChannel == 0)
+    #expect(instrument == 0)
+    #expect(try FB01.nibbleDecode(packet.payload) == brass.bytes)
+    #expect(try FB01Artifact(sysexBytes: exported.sysexBytes) == exported)
+}
+
 @Test func parsesCapturedVoiceRAMFixture() throws {
     let fixtureURL = Bundle.module.url(
         forResource: "voice-ram1",

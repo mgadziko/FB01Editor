@@ -283,7 +283,11 @@ struct VoiceBankView: View {
                         KeyValueRow("Checksum", String(format: "0x%02X", checksum)),
                     ])
 
-                    VoiceBankBrowser(voices: voiceBank.voices, selectedVoiceNumber: $selectedVoiceNumber)
+                    VoiceBankBrowser(
+                        systemChannel: systemChannel,
+                        voices: voiceBank.voices,
+                        selectedVoiceNumber: $selectedVoiceNumber
+                    )
                 }
             } else {
                 SummaryPanel(rows: [
@@ -296,6 +300,7 @@ struct VoiceBankView: View {
 }
 
 struct VoiceBankBrowser: View {
+    var systemChannel: Int
     var voices: [FB01VoiceSummary]
     @Binding var selectedVoiceNumber: Int
 
@@ -340,7 +345,7 @@ struct VoiceBankBrowser: View {
             Divider()
 
             if let selectedVoice {
-                VoiceDetailView(summary: selectedVoice)
+                VoiceDetailView(systemChannel: systemChannel, summary: selectedVoice)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
@@ -348,7 +353,9 @@ struct VoiceBankBrowser: View {
 }
 
 struct VoiceDetailView: View {
+    var systemChannel: Int
     var summary: FB01VoiceSummary
+    @State private var exportError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -359,14 +366,19 @@ struct VoiceDetailView: View {
                 Text("Voice \(summary.number)")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
+                Button {
+                    exportVoice()
+                } label: {
+                    Label("Export Voice", systemImage: "square.and.arrow.down")
+                }
             }
 
             SummaryPanel(rows: [
                 KeyValueRow("Name", summary.voice.name),
-                KeyValueRow("Algorithm", "\(summary.voice.algorithm)"),
+                KeyValueRow("Algorithm", "\(summary.voice.algorithm + 1)"),
                 KeyValueRow("Feedback", "\(summary.voice.feedbackLevel)"),
                 KeyValueRow("Transpose", "\(summary.voice.transpose)"),
-                KeyValueRow("LFO", "Speed \(summary.voice.lfoSpeed), Wave \(summary.voice.lfoWaveform), Sync \(summary.voice.lfoSyncEnabled ? "On" : "Off")"),
+                KeyValueRow("LFO", "Speed \(summary.voice.lfoSpeed), Wave \(summary.voice.lfoWaveform + 1), Sync \(summary.voice.lfoSyncEnabled ? "On" : "Off")"),
                 KeyValueRow("Modulation", "AMD \(summary.voice.amplitudeModulationDepth), PMD \(summary.voice.pitchModulationDepth), AMS \(summary.voice.amplitudeModulationSensitivity), PMS \(summary.voice.pitchModulationSensitivity)"),
                 KeyValueRow("Operators", enabledOperatorsText),
                 KeyValueRow("Output", outputText),
@@ -374,6 +386,12 @@ struct VoiceDetailView: View {
             ])
 
             OperatorTable(operators: summary.voice.operators)
+
+            if let exportError {
+                Text(exportError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
         }
     }
 
@@ -386,6 +404,34 @@ struct VoiceDetailView: View {
 
     private var outputText: String {
         "Left \(summary.voice.leftOutputEnabled ? "On" : "Off"), Right \(summary.voice.rightOutputEnabled ? "On" : "Off")"
+    }
+
+    private func exportVoice() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.sysex]
+        panel.nameFieldStringValue = "voice-\(summary.number)-\(safeFileName(summary.name)).syx"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            let artifact = try summary.voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
+            try artifact.writeSysEx(to: url)
+            exportError = nil
+        } catch {
+            exportError = "Export failed: \(error)"
+        }
+    }
+
+    private func safeFileName(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = trimmed.isEmpty ? "untitled" : trimmed
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        return fallback
+            .unicodeScalars
+            .map { allowed.contains($0) ? Character($0) : "-" }
+            .reduce("") { $0 + String($1) }
     }
 }
 

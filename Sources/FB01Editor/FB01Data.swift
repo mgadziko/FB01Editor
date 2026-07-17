@@ -19,6 +19,11 @@ public struct FB01VoiceData: Equatable, Sendable {
         FB01.nibbleEncode(bytes)
     }
 
+    public func instrumentVoiceArtifact(systemChannel: Int = 0, instrument: Int = 0) throws -> FB01Artifact {
+        let packet = try FB01SysExPacket(payload: nibbleEncodedBytes)
+        return FB01Artifact(message: .instrumentVoiceDump(systemChannel: systemChannel, instrument: instrument, packet: packet))
+    }
+
     public var name: String {
         String(bytes: bytes.prefix(Self.nameLength), encoding: .ascii)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
