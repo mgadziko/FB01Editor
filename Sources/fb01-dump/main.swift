@@ -6,7 +6,9 @@ enum FB01DumpError: Error, CustomStringConvertible {
     case commandFailed(String, OSStatus)
     case missingValue(String)
     case noSources
+    case noDestinations
     case sourceNotFound(String)
+    case destinationNotFound(String)
     case unknownArgument(String)
 
     var description: String {
@@ -17,8 +19,12 @@ enum FB01DumpError: Error, CustomStringConvertible {
             "Missing value for \(option)"
         case .noSources:
             "No MIDI sources are visible to CoreMIDI."
+        case .noDestinations:
+            "No MIDI destinations are visible to CoreMIDI."
         case .sourceNotFound(let query):
             "No MIDI source matches \(query). Run `fb01-dump list` to inspect available sources."
+        case .destinationNotFound(let query):
+            "No MIDI destination matches \(query). Run `fb01-dump list` to inspect available destinations."
         case .unknownArgument(let argument):
             "Unknown argument: \(argument)"
         }
@@ -32,11 +38,58 @@ struct MIDISourceInfo {
     var uniqueID: Int32?
 }
 
+struct MIDIDestinationInfo {
+    var index: Int
+    var endpoint: MIDIEndpointRef
+    var displayName: String
+    var uniqueID: Int32?
+}
+
 struct CaptureOptions {
     var sourceQuery: String?
     var outputURL: URL?
     var timeoutSeconds: TimeInterval?
     var maxMessages: Int?
+}
+
+struct RequestOptions {
+    var capture = CaptureOptions()
+    var destinationQuery: String?
+    var systemChannel = 0
+    var bank = 0
+}
+
+enum DumpRequestKind {
+    case unitID
+    case currentConfiguration
+    case voiceRAM1
+    case voiceBank(Int)
+
+    func bytes(systemChannel: Int) throws -> [UInt8] {
+        switch self {
+        case .unitID:
+            try FB01Command.requestUnitID(systemChannel: systemChannel).bytes
+        case .currentConfiguration:
+            try FB01Command.requestCurrentConfiguration(systemChannel: systemChannel).bytes
+        case .voiceRAM1:
+            try FB01Command.requestVoiceRAM1(systemChannel: systemChannel).bytes
+        case .voiceBank(let bank):
+            try FB01Command.requestVoiceBank(systemChannel: systemChannel, bank: bank).bytes
+        }
+    }
+
+    var displayName: String {
+        switch self {
+        case .unitID:
+            "unit ID"
+        case .currentConfiguration:
+            "current configuration"
+        case .voiceRAM1:
+            "voice RAM 1"
+        case .voiceBank(let bank):
+            "voice bank \(bank)"
+        }
+    }
 }
 
 final class SysExCaptureState: @unchecked Sendable {
@@ -121,6 +174,20 @@ func availableSources() -> [MIDISourceInfo] {
     }
 }
 
+func availableDestinations() -> [MIDIDestinationInfo] {
+    (0..<MIDIGetNumberOfDestinations()).map { index in
+        let endpoint = MIDIGetDestination(index)
+        return MIDIDestinationInfo(
+            index: index,
+            endpoint: endpoint,
+            displayName: midiStringProperty(endpoint, kMIDIPropertyDisplayName)
+                ?? midiStringProperty(endpoint, kMIDIPropertyName)
+                ?? "Destination \(index)",
+            uniqueID: midiIntegerProperty(endpoint, kMIDIPropertyUniqueID)
+        )
+    }
+}
+
 func selectedSource(matching query: String?, in sources: [MIDISourceInfo]) throws -> MIDISourceInfo {
     guard !sources.isEmpty else {
         throw FB01DumpError.noSources
@@ -141,16 +208,48 @@ func selectedSource(matching query: String?, in sources: [MIDISourceInfo]) throw
     throw FB01DumpError.sourceNotFound(query)
 }
 
-func printSources() {
-    let sources = availableSources()
-    if sources.isEmpty {
-        print("No MIDI sources found.")
-        return
+func selectedDestination(matching query: String?, in destinations: [MIDIDestinationInfo]) throws -> MIDIDestinationInfo {
+    guard !destinations.isEmpty else {
+        throw FB01DumpError.noDestinations
     }
 
-    for source in sources {
-        let unique = source.uniqueID.map { " id=\($0)" } ?? ""
-        print("[\(source.index)] \(source.displayName)\(unique)")
+    guard let query, !query.isEmpty else {
+        return destinations[0]
+    }
+
+    if let index = Int(query), let destination = destinations.first(where: { $0.index == index }) {
+        return destination
+    }
+
+    if let destination = destinations.first(where: { $0.displayName.localizedCaseInsensitiveContains(query) }) {
+        return destination
+    }
+
+    throw FB01DumpError.destinationNotFound(query)
+}
+
+func printSources() {
+    let sources = availableSources()
+    let destinations = availableDestinations()
+
+    print("Sources")
+    if sources.isEmpty {
+        print("  none")
+    } else {
+        for source in sources {
+            let unique = source.uniqueID.map { " id=\($0)" } ?? ""
+            print("  [\(source.index)] \(source.displayName)\(unique)")
+        }
+    }
+
+    print("Destinations")
+    if destinations.isEmpty {
+        print("  none")
+    } else {
+        for destination in destinations {
+            let unique = destination.uniqueID.map { " id=\($0)" } ?? ""
+            print("  [\(destination.index)] \(destination.displayName)\(unique)")
+        }
     }
 }
 
@@ -180,6 +279,56 @@ func parseCaptureOptions(_ arguments: ArraySlice<String>) throws -> CaptureOptio
             let valueIndex = arguments.index(after: index)
             guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
             options.maxMessages = Int(arguments[valueIndex])
+            index = arguments.index(after: valueIndex)
+        default:
+            throw FB01DumpError.unknownArgument(argument)
+        }
+    }
+
+    return options
+}
+
+func parseRequestOptions(_ arguments: ArraySlice<String>) throws -> RequestOptions {
+    var options = RequestOptions()
+    var index = arguments.startIndex
+
+    while index < arguments.endIndex {
+        let argument = arguments[index]
+        switch argument {
+        case "--source", "-s":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.capture.sourceQuery = arguments[valueIndex]
+            index = arguments.index(after: valueIndex)
+        case "--destination", "-d":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.destinationQuery = arguments[valueIndex]
+            index = arguments.index(after: valueIndex)
+        case "--output", "-o":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.capture.outputURL = URL(fileURLWithPath: arguments[valueIndex])
+            index = arguments.index(after: valueIndex)
+        case "--timeout":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.capture.timeoutSeconds = TimeInterval(arguments[valueIndex])
+            index = arguments.index(after: valueIndex)
+        case "--count":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.capture.maxMessages = Int(arguments[valueIndex])
+            index = arguments.index(after: valueIndex)
+        case "--system-channel":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.systemChannel = Int(arguments[valueIndex]) ?? options.systemChannel
+            index = arguments.index(after: valueIndex)
+        case "--bank":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.bank = Int(arguments[valueIndex]) ?? options.bank
             index = arguments.index(after: valueIndex)
         default:
             throw FB01DumpError.unknownArgument(argument)
@@ -257,12 +406,103 @@ func capture(options: CaptureOptions) throws {
     }
 }
 
+func send(bytes: [UInt8], to destination: MIDIDestinationInfo, outputPort: MIDIPortRef) throws {
+    try bytes.forEach { _ = try FB01.validateByte($0) }
+
+    let packetListByteCount = MemoryLayout<MIDIPacketList>.size + bytes.count + 256
+    let rawPacketListPointer = UnsafeMutableRawPointer.allocate(
+        byteCount: packetListByteCount,
+        alignment: MemoryLayout<MIDIPacketList>.alignment
+    )
+    defer { rawPacketListPointer.deallocate() }
+
+    let packetListPointer = rawPacketListPointer.bindMemory(to: MIDIPacketList.self, capacity: 1)
+    var packet = MIDIPacketListInit(packetListPointer)
+    bytes.withUnsafeBufferPointer { buffer in
+        packet = MIDIPacketListAdd(
+            packetListPointer,
+            packetListByteCount,
+            packet,
+            0,
+            bytes.count,
+            buffer.baseAddress!
+        )
+    }
+
+    try check(MIDISend(outputPort, destination.endpoint, packetListPointer), "MIDISend")
+}
+
+func requestDump(kind: DumpRequestKind, options: RequestOptions) throws {
+    let sources = availableSources()
+    let destinations = availableDestinations()
+    let source = try selectedSource(matching: options.capture.sourceQuery, in: sources)
+    let destination = try selectedDestination(matching: options.destinationQuery, in: destinations)
+    let requestBytes = try kind.bytes(systemChannel: options.systemChannel)
+    let state = SysExCaptureState()
+
+    var client = MIDIClientRef()
+    try check(MIDIClientCreateWithBlock("FB01DumpRequest" as CFString, &client) { notification in
+        let messageID = notification.pointee.messageID.rawValue
+        fputs("CoreMIDI notification: \(messageID)\n", stderr)
+    }, "MIDIClientCreateWithBlock")
+    defer { MIDIClientDispose(client) }
+
+    var inputPort = MIDIPortRef()
+    try check(MIDIInputPortCreateWithBlock(client, "FB01DumpRequestInput" as CFString, &inputPort) { packetList, _ in
+        state.append(packetList: packetList)
+    }, "MIDIInputPortCreateWithBlock")
+    defer { MIDIPortDispose(inputPort) }
+
+    var outputPort = MIDIPortRef()
+    try check(MIDIOutputPortCreate(client, "FB01DumpRequestOutput" as CFString, &outputPort), "MIDIOutputPortCreate")
+    defer { MIDIPortDispose(outputPort) }
+
+    try check(MIDIPortConnectSource(inputPort, source.endpoint, nil), "MIDIPortConnectSource")
+
+    print("Listening to [\(source.index)] \(source.displayName)")
+    print("Sending \(kind.displayName) request to [\(destination.index)] \(destination.displayName)")
+    try send(bytes: requestBytes, to: destination, outputPort: outputPort)
+
+    let start = Date()
+    let timeout = options.capture.timeoutSeconds ?? 15
+    var lastCount = 0
+
+    while true {
+        RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
+
+        let messages = state.snapshot()
+        if messages.count > lastCount {
+            for (offset, message) in messages[lastCount...].enumerated() {
+                let number = lastCount + offset + 1
+                print("Received #\(number): \(message.count) bytes, \(classify(message))")
+            }
+            lastCount = messages.count
+            try writeMessages(messages, to: options.capture.outputURL)
+        }
+
+        if let maxMessages = options.capture.maxMessages, messages.count >= maxMessages {
+            return
+        }
+
+        if Date().timeIntervalSince(start) >= timeout {
+            if messages.isEmpty {
+                print("Timed out with no complete SysEx messages.")
+            }
+            return
+        }
+    }
+}
+
 func printUsage() {
     print("""
     fb01-dump list
     fb01-dump listen [--source <index-or-name>] [--output <file.syx>] [--count <n>] [--timeout <seconds>]
+    fb01-dump request voice-bank --bank <0-6> [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
+    fb01-dump request voice-ram1 [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
+    fb01-dump request current-configuration [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
+    fb01-dump request unit-id [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
 
-    Receive-only FB-01 SysEx helper. It does not send requests or write to the device.
+    FB-01 SysEx helper. `listen` is receive-only. `request` sends only documented dump requests and does not store or write data to the device.
     """)
 }
 
@@ -278,6 +518,25 @@ do {
         printSources()
     case "listen", "capture":
         try capture(options: try parseCaptureOptions(arguments.dropFirst()))
+    case "request":
+        let requestArguments = arguments.dropFirst()
+        guard let requestCommand = requestArguments.first else {
+            throw FB01DumpError.unknownArgument("")
+        }
+
+        let options = try parseRequestOptions(requestArguments.dropFirst())
+        switch requestCommand {
+        case "voice-bank":
+            try requestDump(kind: .voiceBank(options.bank), options: options)
+        case "voice-ram1":
+            try requestDump(kind: .voiceRAM1, options: options)
+        case "current-configuration":
+            try requestDump(kind: .currentConfiguration, options: options)
+        case "unit-id":
+            try requestDump(kind: .unitID, options: options)
+        default:
+            throw FB01DumpError.unknownArgument(requestArguments.first ?? "")
+        }
     case "--help", "-h", "help":
         printUsage()
     default:

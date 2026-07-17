@@ -61,9 +61,9 @@ swift run FB01EditorApp
 
 It opens `.syx` files, shows artifact/message metadata, displays decoded current configuration fields, and exports the original SysEx bytes. It does not send MIDI or write to the FB-01.
 
-## Receive-Only MIDI Capture
+## MIDI Capture And Safe Dump Requests
 
-The `fb01-dump` executable is the first CoreMIDI tool. It is intentionally receive-only:
+The `fb01-dump` executable is the first CoreMIDI tool. Manual capture is receive-only:
 
 ```sh
 swift run fb01-dump list
@@ -71,6 +71,16 @@ swift run fb01-dump listen --source "USB Midi Cable" --output fb01-dump.syx --co
 ```
 
 Use the FB-01 front panel to send a bulk dump while `listen` is running. The tool saves complete SysEx messages, then classifies them with the library parser. Request/send/write-back features should wait until captured dumps are verified.
+
+The tool also supports documented dump requests that do not store or write data to the FB-01:
+
+```sh
+swift run fb01-dump request unit-id --source 0 --destination 0 --output unit-id.syx
+swift run fb01-dump request current-configuration --source 0 --destination 0 --output current-config.syx
+swift run fb01-dump request voice-bank --bank 2 --source 0 --destination 0 --output voice-bank-2.syx
+```
+
+If manual front-panel dumps work but computer-originated requests time out, verify the MIDI Out to FB-01 MIDI In cable direction, the FB-01 system channel, and whether the interface is passing outbound SysEx.
 
 ## Recovered Context
 
