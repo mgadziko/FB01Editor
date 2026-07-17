@@ -37,6 +37,7 @@ final class DocumentModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published var isFetchingFromDevice = false
+    @Published var isFetchingConfigurations = false
     @Published var midiSources: [FB01MIDIEndpoint] = []
     @Published var midiDestinations: [FB01MIDIEndpoint] = []
     @Published var selectedSourceIndex = 0
@@ -79,7 +80,11 @@ final class DocumentModel: ObservableObject {
     }
 
     var canManageSource: Bool {
-        selectedSource != nil && !isFetchingFromDevice
+        selectedSource != nil && !isBusy
+    }
+
+    var isBusy: Bool {
+        isFetchingFromDevice || isFetchingConfigurations
     }
 
     var selectedSourceName: String {
@@ -135,7 +140,7 @@ final class DocumentModel: ObservableObject {
     }
 
     func fetchAllBanksFromDevice() {
-        guard !isFetchingFromDevice else { return }
+        guard !isBusy else { return }
         guard let insertionMode = fetchInsertionMode() else { return }
 
         isFetchingFromDevice = true
@@ -175,6 +180,50 @@ final class DocumentModel: ObservableObject {
             }
 
             isFetchingFromDevice = false
+        }
+    }
+
+    func fetchStoredConfigurationsFromDevice() {
+        guard !isBusy else { return }
+        guard let insertionMode = fetchInsertionMode(title: "Fetch FB-01 Configurations", noun: "configurations") else { return }
+
+        isFetchingConfigurations = true
+        statusMessage = "Fetching FB-01 configurations..."
+        errorMessage = nil
+
+        Task {
+            let sourceIndex = selectedSourceIndex
+            let destinationIndex = selectedDestinationIndex
+            let sourceName = selectedSourceName
+            let destinationName = selectedDestinationName
+
+            do {
+                let bytes = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.requestStoredConfigurations(
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: 0,
+                        timeoutPerRequest: 15
+                    ).flatMap { $0 }
+                }.value
+
+                let artifact = try FB01Artifact(sysexBytes: bytes)
+                let fetchedSources = artifact.messages.enumerated().map { index, message in
+                    LibrarySource(
+                        title: message.sourceTitle(index: index + 1),
+                        subtitle: message.configurationSubtitle ?? "FB-01 Configuration Fetch",
+                        artifact: FB01Artifact(message: message)
+                    )
+                }
+                applyFetchedSources(fetchedSources, insertionMode: insertionMode)
+                statusMessage = "Fetched \(fetchedSources.count) configurations from \(sourceName) -> \(destinationName)."
+                errorMessage = nil
+            } catch {
+                errorMessage = "Configuration fetch failed: \(error)"
+                statusMessage = nil
+            }
+
+            isFetchingConfigurations = false
         }
     }
 
@@ -375,14 +424,14 @@ final class DocumentModel: ObservableObject {
         selectedSourceID = fetchedSources.first?.id ?? sources.first?.id
     }
 
-    private func fetchInsertionMode() -> SourceInsertionMode? {
+    private func fetchInsertionMode(title: String = "Fetch FB-01 Banks", noun: String = "banks") -> SourceInsertionMode? {
         guard !sources.isEmpty else {
             return .replace
         }
 
         let alert = NSAlert()
-        alert.messageText = "Fetch FB-01 Banks"
-        alert.informativeText = "The source library already contains \(sources.count) source\(sources.count == 1 ? "" : "s"). Replace them or append the fetched banks?"
+        alert.messageText = title
+        alert.informativeText = "The source library already contains \(sources.count) source\(sources.count == 1 ? "" : "s"). Replace them or append the fetched \(noun)?"
         alert.addButton(withTitle: "Replace")
         alert.addButton(withTitle: "Append")
         alert.addButton(withTitle: "Cancel")
@@ -536,7 +585,14 @@ struct ToolbarView: View {
             } label: {
                 Label(document.isFetchingFromDevice ? "Fetching" : "Fetch Banks", systemImage: "pianokeys")
             }
-            .disabled(document.isFetchingFromDevice)
+            .disabled(document.isBusy)
+
+            Button {
+                document.fetchStoredConfigurationsFromDevice()
+            } label: {
+                Label(document.isFetchingConfigurations ? "Fetching" : "Fetch Configs", systemImage: "list.bullet.rectangle")
+            }
+            .disabled(document.isBusy)
 
             Menu {
                 ForEach(document.midiSources, id: \.index) { source in
@@ -549,7 +605,7 @@ struct ToolbarView: View {
             } label: {
                 Label(document.selectedSourceName, systemImage: "arrow.down.circle")
             }
-            .disabled(document.midiSources.isEmpty || document.isFetchingFromDevice)
+            .disabled(document.midiSources.isEmpty || document.isBusy)
 
             Menu {
                 ForEach(document.midiDestinations, id: \.index) { destination in
@@ -562,14 +618,14 @@ struct ToolbarView: View {
             } label: {
                 Label(document.selectedDestinationName, systemImage: "arrow.up.circle")
             }
-            .disabled(document.midiDestinations.isEmpty || document.isFetchingFromDevice)
+            .disabled(document.midiDestinations.isEmpty || document.isBusy)
 
             Button {
                 document.refreshMIDIEndpoints()
             } label: {
                 Label("Refresh MIDI", systemImage: "arrow.clockwise")
             }
-            .disabled(document.isFetchingFromDevice)
+            .disabled(document.isBusy)
 
             Divider()
                 .frame(height: 20)
@@ -645,7 +701,7 @@ struct LibraryView: View {
                         Image(systemName: "trash")
                     }
                     .help("Clear source library")
-                    .disabled(document.sources.isEmpty || document.isFetchingFromDevice)
+                    .disabled(document.sources.isEmpty || document.isBusy)
                 }
                 .buttonStyle(.borderless)
                 .padding(.horizontal, 10)
@@ -823,7 +879,7 @@ struct MessageView: View {
             case let .currentConfigurationDump(systemChannel, packet):
                 ConfigurationView(systemChannel: systemChannel, packet: packet)
             case let .configurationDump(systemChannel, number, packet):
-                ConfigurationView(systemChannel: systemChannel, packet: packet, label: "Stored Configuration \(number)")
+                ConfigurationView(systemChannel: systemChannel, packet: packet, label: "Stored Configuration \(number + 1)")
             case let .voiceRAMDumpData(systemChannel, byteCount, data, checksum):
                 VoiceBankView(document: document, sourceID: sourceID, systemChannel: systemChannel, bank: 0, byteCount: byteCount, data: data, checksum: checksum, label: "Voice RAM 1")
             case let .voiceBankDumpData(systemChannel, bank, byteCount, data, checksum):
@@ -1402,7 +1458,8 @@ private extension FB01SysExMessage {
         case .currentConfigurationDump:
             return "Current Configuration"
         case let .configurationDump(_, number, _):
-            return "Configuration \(number)"
+            let userNumber = number + 1
+            return userNumber >= 17 ? "Configuration \(userNumber) Read Only" : "Configuration \(userNumber)"
         case .voiceRAMDumpData:
             return "Voice RAM 1"
         case let .voiceBankDumpData(_, bank, _, _, _):
@@ -1418,6 +1475,15 @@ private extension FB01SysExMessage {
         default:
             return "Message \(index)"
         }
+    }
+
+    var configurationSubtitle: String? {
+        guard case let .configurationDump(_, number, _) = self else {
+            return nil
+        }
+
+        let userNumber = number + 1
+        return userNumber >= 17 ? "FB-01 Preset Configuration" : "FB-01 Stored Configuration"
     }
 
     var displayName: String {

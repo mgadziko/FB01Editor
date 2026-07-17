@@ -42,6 +42,7 @@ public struct FB01MIDIEndpoint: Equatable, Sendable {
 public enum FB01MIDIRequestKind: Equatable, Sendable {
     case unitID
     case currentConfiguration
+    case configuration(Int)
     case voiceRAM1
     case voiceBank(Int)
 
@@ -51,6 +52,8 @@ public enum FB01MIDIRequestKind: Equatable, Sendable {
             try FB01Command.requestUnitID(systemChannel: systemChannel).bytes
         case .currentConfiguration:
             try FB01Command.requestCurrentConfiguration(systemChannel: systemChannel).bytes
+        case .configuration(let number):
+            try FB01Command.requestConfiguration(systemChannel: systemChannel, number: number - 1).bytes
         case .voiceRAM1:
             try FB01Command.requestVoiceRAM1(systemChannel: systemChannel).bytes
         case .voiceBank(let bank):
@@ -64,6 +67,8 @@ public enum FB01MIDIRequestKind: Equatable, Sendable {
             "unit ID"
         case .currentConfiguration:
             "current configuration"
+        case .configuration(let number):
+            "configuration \(number)"
         case .voiceRAM1:
             "voice RAM 1"
         case .voiceBank(let bank):
@@ -152,6 +157,27 @@ public enum FB01MIDI {
             systemChannel: systemChannel,
             timeout: timeoutPerRequest
         ))
+        return messages
+    }
+
+    public static func requestStoredConfigurations(
+        sourceIndex: Int = 0,
+        destinationIndex: Int = 0,
+        systemChannel: Int = 0,
+        timeoutPerRequest: TimeInterval = 15
+    ) throws -> [[UInt8]] {
+        var messages: [[UInt8]] = []
+
+        for number in 1...20 {
+            messages.append(try request(
+                .configuration(number),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: timeoutPerRequest
+            ))
+        }
+
         return messages
     }
 
