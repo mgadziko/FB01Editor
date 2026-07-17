@@ -423,13 +423,41 @@ struct LibrarySource: Identifiable, Equatable {
     }
 
     func artifactForSaving() throws -> FB01Artifact {
-        guard artifact.messages.count == 1,
-              case let .instrumentVoiceDump(systemChannel, instrument, _) = artifact.messages[0],
-              let editedVoice = editedVoices[instrument + 1] else {
+        guard artifact.messages.count == 1, !editedVoices.isEmpty else {
             return artifact
         }
 
-        return try editedVoice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument)
+        switch artifact.messages[0] {
+        case let .instrumentVoiceDump(systemChannel, instrument, _):
+            guard let editedVoice = editedVoices[instrument + 1] else {
+                return artifact
+            }
+            return try editedVoice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument)
+
+        case let .voiceBankDumpData(systemChannel, bank, byteCount, data, _):
+            let voiceBank = try FB01VoiceBankData(bank: bank, data: data)
+            let editedBank = try voiceBank.replacingVoices(editedVoices)
+            return FB01Artifact(message: .voiceBankDumpData(
+                systemChannel: systemChannel,
+                bank: bank,
+                byteCount: byteCount,
+                data: editedBank.data,
+                checksum: FB01.checksum(for: editedBank.data)
+            ))
+
+        case let .voiceRAMDumpData(systemChannel, byteCount, data, _):
+            let voiceBank = try FB01VoiceBankData(bank: 0, data: data)
+            let editedBank = try voiceBank.replacingVoices(editedVoices)
+            return FB01Artifact(message: .voiceRAMDumpData(
+                systemChannel: systemChannel,
+                byteCount: byteCount,
+                data: editedBank.data,
+                checksum: FB01.checksum(for: editedBank.data)
+            ))
+
+        default:
+            return artifact
+        }
     }
 
     static func sources(from artifact: FB01Artifact, fileName: String) -> [LibrarySource] {

@@ -328,6 +328,47 @@ import Testing
     #expect(try FB01Artifact(sysexBytes: exported.sysexBytes) == exported)
 }
 
+@Test func editsVoiceBankDataAndRoundTripsRebuiltBankArtifact() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-3",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+    guard case let .voiceBankDumpData(systemChannel, bank, byteCount, data, _) = artifact.messages[0] else {
+        Issue.record("Expected captured voice bank dump")
+        return
+    }
+
+    let voiceBank = try FB01VoiceBankData(bank: bank, data: data)
+    let editedVoice = try voiceBank.voices[0].voice
+        .settingName("BANKED")
+        .settingAlgorithm(1)
+        .settingFeedbackLevel(2)
+    let editedBank = try voiceBank.replacingVoices([1: editedVoice])
+    let editedChecksum = FB01.checksum(for: editedBank.data)
+    let rebuilt = FB01Artifact(message: .voiceBankDumpData(
+        systemChannel: systemChannel,
+        bank: bank,
+        byteCount: byteCount,
+        data: editedBank.data,
+        checksum: editedChecksum
+    ))
+    let reparsed = try FB01Artifact(sysexBytes: rebuilt.sysexBytes)
+
+    guard case let .voiceBankDumpData(_, reparsedBank, _, reparsedData, reparsedChecksum) = reparsed.messages[0] else {
+        Issue.record("Expected rebuilt voice bank dump")
+        return
+    }
+
+    let reparsedVoiceBank = try FB01VoiceBankData(bank: reparsedBank, data: reparsedData)
+    #expect(reparsedChecksum == editedChecksum)
+    #expect(reparsedVoiceBank.voices[0].voice == editedVoice)
+    #expect(reparsedVoiceBank.voices[1].voice == voiceBank.voices[1].voice)
+    #expect(reparsedData.prefix(FB01VoiceBankData.bankHeaderByteCount) == data.prefix(FB01VoiceBankData.bankHeaderByteCount))
+}
+
 @Test func parsesCapturedVoiceRAMFixture() throws {
     let fixtureURL = Bundle.module.url(
         forResource: "voice-ram1",
@@ -353,6 +394,42 @@ import Testing
 
     let voiceBank = try FB01VoiceBankData(bank: 0, data: data)
     #expect(voiceBank.voices.count == 48)
+}
+
+@Test func editsVoiceRAMDataAndRoundTripsRebuiltRAMArtifact() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-ram1",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+    guard case let .voiceRAMDumpData(systemChannel, byteCount, data, _) = artifact.messages[0] else {
+        Issue.record("Expected captured voice RAM dump")
+        return
+    }
+
+    let voiceBank = try FB01VoiceBankData(bank: 0, data: data)
+    let editedVoice = try voiceBank.voices[5].voice.settingName("RAMEDIT")
+    let editedBank = try voiceBank.replacingVoices([6: editedVoice])
+    let editedChecksum = FB01.checksum(for: editedBank.data)
+    let rebuilt = FB01Artifact(message: .voiceRAMDumpData(
+        systemChannel: systemChannel,
+        byteCount: byteCount,
+        data: editedBank.data,
+        checksum: editedChecksum
+    ))
+    let reparsed = try FB01Artifact(sysexBytes: rebuilt.sysexBytes)
+
+    guard case let .voiceRAMDumpData(_, _, reparsedData, reparsedChecksum) = reparsed.messages[0] else {
+        Issue.record("Expected rebuilt voice RAM dump")
+        return
+    }
+
+    let reparsedVoiceBank = try FB01VoiceBankData(bank: 0, data: reparsedData)
+    #expect(reparsedChecksum == editedChecksum)
+    #expect(reparsedVoiceBank.voices[5].voice == editedVoice)
+    #expect(reparsedVoiceBank.voices[4].voice == voiceBank.voices[4].voice)
 }
 
 @Test func preservesInvalidBankByte7ResponseAsRawSysEx() throws {

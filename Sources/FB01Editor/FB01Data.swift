@@ -181,6 +181,23 @@ public struct FB01VoiceBankData: Equatable, Sendable {
         }
     }
 
+    public func replacingVoices(_ editedVoices: [Int: FB01VoiceData]) throws -> FB01VoiceBankData {
+        var editedData = data
+
+        for (number, voice) in editedVoices {
+            guard (1...Self.voiceCount).contains(number) else {
+                throw FB01SysExError.valueOutOfRange(name: "voiceNumber", value: number, range: 1...Self.voiceCount)
+            }
+
+            let recordStart = Self.bankHeaderByteCount + (number - 1) * Self.encodedRecordByteCount
+            let nibbleStart = recordStart + Self.encodedRecordPrefixByteCount
+            let nibbleEnd = recordStart + Self.encodedRecordByteCount
+            editedData.replaceSubrange(nibbleStart..<nibbleEnd, with: voice.nibbleEncodedBytes)
+        }
+
+        return try FB01VoiceBankData(bank: bank, data: editedData)
+    }
+
     private static func decodeVoiceRecord(_ encodedRecordBytes: [UInt8]) throws -> FB01VoiceData {
         guard encodedRecordBytes.count == Self.encodedRecordByteCount else {
             throw FB01SysExError.invalidPayloadLength(expected: Self.encodedRecordByteCount, actual: encodedRecordBytes.count)

@@ -59,7 +59,7 @@ The first real FB-01 fixture is a captured current configuration named `single`.
 swift run FB01EditorApp
 ```
 
-It opens one or more `.syx` files from the File menu, shows them in a source library, displays decoded current configuration fields, displays voice banks in a selectable browser with a local voice editor, saves the selected source from the File menu, and exports the selected voice as a standalone single-voice SysEx file. The first local editor controls cover voice name, algorithm, feedback, and LFO speed. Local voice edits are tracked in the source library, so they survive voice/source selection changes; edited standalone single-voice sources save through the File menu, while full edited-bank reassembly is still a later milestone. It can also fetch the current configuration, Banks 1-7, and Voice RAM 1 from the connected FB-01 into the same source browser, with a choice to replace or append when sources are already open. Sources can be renamed, removed, or cleared locally. It does not write to the FB-01.
+It opens one or more `.syx` files from the File menu, shows them in a source library, displays decoded current configuration fields, displays voice banks in a selectable browser with a local voice editor, saves the selected source from the File menu, and exports the selected voice as a standalone single-voice SysEx file. The first local editor controls cover voice name, algorithm, feedback, and LFO speed. Local voice edits are tracked in the source library, so they survive voice/source selection changes; edited standalone single-voice sources, numbered voice-bank sources, and Voice RAM sources save through the File menu with rebuilt checksums. It can also fetch the current configuration, Banks 1-7, and Voice RAM 1 from the connected FB-01 into the same source browser, with a choice to replace or append when sources are already open. Sources can be renamed, removed, or cleared locally. It does not write to the FB-01.
 
 To build a launchable local `.app` bundle:
 
@@ -105,7 +105,7 @@ Observed hardware behavior:
 - `FB01EditorApp` can open multiple `.syx` files at once and adds each opened bank, configuration, or single voice to the source library.
 - Source-library entries can be renamed, removed individually, or cleared from the app without touching disk files or the FB-01.
 - The selected voice can be edited locally and exported as a standalone single-voice SysEx artifact without writing anything to the FB-01.
-- Local voice edits are stored on the source entry. Edited standalone single-voice sources are saved by File > Save SysEx; edited bank voices currently export as single voices, with full edited-bank save/reassembly reserved for a later milestone.
+- Local voice edits are stored on the source entry. Edited standalone single-voice, numbered voice-bank, and Voice RAM sources are saved by File > Save SysEx with rebuilt SysEx checksums.
 - `FB01EditorApp` has a manual `Fetch Banks` action that requests current configuration, Banks 1-7, and Voice RAM 1, then shows the fetched dumps in a source sidebar. Source and destination MIDI endpoints are selectable from the toolbar and remembered between launches. This is still read-only and does not perform any store/write-back commands.
 
 ## Recovered Context
