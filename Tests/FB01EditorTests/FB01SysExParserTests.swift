@@ -75,6 +75,32 @@ import Testing
     #expect(combined.messages.count == 2)
 }
 
+@Test func roundTripsTwentyStoredConfigurationSet() throws {
+    let messages = try (0..<20).map { number in
+        let payload = Array(repeating: UInt8(number), count: FB01ConfigurationData.byteCount)
+        return FB01SysExMessage.configurationDump(
+            systemChannel: 0,
+            number: number,
+            packet: try FB01SysExPacket(payload: payload)
+        )
+    }
+    let artifact = FB01Artifact(kind: .configurationSet, messages: messages)
+    let reparsed = try FB01Artifact(sysexBytes: artifact.sysexBytes)
+
+    #expect(reparsed.kind == .configurationSet)
+    #expect(reparsed.messages.count == 20)
+    #expect(reparsed == artifact)
+
+    for (index, message) in reparsed.messages.enumerated() {
+        guard case let .configurationDump(_, number, packet) = message else {
+            Issue.record("Expected stored configuration \(index)")
+            return
+        }
+        #expect(number == index)
+        #expect(packet.payload == Array(repeating: UInt8(index), count: FB01ConfigurationData.byteCount))
+    }
+}
+
 @Test func roundTripsArtifactThroughSyxFile() throws {
     let tempURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)

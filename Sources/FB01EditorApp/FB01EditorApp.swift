@@ -25,6 +25,11 @@ struct FB01EditorApplication: App {
                 }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!document.hasDocument)
+
+                Button("Save Configuration Set...") {
+                    document.saveConfigurationSet()
+                }
+                .disabled(!document.canSaveConfigurationSet)
             }
         }
     }
@@ -58,6 +63,10 @@ final class DocumentModel: ObservableObject {
 
     var hasDocument: Bool {
         selectedSource != nil
+    }
+
+    var canSaveConfigurationSet: Bool {
+        sources.contains { $0.storedConfigurationNumber != nil }
     }
 
     var selectedSource: LibrarySource? {
@@ -243,6 +252,38 @@ final class DocumentModel: ObservableObject {
             errorMessage = nil
         } catch {
             errorMessage = "Save failed: \(error)"
+        }
+    }
+
+    func saveConfigurationSet() {
+        let configurationSources = sources
+            .filter { $0.storedConfigurationNumber != nil }
+            .sorted { ($0.storedConfigurationNumber ?? 0) < ($1.storedConfigurationNumber ?? 0) }
+
+        guard !configurationSources.isEmpty else {
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.sysex]
+        panel.nameFieldStringValue = configurationSources.count == 20
+            ? "fb01-configurations-1-20.syx"
+            : "fb01-configurations.syx"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            let messages = try configurationSources.flatMap { source in
+                try source.artifactForSaving().messages
+            }
+            let artifact = FB01Artifact(kind: .configurationSet, messages: messages)
+            try artifact.writeSysEx(to: url)
+            statusMessage = "Saved \(configurationSources.count) configuration\(configurationSources.count == 1 ? "" : "s")."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Save configuration set failed: \(error)"
         }
     }
 
@@ -469,6 +510,14 @@ struct LibrarySource: Identifiable, Equatable {
             return false
         }
         return true
+    }
+
+    var storedConfigurationNumber: Int? {
+        guard artifact.messages.count == 1,
+              case let .configurationDump(_, number, _) = artifact.messages[0] else {
+            return nil
+        }
+        return number
     }
 
     func artifactForSaving() throws -> FB01Artifact {
