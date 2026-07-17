@@ -59,7 +59,7 @@ The first real FB-01 fixture is a captured current configuration named `single`.
 swift run FB01EditorApp
 ```
 
-It opens one or more `.syx` files from the File menu, shows them in a source library, displays decoded current configuration fields, displays voice banks in a selectable browser with a read-only voice detail panel, saves the selected source's original SysEx bytes from the File menu, and exports the selected voice as a standalone single-voice SysEx file. It can also fetch the current configuration, Banks 1-7, and Voice RAM 1 from the connected FB-01 into the same read-only source browser. It does not write to the FB-01.
+It opens one or more `.syx` files from the File menu, shows them in a source library, displays decoded current configuration fields, displays voice banks in a selectable browser with a read-only voice detail panel, saves the selected source's original SysEx bytes from the File menu, and exports the selected voice as a standalone single-voice SysEx file. It can also fetch the current configuration, Banks 1-7, and Voice RAM 1 from the connected FB-01 into the same read-only source browser, with a choice to replace or append when sources are already open. Sources can be renamed, removed, or cleared locally. It does not write to the FB-01.
 
 To build a launchable local `.app` bundle:
 
@@ -103,6 +103,7 @@ Observed hardware behavior:
 - `Tests/FB01EditorTests/Fixtures/voice-ram1.syx` is recognized as voice RAM dump data and decoded through the same 48-voice table model.
 - `FB01EditorApp` displays a selectable voice browser and read-only voice detail panel when a captured voice-bank dump is opened.
 - `FB01EditorApp` can open multiple `.syx` files at once and adds each opened bank, configuration, or single voice to the source library.
+- Source-library entries can be renamed, removed individually, or cleared from the app without touching disk files or the FB-01.
 - The selected voice can be exported as a standalone single-voice SysEx artifact without writing anything to the FB-01.
 - `FB01EditorApp` has a manual `Fetch Banks` action that requests current configuration, Banks 1-7, and Voice RAM 1, then shows the fetched dumps in a source sidebar. Source and destination MIDI endpoints are selectable from the toolbar and remembered between launches. This is still read-only and does not perform any store/write-back commands.
 

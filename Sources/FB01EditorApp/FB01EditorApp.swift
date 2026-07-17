@@ -74,6 +74,10 @@ final class DocumentModel: ObservableObject {
         selectedSource?.title
     }
 
+    var canManageSource: Bool {
+        selectedSource != nil && !isFetchingFromDevice
+    }
+
     var selectedSourceName: String {
         midiSources.first { $0.index == selectedSourceIndex }?.displayName ?? "Source \(selectedSourceIndex)"
     }
@@ -128,6 +132,7 @@ final class DocumentModel: ObservableObject {
 
     func fetchAllBanksFromDevice() {
         guard !isFetchingFromDevice else { return }
+        guard let insertionMode = fetchInsertionMode() else { return }
 
         isFetchingFromDevice = true
         statusMessage = "Fetching FB-01 banks..."
@@ -150,15 +155,15 @@ final class DocumentModel: ObservableObject {
                 }.value
 
                 let artifact = try FB01Artifact(sysexBytes: bytes)
-                sources = artifact.messages.enumerated().map { index, message in
+                let fetchedSources = artifact.messages.enumerated().map { index, message in
                     LibrarySource(
                         title: message.sourceTitle(index: index + 1),
                         subtitle: "FB-01 Live Fetch",
                         artifact: FB01Artifact(message: message)
                     )
                 }
-                selectedSourceID = sources.first?.id
-                statusMessage = "Fetched from \(sourceName) -> \(destinationName): current configuration, Banks 1-7, and Voice RAM 1."
+                applyFetchedSources(fetchedSources, insertionMode: insertionMode)
+                statusMessage = "Fetched \(fetchedSources.count) sources from \(sourceName) -> \(destinationName)."
                 errorMessage = nil
             } catch {
                 errorMessage = "Fetch failed: \(error)"
@@ -190,6 +195,76 @@ final class DocumentModel: ObservableObject {
 
     func selectSource(_ source: LibrarySource) {
         selectedSourceID = source.id
+    }
+
+    func removeSelectedSource() {
+        guard let selectedSource,
+              let index = sources.firstIndex(where: { $0.id == selectedSource.id }) else {
+            return
+        }
+
+        sources.remove(at: index)
+
+        if sources.isEmpty {
+            selectedSourceID = nil
+        } else {
+            selectedSourceID = sources[min(index, sources.count - 1)].id
+        }
+
+        statusMessage = "Removed \(selectedSource.title)."
+        errorMessage = nil
+    }
+
+    func renameSelectedSource() {
+        guard let selectedSource,
+              let index = sources.firstIndex(where: { $0.id == selectedSource.id }) else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Rename Source"
+        alert.informativeText = "Choose a local display name for this source."
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(string: selectedSource.title)
+        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        alert.accessoryView = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            return
+        }
+
+        sources[index].title = title
+        selectedSourceID = sources[index].id
+        statusMessage = "Renamed source to \(title)."
+        errorMessage = nil
+    }
+
+    func clearSources() {
+        guard !sources.isEmpty else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Clear Source Library?"
+        alert.informativeText = "This removes the sources from the app window. It does not delete files from disk or change the FB-01."
+        alert.addButton(withTitle: "Clear")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        let count = sources.count
+        sources.removeAll()
+        selectedSourceID = nil
+        statusMessage = "Cleared \(count) source\(count == 1 ? "" : "s")."
+        errorMessage = nil
     }
 
     private func load(urls: [URL]) {
@@ -253,6 +328,43 @@ final class DocumentModel: ObservableObject {
             .reduce("") { $0 + String($1) }
         return sanitized.isEmpty ? "fb01-export" : sanitized
     }
+
+    private func applyFetchedSources(_ fetchedSources: [LibrarySource], insertionMode: SourceInsertionMode) {
+        switch insertionMode {
+        case .replace:
+            sources = fetchedSources
+        case .append:
+            sources.append(contentsOf: fetchedSources)
+        }
+        selectedSourceID = fetchedSources.first?.id ?? sources.first?.id
+    }
+
+    private func fetchInsertionMode() -> SourceInsertionMode? {
+        guard !sources.isEmpty else {
+            return .replace
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Fetch FB-01 Banks"
+        alert.informativeText = "The source library already contains \(sources.count) source\(sources.count == 1 ? "" : "s"). Replace them or append the fetched banks?"
+        alert.addButton(withTitle: "Replace")
+        alert.addButton(withTitle: "Append")
+        alert.addButton(withTitle: "Cancel")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .replace
+        case .alertSecondButtonReturn:
+            return .append
+        default:
+            return nil
+        }
+    }
+}
+
+enum SourceInsertionMode {
+    case replace
+    case append
 }
 
 struct LibrarySource: Identifiable, Equatable {
@@ -418,10 +530,39 @@ struct LibraryView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Sources")
-                    .font(.headline)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 6)
+                HStack(spacing: 6) {
+                    Text("Sources")
+                        .font(.headline)
+
+                    Spacer()
+
+                    Button {
+                        document.renameSelectedSource()
+                    } label: {
+                        Image(systemName: "pencil")
+                    }
+                    .help("Rename selected source")
+                    .disabled(!document.canManageSource)
+
+                    Button {
+                        document.removeSelectedSource()
+                    } label: {
+                        Image(systemName: "minus")
+                    }
+                    .help("Remove selected source")
+                    .disabled(!document.canManageSource)
+
+                    Button {
+                        document.clearSources()
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .help("Clear source library")
+                    .disabled(document.sources.isEmpty || document.isFetchingFromDevice)
+                }
+                .buttonStyle(.borderless)
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
 
                 ScrollView {
                     LazyVStack(spacing: 4) {
