@@ -168,4 +168,29 @@ import Testing
     #expect(data.count == 6_352)
     #expect(checksum == 0x5C)
     #expect(try artifact.sysexBytes == Array(Data(contentsOf: fixtureURL)))
+
+    let voiceBank = try FB01VoiceBankData(bank: bank, data: data)
+    #expect(voiceBank.voices.count == 48)
+    #expect(voiceBank.voices.prefix(20).map(\.name) == [
+        "Brass",
+        "Horn",
+        "Trumpet",
+        "LoStrig",
+        "Strings",
+        "Piano",
+        "NewEP",
+        "EGrand",
+        "Jazz Gt",
+        "EBass",
+        "WodBass",
+        "EOrgan1",
+        "EOrgan2",
+        "POrgan1",
+        "POrgan2",
+        "Flute",
+        "Piccolo",
+        "Oboe",
+        "Clarine",
+        "Glocken",
+    ])
 }

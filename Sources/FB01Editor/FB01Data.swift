@@ -17,6 +17,60 @@ public struct FB01VoiceData: Equatable, Sendable {
     }
 }
 
+public struct FB01VoiceSummary: Equatable, Identifiable, Sendable {
+    public var id: Int { number }
+    public var number: Int
+    public var name: String
+    public var encodedRecordBytes: [UInt8]
+}
+
+public struct FB01VoiceBankData: Equatable, Sendable {
+    public static let voiceCount = 48
+    public static let encodedRecordByteCount = 131
+    public static let nameNibbleOffset = 67
+    public static let nameLength = 7
+
+    public var bank: Int
+    public var data: [UInt8]
+
+    public init(bank: Int, data: [UInt8]) throws {
+        self.bank = Int(try FB01.validateVoiceBank(bank))
+        self.data = try data.map { try FB01.validateSevenBit($0) }
+
+        let lastNameByteIndex = Self.nameNibbleOffset
+            + (Self.voiceCount - 1) * Self.encodedRecordByteCount
+            + (Self.nameLength * 2 - 1)
+        guard self.data.indices.contains(lastNameByteIndex) else {
+            throw FB01SysExError.invalidPayloadLength(expected: lastNameByteIndex + 1, actual: self.data.count)
+        }
+    }
+
+    public var voices: [FB01VoiceSummary] {
+        (0..<Self.voiceCount).map { index in
+            let recordStart = index * Self.encodedRecordByteCount
+            let recordEnd = min(recordStart + Self.encodedRecordByteCount, data.count)
+            return FB01VoiceSummary(
+                number: index + 1,
+                name: voiceName(at: index),
+                encodedRecordBytes: Array(data[recordStart..<recordEnd])
+            )
+        }
+    }
+
+    private func voiceName(at index: Int) -> String {
+        let offset = Self.nameNibbleOffset + index * Self.encodedRecordByteCount
+        let bytes = (0..<Self.nameLength).map { characterIndex in
+            let low = data[offset + characterIndex * 2] & 0x0F
+            let high = data[offset + characterIndex * 2 + 1] & 0x0F
+            return low | (high << 4)
+        }
+
+        return String(bytes: bytes, encoding: .ascii)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ""
+    }
+}
+
 public struct FB01ConfigurationData: Equatable, Sendable {
     public static let byteCount = 160
     public static let instrumentCount = 8

@@ -205,6 +205,8 @@ struct MessageView: View {
                 ConfigurationView(systemChannel: systemChannel, packet: packet)
             case let .configurationDump(systemChannel, number, packet):
                 ConfigurationView(systemChannel: systemChannel, packet: packet, label: "Stored Configuration \(number)")
+            case let .voiceBankDumpData(systemChannel, bank, byteCount, data, checksum):
+                VoiceBankView(systemChannel: systemChannel, bank: bank, byteCount: byteCount, data: data, checksum: checksum)
             default:
                 SummaryPanel(rows: messageRows)
             }
@@ -254,6 +256,63 @@ struct ConfigurationView: View {
 
                 InstrumentTable(instruments: configuration.instruments)
             }
+    }
+}
+
+struct VoiceBankView: View {
+    var systemChannel: Int
+    var bank: Int
+    var byteCount: Int
+    var data: [UInt8]
+    var checksum: UInt8
+
+    var body: some View {
+        Group {
+            if let voiceBank = try? FB01VoiceBankData(bank: bank, data: data) {
+                VStack(alignment: .leading, spacing: 14) {
+                    SummaryPanel(rows: [
+                        KeyValueRow("Type", "Voice Bank"),
+                        KeyValueRow("Bank", "\(voiceBank.bank)"),
+                        KeyValueRow("System Channel", "\(systemChannel + 1)"),
+                        KeyValueRow("Byte Count", "\(byteCount)"),
+                        KeyValueRow("Data Bytes", "\(data.count)"),
+                        KeyValueRow("Checksum", String(format: "0x%02X", checksum)),
+                    ])
+
+                    VoiceTable(voices: voiceBank.voices)
+                }
+            } else {
+                SummaryPanel(rows: [
+                    KeyValueRow("Type", "Voice Bank"),
+                    KeyValueRow("Error", "Invalid voice bank payload"),
+                ])
+            }
+        }
+    }
+}
+
+struct VoiceTable: View {
+    var voices: [FB01VoiceSummary]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Voices")
+                .font(.headline)
+
+            LazyVGrid(columns: [
+                GridItem(.fixed(48), alignment: .leading),
+                GridItem(.adaptive(minimum: 112), alignment: .leading),
+            ], alignment: .leading, spacing: 8) {
+                ForEach(voices) { voice in
+                    Text("\(voice.number)")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Text(voice.name)
+                        .font(.system(.body, design: .monospaced))
+                        .lineLimit(1)
+                }
+            }
+        }
     }
 }
 

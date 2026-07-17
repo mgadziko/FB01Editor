@@ -87,7 +87,8 @@ Observed hardware behavior:
 - Current configuration requests work with the tested USB MIDI cable.
 - Numbered voice-bank requests use bank numbers `1...7` per the FB-01 service manual.
 - Banks 2 through 6 returned 6363-byte dumps during testing; bank 1 timed out and bank 7 returned a short 5-byte response.
-- `Tests/FB01EditorTests/Fixtures/voice-bank-2.syx` is the first captured numbered voice-bank fixture. It is recognized and exact-byte round-tripped, but individual voice decoding is still pending.
+- `Tests/FB01EditorTests/Fixtures/voice-bank-2.syx` is the first captured numbered voice-bank fixture. It is recognized, exact-byte round-tripped, and decoded into 48 voice names.
+- `FB01EditorApp` displays a voice table when a captured voice-bank dump is opened.
 
 ## Recovered Context
 
