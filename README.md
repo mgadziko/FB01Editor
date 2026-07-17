@@ -59,7 +59,7 @@ The first real FB-01 fixture is a captured current configuration named `single`.
 swift run FB01EditorApp
 ```
 
-It opens `.syx` files, shows artifact/message metadata, displays decoded current configuration fields, displays voice banks in a selectable browser with a read-only voice detail panel, exports the original SysEx bytes, and exports the selected voice as a standalone single-voice SysEx file. It does not send MIDI or write to the FB-01.
+It opens `.syx` files, shows artifact/message metadata, displays decoded current configuration fields, displays voice banks in a selectable browser with a read-only voice detail panel, exports the original SysEx bytes, and exports the selected voice as a standalone single-voice SysEx file. It can also fetch the current configuration, Banks 1-7, and Voice RAM 1 from the connected FB-01 into a read-only source browser. It does not write to the FB-01.
 
 To build a launchable local `.app` bundle:
 
@@ -103,6 +103,7 @@ Observed hardware behavior:
 - `Tests/FB01EditorTests/Fixtures/voice-ram1.syx` is recognized as voice RAM dump data and decoded through the same 48-voice table model.
 - `FB01EditorApp` displays a selectable voice browser and read-only voice detail panel when a captured voice-bank dump is opened.
 - The selected voice can be exported as a standalone single-voice SysEx artifact without writing anything to the FB-01.
+- `FB01EditorApp` has a manual `Fetch Banks` action that uses the first visible MIDI source/destination to request current configuration, Banks 1-7, and Voice RAM 1, then shows the fetched dumps in a source sidebar. This is still read-only and does not perform any store/write-back commands.
 
 ## Recovered Context
 

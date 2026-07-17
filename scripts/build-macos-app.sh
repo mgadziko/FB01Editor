@@ -47,7 +47,17 @@ if command -v xattr >/dev/null 2>&1; then
 fi
 
 if command -v codesign >/dev/null 2>&1; then
-  codesign --force --sign - "$APP_DIR" >/dev/null
+  if ! codesign --force --sign - "$APP_DIR" >/dev/null; then
+    if command -v xattr >/dev/null 2>&1; then
+      xattr -rd com.apple.provenance "$APP_DIR" >/dev/null 2>&1 || true
+      xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
+      xattr -d "com.apple.fileprovider.fpfs#P" "$APP_DIR" >/dev/null 2>&1 || true
+    fi
+
+    if ! codesign --force --sign - "$APP_DIR" >/dev/null; then
+      echo "warning: ad-hoc signing failed; leaving local development app bundle unsigned" >&2
+    fi
+  fi
 fi
 
 echo "$APP_DIR"

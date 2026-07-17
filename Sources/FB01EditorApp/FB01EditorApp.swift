@@ -21,6 +21,8 @@ final class DocumentModel: ObservableObject {
     @Published var loadedFileName: String?
     @Published var artifact: FB01Artifact?
     @Published var errorMessage: String?
+    @Published var statusMessage: String?
+    @Published var isFetchingFromDevice = false
 
     var hasDocument: Bool {
         artifact != nil
@@ -37,6 +39,37 @@ final class DocumentModel: ObservableObject {
         }
 
         load(url: url)
+    }
+
+    func fetchAllBanksFromDevice() {
+        guard !isFetchingFromDevice else { return }
+
+        isFetchingFromDevice = true
+        statusMessage = "Fetching FB-01 banks..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let bytes = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.requestAllBanks(
+                        sourceIndex: 0,
+                        destinationIndex: 0,
+                        systemChannel: 0,
+                        timeoutPerRequest: 20
+                    ).flatMap { $0 }
+                }.value
+
+                artifact = try FB01Artifact(sysexBytes: bytes)
+                loadedFileName = "FB-01 Live Fetch"
+                statusMessage = "Fetched current configuration, Banks 1-7, and Voice RAM 1."
+                errorMessage = nil
+            } catch {
+                errorMessage = "Fetch failed: \(error)"
+                statusMessage = nil
+            }
+
+            isFetchingFromDevice = false
+        }
     }
 
     func exportSysEx() {
@@ -102,6 +135,16 @@ struct ContentView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
             }
+
+            if let statusMessage = document.statusMessage {
+                Divider()
+                Text(statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+            }
         }
     }
 }
@@ -123,6 +166,13 @@ struct ToolbarView: View {
                 Label("Export", systemImage: "square.and.arrow.down")
             }
             .disabled(!document.hasDocument)
+
+            Button {
+                document.fetchAllBanksFromDevice()
+            } label: {
+                Label(document.isFetchingFromDevice ? "Fetching" : "Fetch Banks", systemImage: "pianokeys")
+            }
+            .disabled(document.isFetchingFromDevice)
 
             Divider()
                 .frame(height: 20)
@@ -161,18 +211,33 @@ struct EmptyStateView: View {
 
 struct ArtifactView: View {
     var artifact: FB01Artifact
+    @State private var selectedMessageIndex = 0
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        if artifact.messages.count > 1 {
+            VStack(alignment: .leading, spacing: 0) {
                 SummaryPanel(rows: summaryRows)
+                    .padding(18)
 
-                ForEach(Array(artifact.messages.enumerated()), id: \.offset) { index, message in
-                    MessageView(index: index + 1, message: message)
-                }
+                Divider()
+
+                MessageBrowser(
+                    messages: artifact.messages,
+                    selectedMessageIndex: $selectedMessageIndex
+                )
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    SummaryPanel(rows: summaryRows)
+
+                    ForEach(Array(artifact.messages.enumerated()), id: \.offset) { index, message in
+                        MessageView(index: index + 1, message: message)
+                    }
+                }
+                .padding(18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -182,6 +247,57 @@ struct ArtifactView: View {
             KeyValueRow("Messages", "\(artifact.messages.count)"),
             KeyValueRow("Bytes", ((try? artifact.sysexBytes.count).map(String.init)) ?? "Unknown"),
         ]
+    }
+}
+
+struct MessageBrowser: View {
+    var messages: [FB01SysExMessage]
+    @Binding var selectedMessageIndex: Int
+
+    private var selectedIndex: Int {
+        min(max(selectedMessageIndex, 0), max(messages.count - 1, 0))
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 18) {
+                ForEach(Array(messages.enumerated()), id: \.offset) { index, message in
+                    Button {
+                        selectedMessageIndex = index
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(message.sourceTitle(index: index + 1))
+                                .font(.body.weight(.medium))
+                                .lineLimit(1)
+                            Text(message.displayName)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .background(
+                            selectedIndex == index
+                                ? Color.accentColor.opacity(0.18)
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(12)
+            .frame(minWidth: 220, idealWidth: 220, maxWidth: 220, maxHeight: .infinity, alignment: .topLeading)
+
+            Divider()
+
+            ScrollView {
+                MessageView(index: selectedIndex + 1, message: messages[selectedIndex])
+                    .padding(18)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
     }
 }
 
@@ -590,6 +706,25 @@ private extension FB01ArtifactKind {
 }
 
 private extension FB01SysExMessage {
+    func sourceTitle(index: Int) -> String {
+        switch self {
+        case .currentConfigurationDump:
+            return "Current Configuration"
+        case let .configurationDump(_, number, _):
+            return "Configuration \(number)"
+        case .voiceRAMDumpData:
+            return "Voice RAM 1"
+        case let .voiceBankDumpData(_, bank, _, _, _):
+            return "Bank \(bank + 1)"
+        case .instrumentVoiceDump:
+            return "Single Voice"
+        case .unitIDDump:
+            return "Unit ID"
+        default:
+            return "Message \(index)"
+        }
+    }
+
     var displayName: String {
         switch self {
         case .command: "Command"
