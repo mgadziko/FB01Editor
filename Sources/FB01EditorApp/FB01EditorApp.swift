@@ -74,6 +74,10 @@ final class DocumentModel: ObservableObject {
         selectedSource?.title
     }
 
+    var editingStatusText: String {
+        sources.contains { $0.isEdited } ? "Local Edits" : "Local Edit Only"
+    }
+
     var canManageSource: Bool {
         selectedSource != nil && !isFetchingFromDevice
     }
@@ -186,7 +190,7 @@ final class DocumentModel: ObservableObject {
         }
 
         do {
-            try selectedSource.artifact.writeSysEx(to: url)
+            try selectedSource.artifactForSaving().writeSysEx(to: url)
             errorMessage = nil
         } catch {
             errorMessage = "Save failed: \(error)"
@@ -264,6 +268,38 @@ final class DocumentModel: ObservableObject {
         sources.removeAll()
         selectedSourceID = nil
         statusMessage = "Cleared \(count) source\(count == 1 ? "" : "s")."
+        errorMessage = nil
+    }
+
+    func voice(sourceID: LibrarySource.ID, number: Int, fallback: FB01VoiceData) -> FB01VoiceData {
+        sources.first { $0.id == sourceID }?.editedVoices[number] ?? fallback
+    }
+
+    func updateVoice(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        sources[index].editedVoices[number] = voice
+        if sources[index].isSingleVoiceSource {
+            sources[index].title = voice.name.isEmpty ? "Single Voice \(number)" : voice.name
+        }
+        selectedSourceID = sources[index].id
+        statusMessage = "Edited \(sources[index].title) locally."
+        errorMessage = nil
+    }
+
+    func resetVoice(sourceID: LibrarySource.ID, number: Int) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        sources[index].editedVoices.removeValue(forKey: number)
+        if sources[index].isSingleVoiceSource {
+            sources[index].title = sources[index].artifact.messages.first?.sourceTitle(index: 1) ?? sources[index].title
+        }
+        selectedSourceID = sources[index].id
+        statusMessage = "Reset local edit."
         errorMessage = nil
     }
 
@@ -372,6 +408,29 @@ struct LibrarySource: Identifiable, Equatable {
     var title: String
     var subtitle: String
     var artifact: FB01Artifact
+    var editedVoices: [Int: FB01VoiceData] = [:]
+
+    var isEdited: Bool {
+        !editedVoices.isEmpty
+    }
+
+    var isSingleVoiceSource: Bool {
+        guard artifact.messages.count == 1,
+              case .instrumentVoiceDump = artifact.messages[0] else {
+            return false
+        }
+        return true
+    }
+
+    func artifactForSaving() throws -> FB01Artifact {
+        guard artifact.messages.count == 1,
+              case let .instrumentVoiceDump(systemChannel, instrument, _) = artifact.messages[0],
+              let editedVoice = editedVoices[instrument + 1] else {
+            return artifact
+        }
+
+        return try editedVoice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument)
+    }
 
     static func sources(from artifact: FB01Artifact, fileName: String) -> [LibrarySource] {
         guard artifact.messages.count > 1 else {
@@ -494,7 +553,7 @@ struct ToolbarView: View {
 
             Spacer()
 
-            Text("Read Only")
+            Text(document.editingStatusText)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
         }
@@ -574,6 +633,12 @@ struct LibraryView: View {
                                     Text(source.title)
                                         .font(.body.weight(.medium))
                                         .lineLimit(1)
+                                    if source.isEdited {
+                                        Text("Edited")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.orange)
+                                            .lineLimit(1)
+                                    }
                                     Text(source.subtitle)
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
@@ -599,16 +664,21 @@ struct LibraryView: View {
 
             Divider()
 
-            if let artifact = document.selectedArtifact {
-                ArtifactView(artifact: artifact)
+            if let source = document.selectedSource {
+                ArtifactView(document: document, source: source)
             }
         }
     }
 }
 
 struct ArtifactView: View {
-    var artifact: FB01Artifact
+    @ObservedObject var document: DocumentModel
+    var source: LibrarySource
     @State private var selectedMessageIndex = 0
+
+    private var artifact: FB01Artifact {
+        source.artifact
+    }
 
     var body: some View {
         if artifact.messages.count > 1 {
@@ -619,6 +689,8 @@ struct ArtifactView: View {
                 Divider()
 
                 MessageBrowser(
+                    document: document,
+                    sourceID: source.id,
                     messages: artifact.messages,
                     selectedMessageIndex: $selectedMessageIndex
                 )
@@ -629,7 +701,7 @@ struct ArtifactView: View {
                     SummaryPanel(rows: summaryRows)
 
                     ForEach(Array(artifact.messages.enumerated()), id: \.offset) { index, message in
-                        MessageView(index: index + 1, message: message)
+                        MessageView(document: document, sourceID: source.id, index: index + 1, message: message)
                     }
                 }
                 .padding(18)
@@ -648,6 +720,8 @@ struct ArtifactView: View {
 }
 
 struct MessageBrowser: View {
+    @ObservedObject var document: DocumentModel
+    var sourceID: LibrarySource.ID
     var messages: [FB01SysExMessage]
     @Binding var selectedMessageIndex: Int
 
@@ -690,7 +764,7 @@ struct MessageBrowser: View {
             Divider()
 
             ScrollView {
-                MessageView(index: selectedIndex + 1, message: messages[selectedIndex])
+                MessageView(document: document, sourceID: sourceID, index: selectedIndex + 1, message: messages[selectedIndex])
                     .padding(18)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -699,6 +773,8 @@ struct MessageBrowser: View {
 }
 
 struct MessageView: View {
+    @ObservedObject var document: DocumentModel
+    var sourceID: LibrarySource.ID
     var index: Int
     var message: FB01SysExMessage
 
@@ -715,15 +791,15 @@ struct MessageView: View {
 
             switch message {
             case let .instrumentVoiceDump(systemChannel, instrument, packet):
-                SingleVoiceView(systemChannel: systemChannel, instrument: instrument, packet: packet)
+                SingleVoiceView(document: document, sourceID: sourceID, systemChannel: systemChannel, instrument: instrument, packet: packet)
             case let .currentConfigurationDump(systemChannel, packet):
                 ConfigurationView(systemChannel: systemChannel, packet: packet)
             case let .configurationDump(systemChannel, number, packet):
                 ConfigurationView(systemChannel: systemChannel, packet: packet, label: "Stored Configuration \(number)")
             case let .voiceRAMDumpData(systemChannel, byteCount, data, checksum):
-                VoiceBankView(systemChannel: systemChannel, bank: 0, byteCount: byteCount, data: data, checksum: checksum, label: "Voice RAM 1")
+                VoiceBankView(document: document, sourceID: sourceID, systemChannel: systemChannel, bank: 0, byteCount: byteCount, data: data, checksum: checksum, label: "Voice RAM 1")
             case let .voiceBankDumpData(systemChannel, bank, byteCount, data, checksum):
-                VoiceBankView(systemChannel: systemChannel, bank: bank, byteCount: byteCount, data: data, checksum: checksum)
+                VoiceBankView(document: document, sourceID: sourceID, systemChannel: systemChannel, bank: bank, byteCount: byteCount, data: data, checksum: checksum)
             default:
                 SummaryPanel(rows: messageRows)
             }
@@ -777,6 +853,8 @@ struct ConfigurationView: View {
 }
 
 struct SingleVoiceView: View {
+    @ObservedObject var document: DocumentModel
+    var sourceID: LibrarySource.ID
     var systemChannel: Int
     var instrument: Int
     var packet: FB01SysExPacket
@@ -794,6 +872,8 @@ struct SingleVoiceView: View {
                     ])
 
                     VoiceDetailView(
+                        document: document,
+                        sourceID: sourceID,
                         systemChannel: systemChannel,
                         summary: FB01VoiceSummary(number: instrument + 1, voice: voice, encodedRecordBytes: [])
                     )
@@ -809,6 +889,8 @@ struct SingleVoiceView: View {
 }
 
 struct VoiceBankView: View {
+    @ObservedObject var document: DocumentModel
+    var sourceID: LibrarySource.ID
     var systemChannel: Int
     var bank: Int
     var byteCount: Int
@@ -831,6 +913,8 @@ struct VoiceBankView: View {
                     ])
 
                     VoiceBankBrowser(
+                        document: document,
+                        sourceID: sourceID,
                         systemChannel: systemChannel,
                         voices: voiceBank.voices,
                         selectedVoiceNumber: $selectedVoiceNumber
@@ -847,6 +931,8 @@ struct VoiceBankView: View {
 }
 
 struct VoiceBankBrowser: View {
+    @ObservedObject var document: DocumentModel
+    var sourceID: LibrarySource.ID
     var systemChannel: Int
     var voices: [FB01VoiceSummary]
     @Binding var selectedVoiceNumber: Int
@@ -892,7 +978,7 @@ struct VoiceBankBrowser: View {
             Divider()
 
             if let selectedVoice {
-                VoiceDetailView(systemChannel: systemChannel, summary: selectedVoice)
+                VoiceDetailView(document: document, sourceID: sourceID, systemChannel: systemChannel, summary: selectedVoice)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
@@ -900,18 +986,28 @@ struct VoiceBankBrowser: View {
 }
 
 struct VoiceDetailView: View {
+    @ObservedObject var document: DocumentModel
+    var sourceID: LibrarySource.ID
     var systemChannel: Int
     var summary: FB01VoiceSummary
-    @State private var editableVoice: FB01VoiceData
     @State private var nameText: String
     @State private var editError: String?
     @State private var exportError: String?
 
-    init(systemChannel: Int, summary: FB01VoiceSummary) {
+    init(document: DocumentModel, sourceID: LibrarySource.ID, systemChannel: Int, summary: FB01VoiceSummary) {
+        self.document = document
+        self.sourceID = sourceID
         self.systemChannel = systemChannel
         self.summary = summary
-        _editableVoice = State(initialValue: summary.voice)
-        _nameText = State(initialValue: summary.voice.name)
+        _nameText = State(initialValue: document.voice(sourceID: sourceID, number: summary.number, fallback: summary.voice).name)
+    }
+
+    private var editableVoice: FB01VoiceData {
+        document.voice(sourceID: sourceID, number: summary.number, fallback: summary.voice)
+    }
+
+    private var isEdited: Bool {
+        editableVoice != summary.voice
     }
 
     var body: some View {
@@ -923,7 +1019,7 @@ struct VoiceDetailView: View {
                 Text("Voice \(summary.number)")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
-                if editableVoice != summary.voice {
+                if isEdited {
                     Button {
                         resetVoice()
                     } label: {
@@ -982,8 +1078,13 @@ struct VoiceDetailView: View {
                     .foregroundStyle(.red)
             }
         }
-        .onChange(of: summary.voice.bytes) { _, _ in
-            resetVoice()
+        .onChange(of: summary.number) { _, _ in
+            nameText = editableVoice.name
+            editError = nil
+            exportError = nil
+        }
+        .onChange(of: editableVoice.name) { _, newName in
+            nameText = newName
         }
     }
 
@@ -999,7 +1100,7 @@ struct VoiceDetailView: View {
     }
 
     private func resetVoice() {
-        editableVoice = summary.voice
+        document.resetVoice(sourceID: sourceID, number: summary.number)
         nameText = summary.voice.name
         editError = nil
         exportError = nil
@@ -1025,7 +1126,8 @@ struct VoiceDetailView: View {
 
     private func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
         do {
-            editableVoice = try edit(editableVoice)
+            let editedVoice = try edit(editableVoice)
+            document.updateVoice(sourceID: sourceID, number: summary.number, voice: editedVoice)
             editError = nil
             exportError = nil
         } catch {
