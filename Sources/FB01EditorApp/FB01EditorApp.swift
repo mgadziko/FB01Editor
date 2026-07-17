@@ -23,9 +23,65 @@ final class DocumentModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published var isFetchingFromDevice = false
+    @Published var midiSources: [FB01MIDIEndpoint] = []
+    @Published var midiDestinations: [FB01MIDIEndpoint] = []
+    @Published var selectedSourceIndex = 0
+    @Published var selectedDestinationIndex = 0
+
+    private enum DefaultsKey {
+        static let sourceIndex = "FB01Editor.selectedMIDISourceIndex"
+        static let sourceUniqueID = "FB01Editor.selectedMIDISourceUniqueID"
+        static let destinationIndex = "FB01Editor.selectedMIDIDestinationIndex"
+        static let destinationUniqueID = "FB01Editor.selectedMIDIDestinationUniqueID"
+    }
+
+    init() {
+        selectedSourceIndex = UserDefaults.standard.integer(forKey: DefaultsKey.sourceIndex)
+        selectedDestinationIndex = UserDefaults.standard.integer(forKey: DefaultsKey.destinationIndex)
+        refreshMIDIEndpoints()
+    }
 
     var hasDocument: Bool {
         artifact != nil
+    }
+
+    var selectedSourceName: String {
+        midiSources.first { $0.index == selectedSourceIndex }?.displayName ?? "Source \(selectedSourceIndex)"
+    }
+
+    var selectedDestinationName: String {
+        midiDestinations.first { $0.index == selectedDestinationIndex }?.displayName ?? "Destination \(selectedDestinationIndex)"
+    }
+
+    func refreshMIDIEndpoints() {
+        midiSources = FB01MIDI.availableSources()
+        midiDestinations = FB01MIDI.availableDestinations()
+
+        if let storedSource = storedUniqueID(for: DefaultsKey.sourceUniqueID),
+           let source = midiSources.first(where: { $0.uniqueID == storedSource }) {
+            selectedSourceIndex = source.index
+        } else if !midiSources.contains(where: { $0.index == selectedSourceIndex }) {
+            selectedSourceIndex = midiSources.first?.index ?? 0
+        }
+
+        if let storedDestination = storedUniqueID(for: DefaultsKey.destinationUniqueID),
+           let destination = midiDestinations.first(where: { $0.uniqueID == storedDestination }) {
+            selectedDestinationIndex = destination.index
+        } else if !midiDestinations.contains(where: { $0.index == selectedDestinationIndex }) {
+            selectedDestinationIndex = midiDestinations.first?.index ?? 0
+        }
+
+        persistSelectedEndpoints()
+    }
+
+    func selectSource(_ source: FB01MIDIEndpoint) {
+        selectedSourceIndex = source.index
+        persistSelectedEndpoints()
+    }
+
+    func selectDestination(_ destination: FB01MIDIEndpoint) {
+        selectedDestinationIndex = destination.index
+        persistSelectedEndpoints()
     }
 
     func openSysEx() {
@@ -49,11 +105,16 @@ final class DocumentModel: ObservableObject {
         errorMessage = nil
 
         Task {
+            let sourceIndex = selectedSourceIndex
+            let destinationIndex = selectedDestinationIndex
+            let sourceName = selectedSourceName
+            let destinationName = selectedDestinationName
+
             do {
                 let bytes = try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.requestAllBanks(
-                        sourceIndex: 0,
-                        destinationIndex: 0,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
                         systemChannel: 0,
                         timeoutPerRequest: 20
                     ).flatMap { $0 }
@@ -61,7 +122,7 @@ final class DocumentModel: ObservableObject {
 
                 artifact = try FB01Artifact(sysexBytes: bytes)
                 loadedFileName = "FB-01 Live Fetch"
-                statusMessage = "Fetched current configuration, Banks 1-7, and Voice RAM 1."
+                statusMessage = "Fetched from \(sourceName) -> \(destinationName): current configuration, Banks 1-7, and Voice RAM 1."
                 errorMessage = nil
             } catch {
                 errorMessage = "Fetch failed: \(error)"
@@ -101,6 +162,32 @@ final class DocumentModel: ObservableObject {
             loadedFileName = nil
             errorMessage = "Open failed: \(error)"
         }
+    }
+
+    private func persistSelectedEndpoints() {
+        UserDefaults.standard.set(selectedSourceIndex, forKey: DefaultsKey.sourceIndex)
+        UserDefaults.standard.set(selectedDestinationIndex, forKey: DefaultsKey.destinationIndex)
+
+        if let source = midiSources.first(where: { $0.index == selectedSourceIndex }),
+           let uniqueID = source.uniqueID {
+            UserDefaults.standard.set(Int(uniqueID), forKey: DefaultsKey.sourceUniqueID)
+        } else {
+            UserDefaults.standard.removeObject(forKey: DefaultsKey.sourceUniqueID)
+        }
+
+        if let destination = midiDestinations.first(where: { $0.index == selectedDestinationIndex }),
+           let uniqueID = destination.uniqueID {
+            UserDefaults.standard.set(Int(uniqueID), forKey: DefaultsKey.destinationUniqueID)
+        } else {
+            UserDefaults.standard.removeObject(forKey: DefaultsKey.destinationUniqueID)
+        }
+    }
+
+    private func storedUniqueID(for key: String) -> Int32? {
+        guard UserDefaults.standard.object(forKey: key) != nil else {
+            return nil
+        }
+        return Int32(UserDefaults.standard.integer(forKey: key))
     }
 }
 
@@ -174,6 +261,39 @@ struct ToolbarView: View {
             }
             .disabled(document.isFetchingFromDevice)
 
+            Menu {
+                ForEach(document.midiSources, id: \.index) { source in
+                    Button {
+                        document.selectSource(source)
+                    } label: {
+                        endpointLabel(source, selected: source.index == document.selectedSourceIndex)
+                    }
+                }
+            } label: {
+                Label(document.selectedSourceName, systemImage: "arrow.down.circle")
+            }
+            .disabled(document.midiSources.isEmpty || document.isFetchingFromDevice)
+
+            Menu {
+                ForEach(document.midiDestinations, id: \.index) { destination in
+                    Button {
+                        document.selectDestination(destination)
+                    } label: {
+                        endpointLabel(destination, selected: destination.index == document.selectedDestinationIndex)
+                    }
+                }
+            } label: {
+                Label(document.selectedDestinationName, systemImage: "arrow.up.circle")
+            }
+            .disabled(document.midiDestinations.isEmpty || document.isFetchingFromDevice)
+
+            Button {
+                document.refreshMIDIEndpoints()
+            } label: {
+                Label("Refresh MIDI", systemImage: "arrow.clockwise")
+            }
+            .disabled(document.isFetchingFromDevice)
+
             Divider()
                 .frame(height: 20)
 
@@ -190,6 +310,11 @@ struct ToolbarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private func endpointLabel(_ endpoint: FB01MIDIEndpoint, selected: Bool) -> some View {
+        let unique = endpoint.uniqueID.map { " id=\($0)" } ?? ""
+        return Label("[\(endpoint.index)] \(endpoint.displayName)\(unique)", systemImage: selected ? "checkmark" : "circle")
     }
 }
 

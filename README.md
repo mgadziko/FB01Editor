@@ -103,7 +103,7 @@ Observed hardware behavior:
 - `Tests/FB01EditorTests/Fixtures/voice-ram1.syx` is recognized as voice RAM dump data and decoded through the same 48-voice table model.
 - `FB01EditorApp` displays a selectable voice browser and read-only voice detail panel when a captured voice-bank dump is opened.
 - The selected voice can be exported as a standalone single-voice SysEx artifact without writing anything to the FB-01.
-- `FB01EditorApp` has a manual `Fetch Banks` action that uses the first visible MIDI source/destination to request current configuration, Banks 1-7, and Voice RAM 1, then shows the fetched dumps in a source sidebar. This is still read-only and does not perform any store/write-back commands.
+- `FB01EditorApp` has a manual `Fetch Banks` action that requests current configuration, Banks 1-7, and Voice RAM 1, then shows the fetched dumps in a source sidebar. Source and destination MIDI endpoints are selectable from the toolbar and remembered between launches. This is still read-only and does not perform any store/write-back commands.
 
 ## Recovered Context
 
