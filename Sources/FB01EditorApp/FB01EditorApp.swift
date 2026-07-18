@@ -15,6 +15,97 @@ struct VoiceSlotTarget: Equatable {
     var number: Int
 }
 
+final class VoiceSlotPickerAccessory: NSView {
+    private let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let voicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let targetsByBank: [Int: [VoiceSlotTarget]]
+    private let titleProvider: (VoiceSlotTarget) -> String
+
+    var selectedTarget: VoiceSlotTarget? {
+        voicePopup.selectedItem?.representedObject as? VoiceSlotTarget
+    }
+
+    init(targets: [VoiceSlotTarget], preferredTarget: VoiceSlotTarget?, titleProvider: @escaping (VoiceSlotTarget) -> String) {
+        self.targetsByBank = Dictionary(grouping: targets.sorted { lhs, rhs in
+            if lhs.bank != rhs.bank {
+                return lhs.bank < rhs.bank
+            }
+            return lhs.number < rhs.number
+        }, by: \.bank)
+        self.titleProvider = titleProvider
+
+        super.init(frame: NSRect(x: 0, y: 0, width: 430, height: 72))
+
+        let targetLabel = NSTextField(labelWithString: "Target slot:")
+        targetLabel.frame = NSRect(x: 0, y: 50, width: 92, height: 18)
+        targetLabel.alignment = .right
+
+        let bankLabel = NSTextField(labelWithString: "Bank")
+        bankLabel.frame = NSRect(x: 28, y: 28, width: 64, height: 18)
+        bankLabel.alignment = .right
+
+        let voiceLabel = NSTextField(labelWithString: "Voice")
+        voiceLabel.frame = NSRect(x: 28, y: 2, width: 64, height: 18)
+        voiceLabel.alignment = .right
+
+        bankPopup.frame = NSRect(x: 104, y: 24, width: 150, height: 26)
+        voicePopup.frame = NSRect(x: 104, y: 0, width: 326, height: 26)
+
+        for bank in self.targetsByBank.keys.sorted() {
+            bankPopup.addItem(withTitle: "Bank \(bank + 1)")
+            bankPopup.lastItem?.representedObject = bank
+        }
+
+        bankPopup.target = self
+        bankPopup.action = #selector(bankChanged)
+
+        addSubview(targetLabel)
+        addSubview(bankLabel)
+        addSubview(voiceLabel)
+        addSubview(bankPopup)
+        addSubview(voicePopup)
+
+        if let preferredTarget,
+           let index = bankPopup.itemArray.firstIndex(where: { ($0.representedObject as? Int) == preferredTarget.bank }) {
+            bankPopup.selectItem(at: index)
+        } else {
+            bankPopup.selectItem(at: 0)
+        }
+        populateVoices(preferredTarget: preferredTarget)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    @objc private func bankChanged() {
+        populateVoices(preferredTarget: nil)
+    }
+
+    private func populateVoices(preferredTarget: VoiceSlotTarget?) {
+        voicePopup.removeAllItems()
+
+        guard let bank = bankPopup.selectedItem?.representedObject as? Int,
+              let targets = targetsByBank[bank] else {
+            return
+        }
+
+        for target in targets {
+            voicePopup.addItem(withTitle: titleProvider(target))
+            voicePopup.lastItem?.representedObject = target
+        }
+
+        if let preferredTarget,
+           preferredTarget.bank == bank,
+           let index = targets.firstIndex(of: preferredTarget) {
+            voicePopup.selectItem(at: index)
+        } else {
+            voicePopup.selectItem(at: 0)
+        }
+    }
+}
+
 enum SidebarSelection: Equatable {
     case system
     case source
@@ -2209,24 +2300,18 @@ final class DocumentModel: ObservableObject {
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 326, height: 26), pullsDown: false)
-        for target in candidates {
-            popup.addItem(withTitle: localVoiceSlotTitle(target))
-            popup.lastItem?.representedObject = target
-        }
-
-        if let currentIndex = candidates.firstIndex(where: { $0.sourceID == sourceID && $0.number > currentNumber }) {
-            popup.selectItem(at: currentIndex)
-        } else {
-            popup.selectItem(at: 0)
-        }
-
-        alert.accessoryView = labelledPopup(label: "Target slot:", popup: popup)
+        let preferredTarget = candidates.first { $0.sourceID == sourceID && $0.number > currentNumber } ?? candidates.first
+        let picker = VoiceSlotPickerAccessory(
+            targets: candidates,
+            preferredTarget: preferredTarget,
+            titleProvider: localVoiceSlotVoiceTitle
+        )
+        alert.accessoryView = picker
         guard alert.runModal() == .alertFirstButtonReturn else {
             return nil
         }
 
-        return popup.selectedItem?.representedObject as? VoiceSlotTarget
+        return picker.selectedTarget
     }
 
     private func writableVoiceSlotTargets(sourceID: LibrarySource.ID, currentNumber: Int) -> [VoiceSlotTarget] {
@@ -2247,6 +2332,12 @@ final class DocumentModel: ObservableObject {
                     number: summary.number
                 )
             }
+        }
+        .sorted { lhs, rhs in
+            if lhs.bank != rhs.bank {
+                return lhs.bank < rhs.bank
+            }
+            return lhs.number < rhs.number
         }
     }
 
@@ -2276,6 +2367,19 @@ final class DocumentModel: ObservableObject {
         let name = voice.name.isEmpty ? "Untitled" : voice.name
         let edited = source.isVoiceEdited(number: target.number)
         return "Bank \(target.bank + 1) Voice \(target.number) - \(name)\(edited ? " (LOCAL EDIT)" : "")"
+    }
+
+    private func localVoiceSlotVoiceTitle(_ target: VoiceSlotTarget) -> String {
+        guard let source = sources.first(where: { $0.id == target.sourceID }),
+              let voiceBank = source.voiceBankData,
+              let fallback = voiceBank.voices.first(where: { $0.number == target.number })?.voice else {
+            return "Voice \(target.number) - unknown"
+        }
+
+        let voice = self.voice(sourceID: target.sourceID, number: target.number, fallback: fallback)
+        let name = voice.name.isEmpty ? "Untitled" : voice.name
+        let edited = source.isVoiceEdited(number: target.number)
+        return "Voice \(target.number) - \(name)\(edited ? " (LOCAL EDIT)" : "")"
     }
 
     func configurationSlotMenuTitle(slot: Int) -> String {
