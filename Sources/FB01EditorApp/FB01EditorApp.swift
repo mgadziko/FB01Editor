@@ -1282,7 +1282,7 @@ struct ConfigurationDetailView: View {
                 KeyValueRow("Payload Bytes", "\(packet.payload.count)"),
                 KeyValueRow("Combine", editableConfiguration.combineModeEnabled ? "On" : "Off"),
                 KeyValueRow("Key-Code Mode", editableConfiguration.keyCodeReceiveMode.displayName),
-                KeyValueRow("LFO", "Speed \(editableConfiguration.lfoSpeed), AMD \(editableConfiguration.amplitudeModulationDepth), PMD \(editableConfiguration.pitchModulationDepth), Wave \(editableConfiguration.lfoWaveform + 1)"),
+                KeyValueRow("LFO", "Speed \(editableConfiguration.lfoSpeed), AMD \(editableConfiguration.amplitudeModulationDepth), PMD \(editableConfiguration.pitchModulationDepth), Waveform \(editableConfiguration.lfoWaveform.lfoWaveformDisplayName)"),
             ])
 
             if isReadOnly {
@@ -1431,16 +1431,16 @@ struct ConfigurationEditorControls: View {
             }
 
             GridRow {
-                label("Wave")
+                label("Waveform")
                 Picker("", selection: $lfoWaveform) {
-                    Text("1").tag(0)
-                    Text("2").tag(1)
-                    Text("3").tag(2)
-                    Text("4").tag(3)
+                    Text("Saw").tag(0)
+                    Text("Square").tag(1)
+                    Text("Triangle").tag(2)
+                    Text("Random").tag(3)
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
-                .frame(width: 180)
+                .frame(width: 260)
             }
         }
         .padding(12)
@@ -1518,14 +1518,14 @@ struct ConfigurationInstrumentRow: View {
             .labelsHidden()
             .frame(width: 74)
             Picker("", selection: pmdBinding) {
-                Text("Off").tag(FB01PMDControllerAssignment.notAssigned)
-                Text("AT").tag(FB01PMDControllerAssignment.afterTouch)
-                Text("MW").tag(FB01PMDControllerAssignment.modulationWheel)
-                Text("BC").tag(FB01PMDControllerAssignment.breathController)
-                Text("FC").tag(FB01PMDControllerAssignment.footController)
+                Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
+                Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
+                Text(FB01PMDControllerAssignment.modulationWheel.displayName).tag(FB01PMDControllerAssignment.modulationWheel)
+                Text(FB01PMDControllerAssignment.breathController.displayName).tag(FB01PMDControllerAssignment.breathController)
+                Text(FB01PMDControllerAssignment.footController.displayName).tag(FB01PMDControllerAssignment.footController)
             }
             .labelsHidden()
-            .frame(width: 82)
+            .frame(width: 128)
         }
     }
 
@@ -1758,7 +1758,7 @@ struct VoiceDetailView: View {
                 KeyValueRow("Algorithm", "\(editableVoice.algorithm + 1)"),
                 KeyValueRow("Feedback", "\(editableVoice.feedbackLevel)"),
                 KeyValueRow("Transpose", "\(editableVoice.transpose)"),
-                KeyValueRow("LFO", "Speed \(editableVoice.lfoSpeed), Wave \(editableVoice.lfoWaveform + 1), Sync \(editableVoice.lfoSyncEnabled ? "On" : "Off")"),
+                KeyValueRow("LFO", "Speed \(editableVoice.lfoSpeed), Waveform \(editableVoice.lfoWaveform.lfoWaveformDisplayName), Sync \(editableVoice.lfoSyncEnabled ? "On" : "Off")"),
                 KeyValueRow("Modulation", "AMD \(editableVoice.amplitudeModulationDepth), PMD \(editableVoice.pitchModulationDepth), AMS \(editableVoice.amplitudeModulationSensitivity), PMS \(editableVoice.pitchModulationSensitivity)"),
                 KeyValueRow("Operators", enabledOperatorsText),
                 KeyValueRow("Output", outputText),
@@ -2143,6 +2143,18 @@ private extension FB01KeyCodeReceiveMode {
         case .even: "Even"
         case .odd: "Odd"
         case .unknown: "Unknown"
+        }
+    }
+}
+
+private extension Int {
+    var lfoWaveformDisplayName: String {
+        switch self {
+        case 0: "Saw"
+        case 1: "Square"
+        case 2: "Triangle"
+        case 3: "Random"
+        default: "Unknown"
         }
     }
 }
