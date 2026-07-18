@@ -2936,61 +2936,6 @@ struct VoiceEditorControls: View {
     }
 }
 
-struct OperatorTable: View {
-    var operators: [FB01VoiceOperatorData]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Operators")
-                .font(.headline)
-
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 7) {
-                GridRow {
-                    header("#")
-                    header("TL")
-                    header("Mul")
-                    header("AR")
-                    header("D1R")
-                    header("D2R")
-                    header("SL")
-                    header("RR")
-                    header("Carrier")
-                }
-
-                Divider()
-                    .gridCellColumns(9)
-
-                ForEach(operators, id: \.index) { op in
-                    GridRow {
-                        cell("\(op.index + 1)")
-                        cell("\(op.totalLevel)")
-                        cell("\(op.multiple)")
-                        cell("\(op.attackRate)")
-                        cell("\(op.decay1Rate)")
-                        cell("\(op.decay2Rate)")
-                        cell("\(op.sustainLevel)")
-                        cell("\(op.releaseRate)")
-                        cell(op.carrier ? "Yes" : "No")
-                    }
-                }
-            }
-            .font(.system(.body, design: .monospaced))
-        }
-    }
-
-    private func header(_ title: String) -> some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-    }
-
-    private func cell(_ title: String) -> some View {
-        Text(title)
-            .lineLimit(1)
-    }
-}
-
 struct OperatorEditor: View {
     var operators: [FB01VoiceOperatorData]
     var updateOperator: (FB01VoiceOperatorData) -> Void
@@ -3003,18 +2948,27 @@ struct OperatorEditor: View {
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
                 GridRow {
                     header("#")
+                    header("Carrier")
                     header("TL")
+                    header("Vel TL")
+                    header("KLS")
+                    header("KLS A")
+                    header("KLS B")
+                    header("TL Adj")
                     header("Mul")
+                    header("DT1")
+                    header("KRS")
                     header("AR")
+                    header("Vel AR")
                     header("D1R")
+                    header("DT2")
                     header("D2R")
                     header("SL")
                     header("RR")
-                    header("Carrier")
                 }
 
                 Divider()
-                    .gridCellColumns(9)
+                    .gridCellColumns(17)
 
                 ForEach(operators, id: \.index) { op in
                     OperatorEditorRow(operatorData: op, updateOperator: updateOperator)
@@ -3039,15 +2993,26 @@ struct OperatorEditorRow: View {
     var body: some View {
         GridRow {
             Text("\(operatorData.index + 1)")
+            Toggle("", isOn: carrierBinding)
+                .labelsHidden()
             smallStepper(value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
+            smallStepper(value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
+            smallStepper(value: operatorData.keyboardLevelScalingDepth, range: 0...15) { try operatorData.settingKeyboardLevelScalingDepth($0) }
+            Toggle("", isOn: keyboardLevelScalingTypeBit0Binding)
+                .labelsHidden()
+            Toggle("", isOn: keyboardLevelScalingTypeBit1Binding)
+                .labelsHidden()
+            smallStepper(value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
             smallStepper(value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
+            smallStepper(value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
+            smallStepper(value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
             smallStepper(value: operatorData.attackRate, range: 0...31) { try operatorData.settingAttackRate($0) }
+            smallStepper(value: operatorData.velocitySensitivityForAttackRate, range: 0...7) { try operatorData.settingVelocitySensitivityForAttackRate($0) }
             smallStepper(value: operatorData.decay1Rate, range: 0...15) { try operatorData.settingDecay1Rate($0) }
+            smallStepper(value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
             smallStepper(value: operatorData.decay2Rate, range: 0...31) { try operatorData.settingDecay2Rate($0) }
             smallStepper(value: operatorData.sustainLevel, range: 0...15) { try operatorData.settingSustainLevel($0) }
             smallStepper(value: operatorData.releaseRate, range: 0...15) { try operatorData.settingReleaseRate($0) }
-            Toggle("", isOn: carrierBinding)
-                .labelsHidden()
         }
     }
 
@@ -3056,6 +3021,28 @@ struct OperatorEditorRow: View {
             get: { operatorData.carrier },
             set: { value in
                 if let updated = try? operatorData.settingCarrier(value) {
+                    updateOperator(updated)
+                }
+            }
+        )
+    }
+
+    private var keyboardLevelScalingTypeBit0Binding: Binding<Bool> {
+        Binding(
+            get: { operatorData.keyboardLevelScalingTypeBit0 },
+            set: { value in
+                if let updated = try? operatorData.settingKeyboardLevelScalingTypeBit0(value) {
+                    updateOperator(updated)
+                }
+            }
+        )
+    }
+
+    private var keyboardLevelScalingTypeBit1Binding: Binding<Bool> {
+        Binding(
+            get: { operatorData.keyboardLevelScalingTypeBit1 },
+            set: { value in
+                if let updated = try? operatorData.settingKeyboardLevelScalingTypeBit1(value) {
                     updateOperator(updated)
                 }
             }

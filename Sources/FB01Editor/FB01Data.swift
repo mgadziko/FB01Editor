@@ -231,10 +231,57 @@ public struct FB01VoiceOperatorData: Equatable, Sendable {
         return FB01VoiceOperatorData(index: index, bytes: copy)
     }
 
+    public func settingKeyboardLevelScalingTypeBit0(_ value: Bool) throws -> FB01VoiceOperatorData {
+        var copy = bytes
+        copy[0x01] = value ? (copy[0x01] | 0x80) : (copy[0x01] & 0x7F)
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingVelocitySensitivityForTotalLevel(_ value: Int) throws -> FB01VoiceOperatorData {
+        let sensitivity = try FB01.validate(value, name: "velocitySensitivityForTotalLevel", range: 0...7)
+        var copy = bytes
+        copy[0x01] = (copy[0x01] & 0x8F) | (sensitivity << 4)
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingKeyboardLevelScalingDepth(_ value: Int) throws -> FB01VoiceOperatorData {
+        let depth = try FB01.validate(value, name: "keyboardLevelScalingDepth", range: 0...15)
+        var copy = bytes
+        copy[0x02] = (copy[0x02] & 0x0F) | (depth << 4)
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingTotalLevelAdjust(_ value: Int) throws -> FB01VoiceOperatorData {
+        let adjust = try FB01.validate(value, name: "totalLevelAdjust", range: 0...15)
+        var copy = bytes
+        copy[0x02] = (copy[0x02] & 0xF0) | adjust
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingKeyboardLevelScalingTypeBit1(_ value: Bool) throws -> FB01VoiceOperatorData {
+        var copy = bytes
+        copy[0x03] = value ? (copy[0x03] | 0x80) : (copy[0x03] & 0x7F)
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingDetune1(_ value: Int) throws -> FB01VoiceOperatorData {
+        let detune = try FB01.validate(value, name: "detune1", range: 0...7)
+        var copy = bytes
+        copy[0x03] = (copy[0x03] & 0x8F) | (detune << 4)
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
     public func settingMultiple(_ value: Int) throws -> FB01VoiceOperatorData {
         let multiple = try FB01.validate(value, name: "multiple", range: 0...15)
         var copy = bytes
         copy[0x03] = (copy[0x03] & 0xF0) | multiple
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingKeyboardRateScalingDepth(_ value: Int) throws -> FB01VoiceOperatorData {
+        let depth = try FB01.validate(value, name: "keyboardRateScalingDepth", range: 0...7)
+        var copy = bytes
+        copy[0x04] = (copy[0x04] & 0x1F) | (depth << 5)
         return FB01VoiceOperatorData(index: index, bytes: copy)
     }
 
@@ -251,10 +298,24 @@ public struct FB01VoiceOperatorData: Equatable, Sendable {
         return FB01VoiceOperatorData(index: index, bytes: copy)
     }
 
+    public func settingVelocitySensitivityForAttackRate(_ value: Int) throws -> FB01VoiceOperatorData {
+        let sensitivity = try FB01.validate(value, name: "velocitySensitivityForAttackRate", range: 0...7)
+        var copy = bytes
+        copy[0x05] = (copy[0x05] & 0x8F) | (sensitivity << 4)
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
     public func settingDecay1Rate(_ value: Int) throws -> FB01VoiceOperatorData {
         let rate = try FB01.validate(value, name: "decay1Rate", range: 0...15)
         var copy = bytes
         copy[0x05] = (copy[0x05] & 0xF0) | rate
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingDetune2(_ value: Int) throws -> FB01VoiceOperatorData {
+        let detune = try FB01.validate(value, name: "detune2", range: 0...3)
+        var copy = bytes
+        copy[0x06] = (copy[0x06] & 0x1F) | (detune << 5)
         return FB01VoiceOperatorData(index: index, bytes: copy)
     }
 
