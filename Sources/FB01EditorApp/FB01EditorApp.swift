@@ -265,6 +265,9 @@ final class DocumentModel: ObservableObject {
     @Published var systemChannel = 0
     @Published var systemMemoryProtectEnabled = false
     @Published var systemMasterOutputLevel = 127
+    @Published var keyboardVelocity = 100
+
+    private var preparedKeyboardVoiceSignature: String?
 
     private enum DefaultsKey {
         static let sourceIndex = "FB01Editor.selectedMIDISourceIndex"
@@ -339,7 +342,7 @@ final class DocumentModel: ObservableObject {
         return selectedSource?.title
     }
 
-    private var selectedVoiceContext: (sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary])? {
+    private var selectedVoiceContext: (sourceID: LibrarySource.ID, systemChannel: Int, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary])? {
         guard let source = selectedSource,
               let voiceBank = source.voiceBankData else {
             return nil
@@ -350,7 +353,11 @@ final class DocumentModel: ObservableObject {
             return nil
         }
         let voice = self.voice(sourceID: source.id, number: summary.number, fallback: summary.voice)
-        return (source.id, summary.number, voice, voiceBank.voices)
+        return (source.id, source.voiceSystemChannel ?? 0, summary.number, voice, voiceBank.voices)
+    }
+
+    var hasKeyboardVoiceContext: Bool {
+        selectedVoiceContext != nil
     }
 
     var editingStatusText: String {
@@ -818,6 +825,7 @@ final class DocumentModel: ObservableObject {
     func selectSource(_ source: LibrarySource) {
         selectedSourceID = source.id
         sidebarSelection = .source
+        preparedKeyboardVoiceSignature = nil
     }
 
     func selectVoice(sourceID: LibrarySource.ID, number: Int) {
@@ -910,6 +918,7 @@ final class DocumentModel: ObservableObject {
         if sources[index].isSingleVoiceSource {
             sources[index].title = voice.name.isEmpty ? "Single Voice \(number)" : voice.name
         }
+        preparedKeyboardVoiceSignature = nil
         selectedSourceID = sources[index].id
         statusMessage = "Edited \(sources[index].title) locally."
         errorMessage = nil
@@ -924,6 +933,7 @@ final class DocumentModel: ObservableObject {
         if sources[index].isSingleVoiceSource {
             sources[index].title = sources[index].artifact.messages.first?.sourceTitle(index: 1) ?? sources[index].title
         }
+        preparedKeyboardVoiceSignature = nil
         selectedSourceID = sources[index].id
         statusMessage = "Reset local edit."
         errorMessage = nil
@@ -951,6 +961,7 @@ final class DocumentModel: ObservableObject {
         }
 
         sources[index].editedVoices.removeAll()
+        preparedKeyboardVoiceSignature = nil
         selectedSourceID = sources[index].id
         statusMessage = "Reset \(count) local voice edit\(count == 1 ? "" : "s")."
         errorMessage = nil
@@ -1047,6 +1058,7 @@ final class DocumentModel: ObservableObject {
         }
 
         selectedSourceID = sources[index].id
+        preparedKeyboardVoiceSignature = nil
         errorMessage = nil
     }
 
@@ -1944,6 +1956,62 @@ final class DocumentModel: ObservableObject {
         return try [protectOffCommand.bytes, voiceMessage.bytes, storeCommand.bytes]
     }
 
+    func sendKeyboardNote(_ note: Int, isOn: Bool) {
+        let boundedNote = min(max(note, 0), 127)
+        let destinationIndex = selectedDestinationIndex
+        let velocity = UInt8(min(max(keyboardVelocity, 1), 127))
+
+        do {
+            var messages: [[UInt8]] = []
+            if isOn {
+                messages.append(contentsOf: try keyboardPreparationMessages())
+            }
+            messages.append([
+                isOn ? 0x90 : 0x80,
+                UInt8(boundedNote),
+                isOn ? velocity : 0,
+            ])
+            let midiMessages = messages
+            let midiDestinationIndex = destinationIndex
+
+            Task {
+                do {
+                    try await Task.detached(priority: .userInitiated) { [midiMessages, midiDestinationIndex] in
+                        try FB01MIDI.sendSysEx(
+                            midiMessages,
+                            destinationIndex: midiDestinationIndex,
+                            delayBetweenMessages: 0.05
+                        )
+                    }.value
+                    if isOn {
+                        statusMessage = "Playing MIDI note \(boundedNote)."
+                    }
+                } catch {
+                    errorMessage = "Keyboard note failed: \(error)"
+                    statusMessage = nil
+                }
+            }
+        } catch {
+            errorMessage = "Keyboard note failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    private func keyboardPreparationMessages() throws -> [[UInt8]] {
+        guard let context = selectedVoiceContext else {
+            return []
+        }
+
+        let signature = "\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)"
+        guard preparedKeyboardVoiceSignature != signature else {
+            return []
+        }
+
+        let artifact = try context.voice.instrumentVoiceArtifact(systemChannel: context.systemChannel, instrument: 0)
+        preparedKeyboardVoiceSignature = signature
+        return [try artifact.sysexBytes]
+    }
+
     private func playVoiceTestNotes(voice: FB01VoiceData, systemChannel: Int, instrument: Int) {
         guard !isBusy else { return }
 
@@ -2372,6 +2440,21 @@ struct LibrarySource: Identifiable, Equatable {
         }
     }
 
+    var voiceSystemChannel: Int? {
+        guard artifact.messages.count == 1 else {
+            return nil
+        }
+
+        switch artifact.messages[0] {
+        case let .instrumentVoiceDump(systemChannel, _, _),
+             let .voiceRAMDumpData(systemChannel, _, _, _),
+             let .voiceBankDumpData(systemChannel, _, _, _, _):
+            return systemChannel
+        default:
+            return nil
+        }
+    }
+
     func configurationDisplayTitle(withName name: String) -> String {
         if let storedConfigurationNumber {
             return "Configuration \(storedConfigurationNumber + 1): \(name)"
@@ -2483,6 +2566,13 @@ struct ContentView: View {
 
             LibraryView(document: document)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            LiveKeyboardView(document: document)
+                .frame(height: 72)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
 
             if let errorMessage = document.errorMessage {
                 Divider()
@@ -2597,6 +2687,206 @@ struct EmptyStateView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+struct LiveKeyboardView: View {
+    @ObservedObject var document: DocumentModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                SectionTitle("Live Keyboard")
+                Spacer()
+                Text(document.hasKeyboardVoiceContext ? "Current voice" : "MIDI notes only")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            PianoKeyboardRepresentable(
+                noteOn: { document.sendKeyboardNote($0, isOn: true) },
+                noteOff: { document.sendKeyboardNote($0, isOn: false) }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+struct PianoKeyboardRepresentable: NSViewRepresentable {
+    var noteOn: (Int) -> Void
+    var noteOff: (Int) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(noteOn: noteOn, noteOff: noteOff)
+    }
+
+    func makeNSView(context: Context) -> PianoKeyboardNSView {
+        let view = PianoKeyboardNSView()
+        view.noteOn = context.coordinator.noteOn
+        view.noteOff = context.coordinator.noteOff
+        return view
+    }
+
+    func updateNSView(_ nsView: PianoKeyboardNSView, context: Context) {
+        context.coordinator.noteOn = noteOn
+        context.coordinator.noteOff = noteOff
+        nsView.noteOn = context.coordinator.noteOn
+        nsView.noteOff = context.coordinator.noteOff
+    }
+
+    final class Coordinator {
+        var noteOn: (Int) -> Void
+        var noteOff: (Int) -> Void
+
+        init(noteOn: @escaping (Int) -> Void, noteOff: @escaping (Int) -> Void) {
+            self.noteOn = noteOn
+            self.noteOff = noteOff
+        }
+    }
+}
+
+final class PianoKeyboardNSView: NSView {
+    var noteOn: (Int) -> Void = { _ in }
+    var noteOff: (Int) -> Void = { _ in }
+
+    private let startNote = 36
+    private let octaveCount = 5
+    private var activeNote: Int?
+    private var tracking: NSTrackingArea?
+
+    override var acceptsFirstResponder: Bool { true }
+
+    override func updateTrackingAreas() {
+        if let tracking {
+            removeTrackingArea(tracking)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .mouseMoved, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        tracking = area
+        super.updateTrackingAreas()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        NSColor.controlBackgroundColor.setFill()
+        bounds.fill()
+
+        for key in whiteKeys {
+            let rect = whiteKeyRect(index: key.whiteIndex)
+            (activeNote == key.note ? NSColor.systemBlue.withAlphaComponent(0.18) : NSColor.white).setFill()
+            rect.fill()
+            NSColor.separatorColor.setStroke()
+            NSBezierPath(rect: rect).stroke()
+        }
+
+        for key in blackKeys {
+            let rect = blackKeyRect(afterWhiteIndex: key.afterWhiteIndex)
+            (activeNote == key.note ? NSColor.systemBlue : NSColor.black).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        updateActiveNote(from: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        updateActiveNote(from: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        stopActiveNote()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        stopActiveNote()
+    }
+
+    private var whiteKeyCount: Int {
+        octaveCount * 7 + 1
+    }
+
+    private var whiteKeyWidth: CGFloat {
+        max(bounds.width / CGFloat(whiteKeyCount), 1)
+    }
+
+    private var whiteKeys: [(note: Int, whiteIndex: Int)] {
+        var keys: [(Int, Int)] = []
+        var whiteIndex = 0
+        for note in startNote...(startNote + octaveCount * 12) where !isBlack(note) {
+            keys.append((note, whiteIndex))
+            whiteIndex += 1
+        }
+        return keys
+    }
+
+    private var blackKeys: [(note: Int, afterWhiteIndex: Int)] {
+        var keys: [(Int, Int)] = []
+        var whiteIndex = 0
+        for note in startNote...(startNote + octaveCount * 12) {
+            if isBlack(note) {
+                keys.append((note, whiteIndex - 1))
+            } else {
+                whiteIndex += 1
+            }
+        }
+        return keys
+    }
+
+    private func whiteKeyRect(index: Int) -> CGRect {
+        CGRect(x: CGFloat(index) * whiteKeyWidth, y: 0, width: whiteKeyWidth, height: bounds.height)
+    }
+
+    private func blackKeyRect(afterWhiteIndex index: Int) -> CGRect {
+        let width = whiteKeyWidth * 0.58
+        return CGRect(
+            x: CGFloat(index + 1) * whiteKeyWidth - width / 2,
+            y: bounds.height * 0.38,
+            width: width,
+            height: bounds.height * 0.62
+        )
+    }
+
+    private func updateActiveNote(from event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(point), let note = note(at: point), note != activeNote else {
+            return
+        }
+
+        if let activeNote {
+            noteOff(activeNote)
+        }
+        activeNote = note
+        noteOn(note)
+        needsDisplay = true
+    }
+
+    private func stopActiveNote() {
+        guard let activeNote else {
+            return
+        }
+        noteOff(activeNote)
+        self.activeNote = nil
+        needsDisplay = true
+    }
+
+    private func note(at point: CGPoint) -> Int? {
+        for key in blackKeys.reversed() where blackKeyRect(afterWhiteIndex: key.afterWhiteIndex).contains(point) {
+            return key.note
+        }
+
+        let whiteIndex = min(max(Int(point.x / whiteKeyWidth), 0), whiteKeyCount - 1)
+        return whiteKeys.first { $0.whiteIndex == whiteIndex }?.note
+    }
+
+    private func isBlack(_ note: Int) -> Bool {
+        [1, 3, 6, 8, 10].contains(note % 12)
     }
 }
 
@@ -3827,12 +4117,6 @@ struct VoiceDetailView: View {
                 }
                 .disabled(document.isBusy)
                 Button {
-                    document.playVoiceTestNotes(voice: editableVoice, systemChannel: systemChannel)
-                } label: {
-                    Label("Play Test", systemImage: "speaker.wave.2")
-                }
-                .disabled(document.isBusy)
-                Button {
                     exportVoice()
                 } label: {
                     Label("Export Voice", systemImage: "square.and.arrow.down")
@@ -4336,7 +4620,7 @@ struct OperatorInspector: View {
         ], alignment: .leading, spacing: 12) {
             OperatorControlGroup(title: "Level") {
                 operatorToggle("Carrier", binding: carrierBinding)
-                operatorStepper("Total Level", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
+                operatorLevelControl("Volume", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
                 operatorStepper("Velocity to TL", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
                 operatorStepper("TL Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
             }
@@ -4348,6 +4632,8 @@ struct OperatorInspector: View {
             }
 
             OperatorControlGroup(title: "Envelope") {
+                OperatorEnvelopeView(operatorData: operatorData)
+                    .frame(height: 96)
                 operatorStepper("Attack Rate", value: operatorData.attackRate, range: 0...31) { try operatorData.settingAttackRate($0) }
                 operatorStepper("Velocity to Attack", value: operatorData.velocitySensitivityForAttackRate, range: 0...7) { try operatorData.settingVelocitySensitivityForAttackRate($0) }
                 operatorStepper("Decay 1 Rate", value: operatorData.decay1Rate, range: 0...15) { try operatorData.settingDecay1Rate($0) }
@@ -4423,9 +4709,106 @@ struct OperatorInspector: View {
         }
     }
 
+    private func operatorLevelControl(
+        _ label: String,
+        value: Int,
+        range: ClosedRange<Int>,
+        update: @escaping (Int) throws -> FB01VoiceOperatorData
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(label)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(value)")
+                    .frame(minWidth: 34, alignment: .trailing)
+                    .monospacedDigit()
+            }
+
+            Slider(value: Binding(
+                get: { Double(value) },
+                set: { newValue in
+                    if let updated = try? update(Int(newValue.rounded())) {
+                        updateOperator(updated)
+                    }
+                }
+            ), in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
+        }
+    }
+
     private func operatorToggle(_ label: String, binding: Binding<Bool>) -> some View {
         Toggle(label, isOn: binding)
             .toggleStyle(.checkbox)
+    }
+}
+
+struct OperatorEnvelopeView: View {
+    var operatorData: FB01VoiceOperatorData
+
+    var body: some View {
+        Canvas { context, size in
+            let inset: CGFloat = 8
+            let rect = CGRect(
+                x: inset,
+                y: inset,
+                width: max(size.width - inset * 2, 1),
+                height: max(size.height - inset * 2, 1)
+            )
+            let sustainY = rect.maxY - rect.height * CGFloat(operatorData.sustainLevel) / 15
+            let attackWidth = segmentWidth(rate: operatorData.attackRate, maxRate: 31, rect: rect)
+            let decay1Width = segmentWidth(rate: operatorData.decay1Rate, maxRate: 15, rect: rect)
+            let decay2Width = segmentWidth(rate: operatorData.decay2Rate, maxRate: 31, rect: rect)
+            let releaseWidth = segmentWidth(rate: operatorData.releaseRate, maxRate: 15, rect: rect)
+            let scale = rect.width / max(attackWidth + decay1Width + decay2Width + releaseWidth, 1)
+
+            let start = CGPoint(x: rect.minX, y: rect.maxY)
+            let attack = CGPoint(x: rect.minX + attackWidth * scale, y: rect.minY)
+            let decay1 = CGPoint(x: attack.x + decay1Width * scale, y: rect.minY + rect.height * 0.18)
+            let sustain = CGPoint(x: decay1.x + decay2Width * scale, y: sustainY)
+            let release = CGPoint(x: rect.maxX, y: rect.maxY)
+
+            var grid = Path()
+            grid.move(to: CGPoint(x: rect.minX, y: rect.minY))
+            grid.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+            grid.move(to: CGPoint(x: rect.minX, y: rect.midY))
+            grid.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+            grid.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            grid.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+            context.stroke(grid, with: .color(.secondary.opacity(0.18)), lineWidth: 1)
+
+            var fill = Path()
+            fill.move(to: start)
+            fill.addLine(to: attack)
+            fill.addLine(to: decay1)
+            fill.addLine(to: sustain)
+            fill.addLine(to: release)
+            fill.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+            fill.closeSubpath()
+            context.fill(fill, with: .color(.accentColor.opacity(0.12)))
+
+            var line = Path()
+            line.move(to: start)
+            line.addLine(to: attack)
+            line.addLine(to: decay1)
+            line.addLine(to: sustain)
+            line.addLine(to: release)
+            context.stroke(line, with: .color(.accentColor), lineWidth: 2)
+
+            for point in [attack, decay1, sustain, release] {
+                let marker = CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7)
+                context.fill(Path(ellipseIn: marker), with: .color(.primary))
+            }
+        }
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    private func segmentWidth(rate: Int, maxRate: Int, rect: CGRect) -> CGFloat {
+        let normalized = CGFloat(min(max(rate, 0), maxRate)) / CGFloat(maxRate)
+        return rect.width * (0.12 + (1 - normalized) * 0.22)
     }
 }
 
