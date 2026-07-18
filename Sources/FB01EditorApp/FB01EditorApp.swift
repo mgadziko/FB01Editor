@@ -2131,71 +2131,74 @@ struct ConfigurationEditorControls: View {
     @Binding var lfoWaveform: Int
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-            GridRow {
-                label("Name")
-                TextField("Name", text: $name)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 180)
-            }
+        GroupBox {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                GridRow {
+                    label("Name")
+                    TextField("Name", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 180)
+                }
 
-            GridRow {
-                label("Combine")
-                Toggle("", isOn: $combineModeEnabled)
+                GridRow {
+                    label("Combine")
+                    Toggle("", isOn: $combineModeEnabled)
+                        .labelsHidden()
+                }
+
+                GridRow {
+                    label("Key-Code")
+                    Picker("", selection: $keyCodeReceiveMode) {
+                        Text("All").tag(FB01KeyCodeReceiveMode.all)
+                        Text("Even").tag(FB01KeyCodeReceiveMode.even)
+                        Text("Odd").tag(FB01KeyCodeReceiveMode.odd)
+                    }
                     .labelsHidden()
-            }
-
-            GridRow {
-                label("Key-Code")
-                Picker("", selection: $keyCodeReceiveMode) {
-                    Text("All").tag(FB01KeyCodeReceiveMode.all)
-                    Text("Even").tag(FB01KeyCodeReceiveMode.even)
-                    Text("Odd").tag(FB01KeyCodeReceiveMode.odd)
+                    .pickerStyle(.segmented)
+                    .frame(width: 180)
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 180)
-            }
 
-            GridRow {
-                label("LFO Speed")
-                Stepper(value: $lfoSpeed, in: 0...127) {
-                    Text("\(lfoSpeed)")
-                        .monospacedDigit()
+                GridRow {
+                    label("LFO Speed")
+                    Stepper(value: $lfoSpeed, in: 0...127) {
+                        Text("\(lfoSpeed)")
+                            .monospacedDigit()
+                    }
+                }
+
+                GridRow {
+                    label("AMD")
+                    Stepper(value: $amplitudeModulationDepth, in: 0...127) {
+                        Text("\(amplitudeModulationDepth)")
+                            .monospacedDigit()
+                    }
+                }
+
+                GridRow {
+                    label("PMD")
+                    Stepper(value: $pitchModulationDepth, in: 0...127) {
+                        Text("\(pitchModulationDepth)")
+                            .monospacedDigit()
+                    }
+                }
+
+                GridRow {
+                    label("Waveform")
+                    Picker("", selection: $lfoWaveform) {
+                        Text("Saw").tag(0)
+                        Text("Square").tag(1)
+                        Text("Triangle").tag(2)
+                        Text("Random").tag(3)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 260)
                 }
             }
-
-            GridRow {
-                label("AMD")
-                Stepper(value: $amplitudeModulationDepth, in: 0...127) {
-                    Text("\(amplitudeModulationDepth)")
-                        .monospacedDigit()
-                }
-            }
-
-            GridRow {
-                label("PMD")
-                Stepper(value: $pitchModulationDepth, in: 0...127) {
-                    Text("\(pitchModulationDepth)")
-                        .monospacedDigit()
-                }
-            }
-
-            GridRow {
-                label("Waveform")
-                Picker("", selection: $lfoWaveform) {
-                    Text("Saw").tag(0)
-                    Text("Square").tag(1)
-                    Text("Triangle").tag(2)
-                    Text("Random").tag(3)
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 260)
-            }
+            .padding(.top, 4)
+        } label: {
+            SectionTitle("Configuration")
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func label(_ text: String) -> some View {
@@ -2211,8 +2214,7 @@ struct ConfigurationInstrumentEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Instruments")
-                .font(.headline)
+            SectionTitle("Instruments")
 
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
                 GridRow {
@@ -2347,6 +2349,20 @@ struct ConfigurationInstrumentRow: View {
                 .monospacedDigit()
         }
         .frame(width: 78)
+    }
+}
+
+struct SectionTitle: View {
+    var title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title)
+            .font(.headline)
+            .foregroundStyle(.blue)
     }
 }
 
@@ -2945,9 +2961,7 @@ struct VoiceEditorControls: View {
     }
 
     private func sectionTitle(_ text: String) -> some View {
-        Text(text)
-            .font(.headline)
-            .foregroundStyle(.blue)
+        SectionTitle(text)
     }
 }
 
@@ -2962,9 +2976,7 @@ struct OperatorEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Operators")
-                .font(.headline)
-                .foregroundStyle(.blue)
+            SectionTitle("Operators")
 
             HStack(alignment: .top, spacing: 14) {
                 VStack(spacing: 8) {
@@ -3162,9 +3174,7 @@ struct OperatorControlGroup<Content: View>: View {
             .padding(.top, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(.blue)
+            SectionTitle(title)
         }
     }
 }
@@ -3174,8 +3184,7 @@ struct InstrumentTable: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Instruments")
-                .font(.headline)
+            SectionTitle("Instruments")
 
             Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 7) {
                 GridRow {
