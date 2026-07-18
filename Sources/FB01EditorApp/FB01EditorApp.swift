@@ -487,6 +487,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var fileURL: URL?
     @Published var errorMessage: String?
     @Published var statusMessage: String?
+    private var preparedKeyboardVoiceSignature: String?
 
     init(voice: FB01VoiceData, systemChannel: Int, fileURL: URL? = nil) {
         self.voice = voice
@@ -513,6 +514,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
         do {
             voice = try edit(voice)
+            preparedKeyboardVoiceSignature = nil
             errorMessage = nil
             statusMessage = nil
         } catch {
@@ -699,6 +701,29 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
+    func sendKeyboardNote(_ note: Int, isOn: Bool, device: DocumentModel) {
+        let boundedNote = min(max(note, 0), 127)
+        let destinationIndex = device.selectedDestinationIndex
+        let channel = UInt8(min(max(device.keyboardChannel, 0), 15))
+        let velocity = UInt8(min(max(device.keyboardVelocity, 1), 127))
+
+        do {
+            if isOn {
+                for message in try keyboardPreparationMessages() {
+                    try FB01MIDI.sendImmediate(message, destinationIndex: destinationIndex)
+                }
+            }
+            try FB01MIDI.sendImmediate([
+                (isOn ? 0x90 : 0x80) | channel,
+                UInt8(boundedNote),
+                isOn ? velocity : 0,
+            ], destinationIndex: destinationIndex)
+        } catch {
+            errorMessage = "Keyboard note failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
     private func save(to url: URL) {
         do {
             let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
@@ -712,6 +737,17 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             errorMessage = "Save failed: \(error)"
             statusMessage = nil
         }
+    }
+
+    private func keyboardPreparationMessages() throws -> [[UInt8]] {
+        let signature = "\(voice.bytes)"
+        guard preparedKeyboardVoiceSignature != signature else {
+            return []
+        }
+
+        let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
+        preparedKeyboardVoiceSignature = signature
+        return [try artifact.sysexBytes]
     }
 
     private static func readVoice(from url: URL) throws -> (voice: FB01VoiceData, systemChannel: Int) {
@@ -1180,7 +1216,7 @@ struct FB01EditorApplication: App {
         }
         WindowGroup("Voice Document", id: "voice-document", for: UUID.self) { $id in
             if let id, let voiceDocument = documentWorkspace.voiceDocument(id: id) {
-                VoiceDocumentWindow(document: voiceDocument)
+                VoiceDocumentWindow(document: voiceDocument, device: document)
                     .frame(minWidth: 760, minHeight: 620)
             } else {
                 MissingEditorDocumentView()
@@ -1189,7 +1225,7 @@ struct FB01EditorApplication: App {
         }
         WindowGroup("Configuration Document", id: "configuration-document", for: UUID.self) { $id in
             if let id, let configurationDocument = documentWorkspace.configurationDocument(id: id) {
-                ConfigurationDocumentWindow(document: configurationDocument)
+                ConfigurationDocumentWindow(document: configurationDocument, device: document)
                     .frame(minWidth: 820, minHeight: 620)
             } else {
                 MissingEditorDocumentView()
@@ -4644,8 +4680,168 @@ struct MissingEditorDocumentView: View {
     }
 }
 
+struct DocumentWindowCloseGuard: NSViewRepresentable {
+    var isEdited: () -> Bool
+    var title: () -> String
+    var save: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isEdited: isEdited, title: title, save: save)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let window = view.window {
+                context.coordinator.attach(to: window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.isEdited = isEdited
+        context.coordinator.title = title
+        context.coordinator.save = save
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                context.coordinator.attach(to: window)
+            }
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSWindowDelegate {
+        var isEdited: () -> Bool
+        var title: () -> String
+        var save: () -> Void
+        private weak var previousDelegate: NSWindowDelegate?
+        private weak var window: NSWindow?
+
+        init(isEdited: @escaping () -> Bool, title: @escaping () -> String, save: @escaping () -> Void) {
+            self.isEdited = isEdited
+            self.title = title
+            self.save = save
+        }
+
+        func attach(to window: NSWindow) {
+            guard self.window !== window else {
+                return
+            }
+            previousDelegate = window.delegate
+            self.window = window
+            window.delegate = self
+        }
+
+        func windowShouldClose(_ sender: NSWindow) -> Bool {
+            guard isEdited() else {
+                return previousDelegate?.windowShouldClose?(sender) ?? true
+            }
+
+            let alert = NSAlert()
+            alert.messageText = "Save Changes to \(title())?"
+            alert.informativeText = "This document has unsaved changes."
+            alert.addButton(withTitle: "Save")
+            alert.addButton(withTitle: "Discard Changes")
+            alert.addButton(withTitle: "Cancel")
+            alert.alertStyle = .warning
+
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                save()
+                return !isEdited()
+            case .alertSecondButtonReturn:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
+
+struct DocumentMIDIContextView: View {
+    @ObservedObject var device: DocumentModel
+    var documentSystemChannel: Int
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Label(device.selectedSourceName, systemImage: "arrow.down.circle")
+                .lineLimit(1)
+            Label(device.selectedDestinationName, systemImage: "arrow.up.circle")
+                .lineLimit(1)
+            Label("System \(device.systemChannel + 1)", systemImage: "number.circle")
+            Text("Document SysEx channel \(documentSystemChannel + 1)")
+                .foregroundStyle(.secondary)
+        }
+        .font(.caption.weight(.medium))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+struct VoiceDocumentLiveKeyboardView: View {
+    @ObservedObject var document: VoiceDocumentModel
+    @ObservedObject var device: DocumentModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                SectionTitle("Live Keyboard")
+                Text("Document voice")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Picker("Ch", selection: Binding(
+                    get: { device.keyboardChannel + 1 },
+                    set: { device.setKeyboardChannel($0 - 1) }
+                )) {
+                    ForEach(1...16, id: \.self) { channel in
+                        Text("\(channel)").tag(channel)
+                    }
+                }
+                .frame(width: 84)
+
+                Stepper(value: Binding(
+                    get: { device.keyboardVelocity },
+                    set: { device.setKeyboardVelocity($0) }
+                ), in: 1...127) {
+                    Text("Vel \(device.keyboardVelocity)")
+                        .monospacedDigit()
+                }
+                .frame(width: 130)
+
+                Stepper(value: Binding(
+                    get: { device.keyboardStartNote / 12 },
+                    set: { device.setKeyboardStartNote($0 * 12) }
+                ), in: 0...5) {
+                    Text("Octave \(device.keyboardStartNote / 12)")
+                        .monospacedDigit()
+                }
+                .frame(width: 140)
+            }
+
+            PianoKeyboardRepresentable(
+                startNote: device.keyboardStartNote,
+                octaveCount: 5,
+                noteOn: { document.sendKeyboardNote($0, isOn: true, device: device) },
+                noteOff: { document.sendKeyboardNote($0, isOn: false, device: device) }
+            )
+            .frame(height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
+        }
+    }
+}
+
 struct VoiceDocumentWindow: View {
     @ObservedObject var document: VoiceDocumentModel
+    @ObservedObject var device: DocumentModel
 
     private var voice: FB01VoiceData {
         document.voice
@@ -4668,6 +4864,8 @@ struct VoiceDocumentWindow: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(document.isEdited ? .orange : .secondary)
                 }
+
+                DocumentMIDIContextView(device: device, documentSystemChannel: document.systemChannel)
 
                 SummaryPanel(rows: [
                     KeyValueRow("Name", voice.name),
@@ -4752,12 +4950,19 @@ struct VoiceDocumentWindow: View {
                     }
                 )
 
+                VoiceDocumentLiveKeyboardView(document: document, device: device)
+
                 DocumentStatusFooter(errorMessage: document.errorMessage, statusMessage: document.statusMessage)
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(document.title)
+        .background(DocumentWindowCloseGuard(
+            isEdited: { document.isEdited },
+            title: { document.title },
+            save: { document.save() }
+        ))
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
             save: { document.save() },
             saveAs: { document.saveAs() },
@@ -4788,6 +4993,7 @@ struct VoiceDocumentWindow: View {
 
 struct ConfigurationDocumentWindow: View {
     @ObservedObject var document: ConfigurationDocumentModel
+    @ObservedObject var device: DocumentModel
 
     private var configuration: FB01ConfigurationData {
         document.configuration
@@ -4810,6 +5016,8 @@ struct ConfigurationDocumentWindow: View {
                         .font(.caption.weight(.medium))
                         .foregroundStyle(document.isEdited ? .orange : .secondary)
                 }
+
+                DocumentMIDIContextView(device: device, documentSystemChannel: document.systemChannel)
 
                 SummaryPanel(rows: [
                     KeyValueRow("Name", configuration.name),
@@ -4863,6 +5071,11 @@ struct ConfigurationDocumentWindow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(document.title)
+        .background(DocumentWindowCloseGuard(
+            isEdited: { document.isEdited },
+            title: { document.title },
+            save: { document.save() }
+        ))
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
             save: { document.save() },
             saveAs: { document.saveAs() },
