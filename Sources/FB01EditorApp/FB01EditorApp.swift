@@ -605,6 +605,33 @@ final class DocumentModel: ObservableObject {
         errorMessage = nil
     }
 
+    func resetAllVoiceEdits(sourceID: LibrarySource.ID) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        let count = sources[index].editedVoices.count
+        guard count > 0 else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Reset All Voice Edits?"
+        alert.informativeText = "This discards \(count) local voice edit\(count == 1 ? "" : "s") in \(sources[index].title). It does not delete files or change the FB-01."
+        alert.addButton(withTitle: "Reset All")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        sources[index].editedVoices.removeAll()
+        selectedSourceID = sources[index].id
+        statusMessage = "Reset \(count) local voice edit\(count == 1 ? "" : "s")."
+        errorMessage = nil
+    }
+
     func copyVoiceToLocalSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
         guard let index = sources.firstIndex(where: { $0.id == sourceID }),
               let targetNumber = chooseVoiceSlot(
@@ -1477,6 +1504,10 @@ struct LibrarySource: Identifiable, Equatable {
 
     func isVoiceEdited(number: Int) -> Bool {
         editedVoices[number] != nil
+    }
+
+    var editedVoiceCount: Int {
+        editedVoices.count
     }
 
     func voice(number: Int, in voiceBank: FB01VoiceBankData) -> FB01VoiceData? {
@@ -2541,11 +2572,33 @@ struct VoiceBankBrowser: View {
         voices.first { $0.number == selectedVoiceNumber } ?? voices.first
     }
 
+    private var editedVoiceCount: Int {
+        document.sources.first { $0.id == sourceID }?.editedVoiceCount ?? 0
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Voices")
-                    .font(.headline)
+                HStack(spacing: 8) {
+                    Text("Voices")
+                        .font(.headline)
+
+                    if editedVoiceCount > 0 {
+                        Text("\(editedVoiceCount) edited")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.orange)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        document.resetAllVoiceEdits(sourceID: sourceID)
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward.circle")
+                    }
+                    .help("Reset all local voice edits in this bank")
+                    .disabled(editedVoiceCount == 0)
+                }
 
                 VStack(spacing: 2) {
                     ForEach(voices) { voice in
