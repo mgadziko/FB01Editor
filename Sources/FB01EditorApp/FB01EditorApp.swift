@@ -8,6 +8,13 @@ enum VoiceSlotOperation {
     case swap
 }
 
+struct VoiceSlotTarget: Equatable {
+    var sourceID: LibrarySource.ID
+    var sourceTitle: String
+    var bank: Int
+    var number: Int
+}
+
 enum SidebarSelection: Equatable {
     case system
     case source
@@ -1036,61 +1043,60 @@ final class DocumentModel: ObservableObject {
     }
 
     func copyVoiceToLocalSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
-        guard let targetNumber = chooseVoiceSlot(
+        guard let target = chooseVoiceSlot(
                 title: "Copy Voice to Slot",
-                message: "This copies \(voice.name.isEmpty ? "the selected voice" : "\"\(voice.name)\"") to another local voice slot. It does not write to disk or change the FB-01.",
+                message: "This copies \(voice.name.isEmpty ? "the selected voice" : "\"\(voice.name)\"") to a local Bank 1 or Bank 2 voice slot. It does not write to disk or change the FB-01.",
                 actionTitle: "Copy",
                 sourceID: sourceID,
-                currentNumber: number,
-                voices: voices
+                currentNumber: number
               ) else {
             return
         }
 
-        applyVoiceSlotOperation(.copy, sourceID: sourceID, number: number, targetNumber: targetNumber, voice: voice, voices: voices)
+        applyVoiceSlotOperation(.copy, sourceID: sourceID, number: number, target: target, voice: voice)
     }
 
     func swapVoiceWithLocalSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
-        guard let targetNumber = chooseVoiceSlot(
+        guard let target = chooseVoiceSlot(
                 title: "Swap Voice with Slot",
-                message: "This swaps the selected voice with another local voice slot. It does not write to disk or change the FB-01.",
+                message: "This swaps the selected voice with a local Bank 1 or Bank 2 voice slot. It does not write to disk or change the FB-01.",
                 actionTitle: "Swap",
                 sourceID: sourceID,
-                currentNumber: number,
-                voices: voices
+                currentNumber: number
               ) else {
             return
         }
 
-        applyVoiceSlotOperation(.swap, sourceID: sourceID, number: number, targetNumber: targetNumber, voice: voice, voices: voices)
+        applyVoiceSlotOperation(.swap, sourceID: sourceID, number: number, target: target, voice: voice)
     }
 
-    func applyVoiceSlotOperation(_ operation: VoiceSlotOperation, sourceID: LibrarySource.ID, number: Int, targetNumber: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
-        guard let index = sources.firstIndex(where: { $0.id == sourceID }),
-              number != targetNumber else {
+    func applyVoiceSlotOperation(_ operation: VoiceSlotOperation, sourceID: LibrarySource.ID, number: Int, target: VoiceSlotTarget, voice: FB01VoiceData) {
+        guard let sourceIndex = sources.firstIndex(where: { $0.id == sourceID }),
+              let targetIndex = sources.firstIndex(where: { $0.id == target.sourceID }),
+              sourceID != target.sourceID || number != target.number else {
             return
         }
 
-        if sources[index].isVoiceEdited(number: targetNumber),
-           !confirmEditedVoiceSlotOverwrite(operation: operation, source: sources[index], targetNumber: targetNumber) {
+        if sources[targetIndex].isVoiceEdited(number: target.number),
+           !confirmEditedVoiceSlotOverwrite(operation: operation, source: sources[targetIndex], target: target) {
             return
         }
 
         switch operation {
         case .copy:
-            sources[index].editedVoices[targetNumber] = voice
-            statusMessage = "Copied \(voice.name.isEmpty ? "selected voice" : voice.name) to Voice \(targetNumber) locally."
+            sources[targetIndex].editedVoices[target.number] = voice
+            statusMessage = "Copied \(voice.name.isEmpty ? "selected voice" : voice.name) to Bank \(target.bank + 1) Voice \(target.number) locally."
         case .swap:
-            guard let targetSummary = voices.first(where: { $0.number == targetNumber }) else {
+            guard let targetVoiceBank = sources[targetIndex].voiceBankData,
+                  let targetVoice = sources[targetIndex].voice(number: target.number, in: targetVoiceBank) else {
                 return
             }
-            let targetVoice = sources[index].editedVoices[targetNumber] ?? targetSummary.voice
-            sources[index].editedVoices[number] = targetVoice
-            sources[index].editedVoices[targetNumber] = voice
-            statusMessage = "Swapped Voice \(number) with Voice \(targetNumber) locally."
+            sources[sourceIndex].editedVoices[number] = targetVoice
+            sources[targetIndex].editedVoices[target.number] = voice
+            statusMessage = "Swapped Voice \(number) with Bank \(target.bank + 1) Voice \(target.number) locally."
         }
 
-        selectedSourceID = sources[index].id
+        selectedSourceID = sources[targetIndex].id
         preparedKeyboardVoiceSignature = nil
         errorMessage = nil
     }
@@ -2183,11 +2189,16 @@ final class DocumentModel: ObservableObject {
         message: String,
         actionTitle: String,
         sourceID: LibrarySource.ID,
-        currentNumber: Int,
-        voices: [FB01VoiceSummary]
-    ) -> Int? {
-        let candidates = voices.filter { $0.number != currentNumber }
+        currentNumber: Int
+    ) -> VoiceSlotTarget? {
+        let candidates = writableVoiceSlotTargets(sourceID: sourceID, currentNumber: currentNumber)
         guard !candidates.isEmpty else {
+            let alert = NSAlert()
+            alert.messageText = "No Writable Bank Targets Loaded"
+            alert.informativeText = "Load or fetch Bank 1 or Bank 2 before copying voices into writable FB-01 bank slots."
+            alert.addButton(withTitle: "OK")
+            alert.alertStyle = .informational
+            alert.runModal()
             return nil
         }
 
@@ -2199,12 +2210,12 @@ final class DocumentModel: ObservableObject {
         alert.alertStyle = .warning
 
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 326, height: 26), pullsDown: false)
-        for summary in candidates {
-            popup.addItem(withTitle: localVoiceSlotTitle(sourceID: sourceID, summary: summary))
-            popup.lastItem?.representedObject = summary.number
+        for target in candidates {
+            popup.addItem(withTitle: localVoiceSlotTitle(target))
+            popup.lastItem?.representedObject = target
         }
 
-        if let currentIndex = candidates.firstIndex(where: { $0.number > currentNumber }) {
+        if let currentIndex = candidates.firstIndex(where: { $0.sourceID == sourceID && $0.number > currentNumber }) {
             popup.selectItem(at: currentIndex)
         } else {
             popup.selectItem(at: 0)
@@ -2215,10 +2226,31 @@ final class DocumentModel: ObservableObject {
             return nil
         }
 
-        return popup.selectedItem?.representedObject as? Int
+        return popup.selectedItem?.representedObject as? VoiceSlotTarget
     }
 
-    private func confirmEditedVoiceSlotOverwrite(operation: VoiceSlotOperation, source: LibrarySource, targetNumber: Int) -> Bool {
+    private func writableVoiceSlotTargets(sourceID: LibrarySource.ID, currentNumber: Int) -> [VoiceSlotTarget] {
+        sources.flatMap { source -> [VoiceSlotTarget] in
+            guard let voiceBank = source.voiceBankData,
+                  (0...1).contains(voiceBank.bank) else {
+                return []
+            }
+
+            return voiceBank.voices.compactMap { summary in
+                guard source.id != sourceID || summary.number != currentNumber else {
+                    return nil
+                }
+                return VoiceSlotTarget(
+                    sourceID: source.id,
+                    sourceTitle: source.title,
+                    bank: voiceBank.bank,
+                    number: summary.number
+                )
+            }
+        }
+    }
+
+    private func confirmEditedVoiceSlotOverwrite(operation: VoiceSlotOperation, source: LibrarySource, target: VoiceSlotTarget) -> Bool {
         let action = switch operation {
         case .copy: "Copy"
         case .swap: "Swap"
@@ -2226,18 +2258,24 @@ final class DocumentModel: ObservableObject {
 
         let alert = NSAlert()
         alert.messageText = "\(action) Over Edited Voice?"
-        alert.informativeText = "Voice \(targetNumber) in \(source.title) already has a local edit. Continuing will replace that local edited slot state. It will not write to disk or change the FB-01."
+        alert.informativeText = "Bank \(target.bank + 1) Voice \(target.number) in \(source.title) already has a local edit. Continuing will replace that local edited slot state. It will not write to disk or change the FB-01."
         alert.addButton(withTitle: action)
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func localVoiceSlotTitle(sourceID: LibrarySource.ID, summary: FB01VoiceSummary) -> String {
-        let voice = self.voice(sourceID: sourceID, number: summary.number, fallback: summary.voice)
+    private func localVoiceSlotTitle(_ target: VoiceSlotTarget) -> String {
+        guard let source = sources.first(where: { $0.id == target.sourceID }),
+              let voiceBank = source.voiceBankData,
+              let fallback = voiceBank.voices.first(where: { $0.number == target.number })?.voice else {
+            return "Bank \(target.bank + 1) Voice \(target.number) - unknown"
+        }
+
+        let voice = self.voice(sourceID: target.sourceID, number: target.number, fallback: fallback)
         let name = voice.name.isEmpty ? "Untitled" : voice.name
-        let edited = sources.first { $0.id == sourceID }?.isVoiceEdited(number: summary.number) ?? false
-        return "Voice \(summary.number) - \(name)\(edited ? " (LOCAL EDIT)" : "")"
+        let edited = source.isVoiceEdited(number: target.number)
+        return "Bank \(target.bank + 1) Voice \(target.number) - \(name)\(edited ? " (LOCAL EDIT)" : "")"
     }
 
     func configurationSlotMenuTitle(slot: Int) -> String {
@@ -2831,7 +2869,7 @@ struct LiveKeyboardView: View {
                         get: { document.keyboardStartNote / 12 },
                         set: { document.setKeyboardStartNote($0 * 12) }
                     ), in: 0...5) {
-                        Text("Oct \(document.keyboardStartNote / 12)")
+                        Text("Octave \(document.keyboardStartNote / 12)")
                             .monospacedDigit()
                     }
                 }
@@ -4157,13 +4195,21 @@ struct VoiceBankBrowser: View {
                 guard let operation = chooseDropOperation(sourceNumber: sourceNumber, targetNumber: targetVoice.number) else {
                     return
                 }
+                guard let source = document.sources.first(where: { $0.id == sourceID }),
+                      let voiceBank = source.voiceBankData else {
+                    return
+                }
                 document.applyVoiceSlotOperation(
                     operation,
                     sourceID: sourceID,
                     number: sourceNumber,
-                    targetNumber: targetVoice.number,
-                    voice: sourceVoice,
-                    voices: voices
+                    target: VoiceSlotTarget(
+                        sourceID: sourceID,
+                        sourceTitle: source.title,
+                        bank: voiceBank.bank,
+                        number: targetVoice.number
+                    ),
+                    voice: sourceVoice
                 )
                 selectedVoiceNumber = targetVoice.number
             }
