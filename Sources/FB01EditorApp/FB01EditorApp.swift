@@ -52,6 +52,16 @@ struct FB01EditorApplication: App {
                     document.createConfigurationDocumentFromSelected()
                 }
                 .disabled(!document.canSendSelectedConfiguration)
+
+                Button("Duplicate Selected Configuration...") {
+                    document.duplicateSelectedConfigurationDocument()
+                }
+                .disabled(!document.canSendSelectedConfiguration)
+
+                Button("Save Selected Configuration As...") {
+                    document.saveSelectedConfigurationAs()
+                }
+                .disabled(!document.canSendSelectedConfiguration)
             }
 
             CommandMenu("Voice") {
@@ -502,6 +512,89 @@ final class DocumentModel: ObservableObject {
             statusMessage = nil
             errorMessage = "Create configuration document failed: \(error)"
         }
+    }
+
+    func duplicateSelectedConfigurationDocument() {
+        guard let source = selectedSource,
+              let payload = source.editableConfigurationPayload else {
+            return
+        }
+
+        duplicateConfigurationDocument(sourceID: source.id, configuration: payload)
+    }
+
+    func duplicateConfigurationDocument(sourceID: LibrarySource.ID, configuration: FB01ConfigurationData) {
+        guard let source = sources.first(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        let defaultTitle = source.title.hasSuffix(" Copy") ? source.title : "\(source.title) Copy"
+        let alert = NSAlert()
+        alert.messageText = "Duplicate Configuration Document"
+        alert.informativeText = "Create a new local configuration document. This does not write to disk or change the FB-01."
+        alert.addButton(withTitle: "Duplicate")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(string: defaultTitle)
+        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            return
+        }
+
+        do {
+            let systemChannel = source.configurationSystemChannel ?? 0
+            let artifact = FB01Artifact(message: .currentConfigurationDump(
+                systemChannel: systemChannel,
+                packet: try FB01SysExPacket(payload: configuration.bytes)
+            ))
+            let documentSource = LibrarySource(
+                title: title,
+                subtitle: "Local Configuration Document",
+                artifact: artifact
+            )
+            sources.append(documentSource)
+            selectedSourceID = documentSource.id
+            statusMessage = "Duplicated configuration as \(title)."
+            errorMessage = nil
+        } catch {
+            statusMessage = nil
+            errorMessage = "Duplicate configuration failed: \(error)"
+        }
+    }
+
+    func saveSelectedConfigurationAs() {
+        guard let sourceID = selectedSource?.id else {
+            return
+        }
+        saveConfigurationAs(sourceID: sourceID)
+    }
+
+    func saveConfigurationAs(sourceID: LibrarySource.ID) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }),
+              sources[index].isConfigurationSource else {
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.sysex]
+        panel.directoryURL = preferredSaveDirectoryURL()
+        panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).syx"
+        panel.message = "Save this configuration as a SysEx file."
+        panel.prompt = "Save Configuration"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        _ = saveEditedSource(at: index, to: url)
+        selectedSourceID = sources[index].id
     }
 
     func saveSysEx() {
@@ -1740,6 +1833,10 @@ struct LibrarySource: Identifiable, Equatable {
         }
     }
 
+    var isLocalConfigurationDocument: Bool {
+        isConfigurationSource && subtitle == "Local Configuration Document"
+    }
+
     var isReadOnlyStoredConfiguration: Bool {
         guard let storedConfigurationNumber else {
             return false
@@ -2080,9 +2177,16 @@ struct LibraryView: View {
                                         .padding(.top, 2)
 
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(source.title)
-                                            .font(.body.weight(.medium))
-                                            .lineLimit(1)
+                                        HStack(spacing: 5) {
+                                            if source.isLocalConfigurationDocument {
+                                                Image(systemName: "doc.text")
+                                                    .font(.caption.weight(.semibold))
+                                                    .foregroundStyle(.blue)
+                                            }
+                                            Text(source.title)
+                                                .font(.body.weight(.medium))
+                                                .lineLimit(1)
+                                        }
                                         Text(source.subtitle)
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
@@ -2349,6 +2453,18 @@ struct ConfigurationDetailView: View {
                         Label("Reset", systemImage: "arrow.uturn.backward")
                     }
                 }
+                if !isReadOnly {
+                    Button {
+                        document.duplicateConfigurationDocument(sourceID: sourceID, configuration: editableConfiguration)
+                    } label: {
+                        Label("Duplicate", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        document.saveConfigurationAs(sourceID: sourceID)
+                    } label: {
+                        Label("Save As", systemImage: "square.and.arrow.down")
+                    }
+                }
             }
 
             SummaryPanel(rows: [
@@ -2457,73 +2573,90 @@ struct ConfigurationEditorControls: View {
     @Binding var lfoWaveform: Int
 
     var body: some View {
-        GroupBox {
-            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-                GridRow {
-                    label("Name")
-                    TextField("Name", text: $name)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 180)
-                }
-
-                GridRow {
-                    label("Combine")
-                    Toggle("", isOn: $combineModeEnabled)
-                        .labelsHidden()
-                }
-
-                GridRow {
-                    label("Key-Code")
-                    Picker("", selection: $keyCodeReceiveMode) {
-                        Text("All").tag(FB01KeyCodeReceiveMode.all)
-                        Text("Even").tag(FB01KeyCodeReceiveMode.even)
-                        Text("Odd").tag(FB01KeyCodeReceiveMode.odd)
+        HStack(alignment: .top, spacing: 12) {
+            GroupBox {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                    GridRow {
+                        label("Name")
+                        TextField("Name", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 180)
                     }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 180)
-                }
 
-                GridRow {
-                    label("LFO Speed")
-                    Stepper(value: $lfoSpeed, in: 0...127) {
-                        Text("\(lfoSpeed)")
-                            .monospacedDigit()
+                    GridRow {
+                        label("Combine")
+                        Toggle("", isOn: $combineModeEnabled)
+                            .labelsHidden()
                     }
                 }
-
-                GridRow {
-                    label("AMD")
-                    Stepper(value: $amplitudeModulationDepth, in: 0...127) {
-                        Text("\(amplitudeModulationDepth)")
-                            .monospacedDigit()
-                    }
-                }
-
-                GridRow {
-                    label("PMD")
-                    Stepper(value: $pitchModulationDepth, in: 0...127) {
-                        Text("\(pitchModulationDepth)")
-                            .monospacedDigit()
-                    }
-                }
-
-                GridRow {
-                    label("Waveform")
-                    Picker("", selection: $lfoWaveform) {
-                        Text("Saw").tag(0)
-                        Text("Square").tag(1)
-                        Text("Triangle").tag(2)
-                        Text("Random").tag(3)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(width: 260)
-                }
+                .padding(.top, 4)
+            } label: {
+                SectionTitle("Identity")
             }
-            .padding(.top, 4)
-        } label: {
-            SectionTitle("Configuration")
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            GroupBox {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                    GridRow {
+                        label("Key-Code")
+                        Picker("", selection: $keyCodeReceiveMode) {
+                            Text("All").tag(FB01KeyCodeReceiveMode.all)
+                            Text("Even").tag(FB01KeyCodeReceiveMode.even)
+                            Text("Odd").tag(FB01KeyCodeReceiveMode.odd)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 180)
+                    }
+
+                    GridRow {
+                        label("Waveform")
+                        Picker("", selection: $lfoWaveform) {
+                            Text("Saw").tag(0)
+                            Text("Square").tag(1)
+                            Text("Triangle").tag(2)
+                            Text("Random").tag(3)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 260)
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                SectionTitle("Receive and Waveform")
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+
+            GroupBox {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                    GridRow {
+                        label("LFO Speed")
+                        Stepper(value: $lfoSpeed, in: 0...127) {
+                            Text("\(lfoSpeed)")
+                                .monospacedDigit()
+                        }
+                    }
+
+                    GridRow {
+                        label("Depth")
+                        HStack(spacing: 16) {
+                            Stepper(value: $amplitudeModulationDepth, in: 0...127) {
+                                Text("AMD \(amplitudeModulationDepth)")
+                                    .monospacedDigit()
+                            }
+                            Stepper(value: $pitchModulationDepth, in: 0...127) {
+                                Text("PMD \(pitchModulationDepth)")
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                SectionTitle("LFO and Modulation")
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
@@ -2537,90 +2670,140 @@ struct ConfigurationEditorControls: View {
 struct ConfigurationInstrumentEditor: View {
     var instruments: [FB01InstrumentConfiguration]
     var updateInstrument: (FB01InstrumentConfiguration) -> Void
+    @State private var selectedInstrumentIndex = 0
+
+    private var selectedInstrument: FB01InstrumentConfiguration? {
+        instruments.first { $0.index == selectedInstrumentIndex } ?? instruments.first
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionTitle("Instruments")
 
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
-                GridRow {
-                    header("#")
-                    header("Notes")
-                    header("MIDI")
-                    header("Key")
-                    header("Voice")
-                    header("Oct")
-                    header("Level")
-                    header("Pan")
-                    header("LFO")
-                    header("Porta")
-                    header("Bend")
-                    header("Mode")
-                    header("PMD")
+            HStack(alignment: .top, spacing: 14) {
+                VStack(spacing: 8) {
+                    ForEach(instruments, id: \.index) { instrument in
+                        ConfigurationInstrumentSelectorButton(
+                            instrument: instrument,
+                            isSelected: instrument.index == selectedInstrumentIndex
+                        ) {
+                            selectedInstrumentIndex = instrument.index
+                        }
+                    }
                 }
+                .frame(width: 150)
 
-                Divider()
-                    .gridCellColumns(13)
-
-                ForEach(instruments, id: \.index) { instrument in
-                    ConfigurationInstrumentRow(instrument: instrument, updateInstrument: updateInstrument)
+                VStack(alignment: .leading, spacing: 10) {
+                    if let selectedInstrument {
+                        ConfigurationInstrumentInspector(
+                            instrument: selectedInstrument,
+                            updateInstrument: updateInstrument
+                        )
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .font(.system(.body, design: .monospaced))
         }
-    }
-
-    private func header(_ title: String) -> some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+        .onChange(of: instruments) { _, newInstruments in
+            guard !newInstruments.contains(where: { $0.index == selectedInstrumentIndex }) else {
+                return
+            }
+            selectedInstrumentIndex = newInstruments.first?.index ?? 0
+        }
     }
 }
 
-struct ConfigurationInstrumentRow: View {
+struct ConfigurationInstrumentSelectorButton: View {
+    var instrument: FB01InstrumentConfiguration
+    var isSelected: Bool
+    var select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Text("Instrument \(instrument.index + 1)")
+                        .font(.body.weight(.semibold))
+                    Spacer()
+                    Text(instrument.monoPolyMode.displayName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("MIDI \(instrument.midiChannel + 1), Voice \(instrument.voiceBank)/\(instrument.voiceNumber)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.18))
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .frame(width: proxy.size.width * CGFloat(instrument.outputLevel) / 127)
+                    }
+                }
+                .frame(height: 5)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.22), lineWidth: isSelected ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct ConfigurationInstrumentInspector: View {
     var instrument: FB01InstrumentConfiguration
     var updateInstrument: (FB01InstrumentConfiguration) -> Void
 
     var body: some View {
-        GridRow {
-            Text("\(instrument.index + 1)")
-            Text("\(instrument.noteCount)")
-            smallStepper(value: instrument.midiChannel + 1, range: 1...16) { try instrument.settingMIDIChannel($0 - 1) }
-            HStack(spacing: 4) {
-                smallStepper(value: instrument.lowKeyLimit, range: 0...127) { try instrument.settingLowKeyLimit($0) }
-                Text("-")
-                    .foregroundStyle(.secondary)
-                smallStepper(value: instrument.highKeyLimit, range: 0...127) { try instrument.settingHighKeyLimit($0) }
+        LazyVGrid(columns: [
+            GridItem(.flexible(minimum: 220), spacing: 12),
+            GridItem(.flexible(minimum: 220), spacing: 12),
+        ], alignment: .leading, spacing: 12) {
+            OperatorControlGroup(title: "MIDI and Voice") {
+                instrumentStepper("MIDI Channel", value: instrument.midiChannel + 1, range: 1...16) { try instrument.settingMIDIChannel($0 - 1) }
+                instrumentStepper("Voice Bank", value: instrument.voiceBank, range: 1...7) { try instrument.settingVoiceBank($0) }
+                instrumentStepper("Voice Number", value: instrument.voiceNumber, range: 0...95) { try instrument.settingVoiceNumber($0) }
+                Picker("Mode", selection: modeBinding) {
+                    Text("Poly").tag(FB01MonoPolyMode.poly)
+                    Text("Mono").tag(FB01MonoPolyMode.mono)
+                }
             }
-            HStack(spacing: 4) {
-                smallStepper(value: instrument.voiceBank, range: 1...7) { try instrument.settingVoiceBank($0) }
-                Text("/")
-                    .foregroundStyle(.secondary)
-                smallStepper(value: instrument.voiceNumber, range: 0...95) { try instrument.settingVoiceNumber($0) }
+
+            OperatorControlGroup(title: "Key Range") {
+                readOnlyValue("Active Notes", value: "\(instrument.noteCount)")
+                instrumentStepper("Low Key", value: instrument.lowKeyLimit, range: 0...127) { try instrument.settingLowKeyLimit($0) }
+                instrumentStepper("High Key", value: instrument.highKeyLimit, range: 0...127) { try instrument.settingHighKeyLimit($0) }
             }
-            smallStepper(value: instrument.octaveTranspose, range: -2...2) { try instrument.settingOctaveTranspose($0) }
-            smallStepper(value: instrument.outputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
-            smallStepper(value: instrument.pan, range: 0...127) { try instrument.settingPan($0) }
-            Toggle("", isOn: lfoEnabledBinding)
-                .labelsHidden()
-            smallStepper(value: instrument.portamentoTime, range: 0...127) { try instrument.settingPortamentoTime($0) }
-            smallStepper(value: instrument.pitchBendRange, range: 0...12) { try instrument.settingPitchBendRange($0) }
-            Picker("", selection: modeBinding) {
-                Text("Poly").tag(FB01MonoPolyMode.poly)
-                Text("Mono").tag(FB01MonoPolyMode.mono)
+
+            OperatorControlGroup(title: "Output") {
+                instrumentStepper("Level", value: instrument.outputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
+                instrumentStepper("Pan", value: instrument.pan, range: 0...127) { try instrument.settingPan($0) }
+                Toggle("LFO Enabled", isOn: lfoEnabledBinding)
+                    .toggleStyle(.checkbox)
+                Picker("PMD", selection: pmdBinding) {
+                    Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
+                    Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
+                    Text(FB01PMDControllerAssignment.modulationWheel.displayName).tag(FB01PMDControllerAssignment.modulationWheel)
+                    Text(FB01PMDControllerAssignment.breathController.displayName).tag(FB01PMDControllerAssignment.breathController)
+                    Text(FB01PMDControllerAssignment.footController.displayName).tag(FB01PMDControllerAssignment.footController)
+                }
             }
-            .labelsHidden()
-            .frame(width: 74)
-            Picker("", selection: pmdBinding) {
-                Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
-                Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
-                Text(FB01PMDControllerAssignment.modulationWheel.displayName).tag(FB01PMDControllerAssignment.modulationWheel)
-                Text(FB01PMDControllerAssignment.breathController.displayName).tag(FB01PMDControllerAssignment.breathController)
-                Text(FB01PMDControllerAssignment.footController.displayName).tag(FB01PMDControllerAssignment.footController)
+
+            OperatorControlGroup(title: "Performance") {
+                instrumentStepper("Octave", value: instrument.octaveTranspose, range: -2...2) { try instrument.settingOctaveTranspose($0) }
+                instrumentStepper("Portamento", value: instrument.portamentoTime, range: 0...127) { try instrument.settingPortamentoTime($0) }
+                instrumentStepper("Bend Range", value: instrument.pitchBendRange, range: 0...12) { try instrument.settingPitchBendRange($0) }
             }
-            .labelsHidden()
-            .frame(width: 128)
         }
     }
 
@@ -2657,24 +2840,39 @@ struct ConfigurationInstrumentRow: View {
         )
     }
 
-    private func smallStepper(
+    private func instrumentStepper(
+        _ label: String,
         value: Int,
         range: ClosedRange<Int>,
         update: @escaping (Int) throws -> FB01InstrumentConfiguration
     ) -> some View {
-        Stepper(value: Binding(
-            get: { value },
-            set: { newValue in
-                if let updated = try? update(newValue) {
-                    updateInstrument(updated)
+        HStack {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Stepper(value: Binding(
+                get: { value },
+                set: { newValue in
+                    if let updated = try? update(newValue) {
+                        updateInstrument(updated)
+                    }
                 }
+            ), in: range) {
+                Text("\(value)")
+                    .frame(minWidth: 34, alignment: .trailing)
+                    .monospacedDigit()
             }
-        ), in: range) {
-            Text("\(value)")
-                .frame(minWidth: 28, alignment: .trailing)
+        }
+    }
+
+    private func readOnlyValue(_ label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
                 .monospacedDigit()
         }
-        .frame(width: 78)
     }
 }
 
