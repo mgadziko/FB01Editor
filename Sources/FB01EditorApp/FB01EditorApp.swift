@@ -13,6 +13,12 @@ struct FB01EditorApplication: App {
                 .frame(minWidth: 840, minHeight: 540)
         }
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About FB01 Editor") {
+                    AboutBoxController.shared.show()
+                }
+            }
+
             CommandGroup(replacing: .newItem) { }
             CommandGroup(after: .newItem) {
                 Button("Open SysEx...") {
@@ -44,6 +50,119 @@ struct FB01EditorApplication: App {
                 .disabled(!document.canStoreSelectedConfiguration)
             }
         }
+    }
+}
+
+@MainActor
+final class AboutBoxController {
+    static let shared = AboutBoxController()
+
+    private var panel: NSPanel?
+
+    func show() {
+        if let panel {
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 552, height: 270),
+            styleMask: [.titled, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isMovableByWindowBackground = true
+        panel.isReleasedWhenClosed = false
+        panel.center()
+        panel.contentView = NSHostingView(rootView: AboutBoxView())
+        self.panel = panel
+
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+struct AboutBoxView: View {
+    var body: some View {
+        ZStack {
+            VisualEffectBackground()
+
+            VStack(alignment: .leading, spacing: 0) {
+                PlaceholderAppIcon()
+                    .padding(.bottom, 22)
+
+                Text("FB01 Editor")
+                    .font(.headline.weight(.semibold))
+                    .padding(.bottom, 14)
+
+                Text("©2026 Mark Gadzikowski. All Rights Reserved Worldwide.")
+                    .font(.body.weight(.semibold))
+                    .padding(.bottom, 2)
+
+                Text("Contact: fb01editor@quantumpenguin.com")
+                    .font(.body)
+                    .padding(.top, 18)
+
+                Spacer()
+
+                HStack {
+                    Spacer()
+                    Button("OK") {
+                        NSApp.keyWindow?.close()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .controlSize(.large)
+                    .frame(width: 228)
+                    Spacer()
+                }
+            }
+            .foregroundStyle(.primary)
+            .padding(.top, 24)
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+        }
+        .frame(width: 552, height: 270)
+    }
+}
+
+struct PlaceholderAppIcon: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 11)
+                .fill(.regularMaterial)
+                .frame(width: 52, height: 52)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11)
+                        .stroke(.white.opacity(0.35), lineWidth: 1)
+                )
+
+            VStack(spacing: 2) {
+                Text("FB")
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                Text("01")
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+            }
+            .foregroundStyle(.blue)
+        }
+    }
+}
+
+struct VisualEffectBackground: NSViewRepresentable {
+    func makeNSView(context _: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .hudWindow
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context _: Context) {
+        nsView.material = .hudWindow
+        nsView.blendingMode = .behindWindow
+        nsView.state = .active
     }
 }
 
