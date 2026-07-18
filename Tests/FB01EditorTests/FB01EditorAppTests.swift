@@ -4,6 +4,37 @@ import Testing
 @testable import FB01EditorApp
 
 @MainActor
+@Test func documentExtractionBuildsVoiceCandidatesFromBankDump() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-1",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+    let candidates = try EditorDocumentExtraction.voiceCandidates(from: artifact)
+
+    #expect(candidates.count == 48)
+    #expect(candidates[0].title == "Bank 1 Voice 1: Brass")
+    #expect(candidates[0].voice.name == "Brass")
+    #expect(candidates[1].voice.name == "Horn")
+}
+
+@MainActor
+@Test func documentExtractionBuildsConfigurationCandidatesFromCurrentDump() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "current-configuration-single",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+    let candidates = try EditorDocumentExtraction.configurationCandidates(from: artifact)
+
+    #expect(candidates.count == 1)
+    #expect(candidates[0].title == "Current Configuration: single")
+    #expect(candidates[0].configuration.name == "single")
+}
+
+@MainActor
 @Test func configurationDocumentDuplicateUsesCurrentPayloadAndStatus() throws {
     let model = DocumentModel()
     let source = try fixtureConfigurationSource(origin: .liveFetch)
