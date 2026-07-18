@@ -605,6 +605,47 @@ final class DocumentModel: ObservableObject {
         errorMessage = nil
     }
 
+    func copyVoiceToLocalSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }),
+              let targetNumber = chooseVoiceSlot(
+                title: "Copy Voice to Slot",
+                message: "This copies \(voice.name.isEmpty ? "the selected voice" : "\"\(voice.name)\"") to another local voice slot. It does not write to disk or change the FB-01.",
+                actionTitle: "Copy",
+                sourceID: sourceID,
+                currentNumber: number,
+                voices: voices
+              ) else {
+            return
+        }
+
+        sources[index].editedVoices[targetNumber] = voice
+        selectedSourceID = sources[index].id
+        statusMessage = "Copied \(voice.name.isEmpty ? "selected voice" : voice.name) to Voice \(targetNumber) locally."
+        errorMessage = nil
+    }
+
+    func swapVoiceWithLocalSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }),
+              let targetNumber = chooseVoiceSlot(
+                title: "Swap Voice with Slot",
+                message: "This swaps the selected voice with another local voice slot. It does not write to disk or change the FB-01.",
+                actionTitle: "Swap",
+                sourceID: sourceID,
+                currentNumber: number,
+                voices: voices
+              ),
+              let targetSummary = voices.first(where: { $0.number == targetNumber }) else {
+            return
+        }
+
+        let targetVoice = sources[index].editedVoices[targetNumber] ?? targetSummary.voice
+        sources[index].editedVoices[number] = targetVoice
+        sources[index].editedVoices[targetNumber] = voice
+        selectedSourceID = sources[index].id
+        statusMessage = "Swapped Voice \(number) with Voice \(targetNumber) locally."
+        errorMessage = nil
+    }
+
     func configuration(sourceID: LibrarySource.ID, fallback: FB01ConfigurationData) -> FB01ConfigurationData {
         sources.first { $0.id == sourceID }?.editedConfiguration ?? fallback
     }
@@ -1273,6 +1314,51 @@ final class DocumentModel: ObservableObject {
         stack.addArrangedSubview(text)
         stack.addArrangedSubview(popup)
         return stack
+    }
+
+    private func chooseVoiceSlot(
+        title: String,
+        message: String,
+        actionTitle: String,
+        sourceID: LibrarySource.ID,
+        currentNumber: Int,
+        voices: [FB01VoiceSummary]
+    ) -> Int? {
+        let candidates = voices.filter { $0.number != currentNumber }
+        guard !candidates.isEmpty else {
+            return nil
+        }
+
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: actionTitle)
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
+        for summary in candidates {
+            popup.addItem(withTitle: localVoiceSlotTitle(sourceID: sourceID, summary: summary))
+            popup.lastItem?.representedObject = summary.number
+        }
+
+        if let currentIndex = candidates.firstIndex(where: { $0.number > currentNumber }) {
+            popup.selectItem(at: currentIndex)
+        }
+
+        alert.accessoryView = labelledPopup(label: "Target slot:", popup: popup)
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+
+        return popup.selectedItem?.representedObject as? Int
+    }
+
+    private func localVoiceSlotTitle(sourceID: LibrarySource.ID, summary: FB01VoiceSummary) -> String {
+        let voice = self.voice(sourceID: sourceID, number: summary.number, fallback: summary.voice)
+        let name = voice.name.isEmpty ? "Untitled" : voice.name
+        let edited = sources.first { $0.id == sourceID }?.isVoiceEdited(number: summary.number) ?? false
+        return "Voice \(summary.number) - \(name)\(edited ? " (edited)" : "")"
     }
 
     private func voiceDisplayName(_ voice: FB01VoiceData) -> String {
@@ -2474,7 +2560,7 @@ struct VoiceBankBrowser: View {
                                 Text("\(voice.number)")
                                     .frame(width: 28, alignment: .trailing)
                                     .foregroundStyle(.secondary)
-                                Text(voice.name.isEmpty ? "Untitled" : voice.name)
+                                Text(displayName(for: voice))
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .font(.system(.body, design: .monospaced))
@@ -2496,7 +2582,7 @@ struct VoiceBankBrowser: View {
             Divider()
 
             if let selectedVoice {
-                VoiceDetailView(document: document, sourceID: sourceID, systemChannel: systemChannel, summary: selectedVoice)
+                VoiceDetailView(document: document, sourceID: sourceID, systemChannel: systemChannel, summary: selectedVoice, bankVoices: voices)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
@@ -2505,6 +2591,11 @@ struct VoiceBankBrowser: View {
     private func isVoiceEdited(_ number: Int) -> Bool {
         document.sources.first { $0.id == sourceID }?.isVoiceEdited(number: number) ?? false
     }
+
+    private func displayName(for summary: FB01VoiceSummary) -> String {
+        let voice = document.voice(sourceID: sourceID, number: summary.number, fallback: summary.voice)
+        return voice.name.isEmpty ? "Untitled" : voice.name
+    }
 }
 
 struct VoiceDetailView: View {
@@ -2512,15 +2603,17 @@ struct VoiceDetailView: View {
     var sourceID: LibrarySource.ID
     var systemChannel: Int
     var summary: FB01VoiceSummary
+    var bankVoices: [FB01VoiceSummary]
     @State private var nameText: String
     @State private var editError: String?
     @State private var exportError: String?
 
-    init(document: DocumentModel, sourceID: LibrarySource.ID, systemChannel: Int, summary: FB01VoiceSummary) {
+    init(document: DocumentModel, sourceID: LibrarySource.ID, systemChannel: Int, summary: FB01VoiceSummary, bankVoices: [FB01VoiceSummary] = []) {
         self.document = document
         self.sourceID = sourceID
         self.systemChannel = systemChannel
         self.summary = summary
+        self.bankVoices = bankVoices
         _nameText = State(initialValue: document.voice(sourceID: sourceID, number: summary.number, fallback: summary.voice).name)
     }
 
@@ -2546,6 +2639,18 @@ struct VoiceDetailView: View {
                         resetVoice()
                     } label: {
                         Label("Reset", systemImage: "arrow.uturn.backward")
+                    }
+                }
+                if bankVoices.count > 1 {
+                    Button {
+                        copyVoice()
+                    } label: {
+                        Label("Copy To", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        swapVoice()
+                    } label: {
+                        Label("Swap With", systemImage: "arrow.left.arrow.right")
                     }
                 }
                 Button {
@@ -2699,6 +2804,19 @@ struct VoiceDetailView: View {
     private func resetVoice() {
         document.resetVoice(sourceID: sourceID, number: summary.number)
         nameText = summary.voice.name
+        editError = nil
+        exportError = nil
+    }
+
+    private func copyVoice() {
+        document.copyVoiceToLocalSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, voices: bankVoices)
+        editError = nil
+        exportError = nil
+    }
+
+    private func swapVoice() {
+        document.swapVoiceWithLocalSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, voices: bankVoices)
+        nameText = document.voice(sourceID: sourceID, number: summary.number, fallback: summary.voice).name
         editError = nil
         exportError = nil
     }
