@@ -563,6 +563,32 @@ private func makeWarningLabel(_ string: String) -> NSTextField {
 }
 
 @MainActor
+private final class VoiceFetchDialogController: NSObject {
+    var result: NSApplication.ModalResponse = .cancel
+    weak var sourcePopup: NSPopUpButton?
+    weak var instrumentPopup: NSPopUpButton?
+    weak var bankPopup: NSPopUpButton?
+    weak var voicePopup: NSPopUpButton?
+
+    @objc func accept() {
+        result = .OK
+        NSApp.stopModal()
+    }
+
+    @objc func cancel() {
+        result = .cancel
+        NSApp.stopModal()
+    }
+
+    @objc func updateControls() {
+        let isStoredVoiceFetch = sourcePopup?.indexOfSelectedItem == 1
+        instrumentPopup?.isEnabled = !isStoredVoiceFetch
+        bankPopup?.isEnabled = isStoredVoiceFetch
+        voicePopup?.isEnabled = isStoredVoiceFetch
+    }
+}
+
+@MainActor
 final class VoiceDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
     @Published var voice: FB01VoiceData
@@ -910,18 +936,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     private static func chooseFetchSource(title: String, actionTitle: String) -> VoiceDocumentFetchSource? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = "Choose a current instrument voice, or fetch one stored voice by reading Banks 1-7 or Voice RAM 1 and extracting the selected slot."
-        alert.addButton(withTitle: actionTitle)
-        alert.addButton(withTitle: "Cancel")
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing = 10
-        stack.alignment = .leading
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
         let sourcePopup = NSPopUpButton(frame: .zero, pullsDown: false)
         sourcePopup.addItem(withTitle: "Current Instrument Voice")
         sourcePopup.addItem(withTitle: "Stored Voice Slot")
@@ -942,17 +956,78 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             voicePopup.addItem(withTitle: "Voice \(voice)")
         }
 
-        stack.addArrangedSubview(labelledEditorPopup(label: "Fetch:", popup: sourcePopup))
-        stack.addArrangedSubview(labelledEditorPopup(label: "Instrument:", popup: instrumentPopup))
-        stack.addArrangedSubview(labelledEditorPopup(label: "Bank:", popup: bankPopup))
-        stack.addArrangedSubview(labelledEditorPopup(label: "Voice:", popup: voicePopup))
-        stack.addArrangedSubview(makeWarningLabel("Stored voice fetch reads the whole selected bank internally, then opens only the chosen voice document."))
-        alert.accessoryView = stack
-        NSLayoutConstraint.activate([
-            stack.widthAnchor.constraint(equalToConstant: 540),
-        ])
+        let controller = VoiceFetchDialogController()
+        controller.sourcePopup = sourcePopup
+        controller.instrumentPopup = instrumentPopup
+        controller.bankPopup = bankPopup
+        controller.voicePopup = voicePopup
 
-        guard alert.runModal() == .alertFirstButtonReturn else {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 330),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = title
+        panel.isReleasedWhenClosed = false
+        panel.center()
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 330))
+        panel.contentView = content
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .boldSystemFont(ofSize: 16)
+        titleLabel.frame = NSRect(x: 24, y: 286, width: 512, height: 22)
+        content.addSubview(titleLabel)
+
+        let infoLabel = NSTextField(wrappingLabelWithString: "Choose a current instrument voice, or fetch one stored voice by reading Banks 1-7 or Voice RAM 1 and extracting the selected slot.")
+        infoLabel.textColor = .secondaryLabelColor
+        infoLabel.font = .systemFont(ofSize: 13)
+        infoLabel.frame = NSRect(x: 24, y: 238, width: 512, height: 42)
+        content.addSubview(infoLabel)
+
+        func addRow(label: String, popup: NSPopUpButton, y: CGFloat) {
+            let labelField = NSTextField(labelWithString: label)
+            labelField.alignment = .right
+            labelField.frame = NSRect(x: 48, y: y + 4, width: 132, height: 20)
+            content.addSubview(labelField)
+
+            popup.controlSize = .regular
+            popup.frame = NSRect(x: 196, y: y, width: 300, height: 26)
+            content.addSubview(popup)
+        }
+
+        addRow(label: "Fetch:", popup: sourcePopup, y: 198)
+        addRow(label: "Instrument:", popup: instrumentPopup, y: 160)
+        addRow(label: "Bank:", popup: bankPopup, y: 122)
+        addRow(label: "Voice:", popup: voicePopup, y: 84)
+
+        let warningLabel = NSTextField(wrappingLabelWithString: "Stored voice fetch reads the whole selected bank internally, then opens only the chosen voice document. Store remains limited to writable Banks 1-2.")
+        warningLabel.textColor = .secondaryLabelColor
+        warningLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        warningLabel.frame = NSRect(x: 24, y: 46, width: 512, height: 32)
+        content.addSubview(warningLabel)
+
+        let cancelButton = NSButton(title: "Cancel", target: controller, action: #selector(VoiceFetchDialogController.cancel))
+        cancelButton.frame = NSRect(x: 316, y: 14, width: 96, height: 30)
+        cancelButton.keyEquivalent = "\u{1b}"
+        content.addSubview(cancelButton)
+
+        let fetchButton = NSButton(title: actionTitle, target: controller, action: #selector(VoiceFetchDialogController.accept))
+        fetchButton.frame = NSRect(x: 424, y: 14, width: 112, height: 30)
+        fetchButton.keyEquivalent = "\r"
+        content.addSubview(fetchButton)
+
+        sourcePopup.target = controller
+        sourcePopup.action = #selector(VoiceFetchDialogController.updateControls)
+        controller.updateControls()
+
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.runModal(for: panel)
+        panel.orderOut(nil)
+
+        guard controller.result == .OK else {
             return nil
         }
 
