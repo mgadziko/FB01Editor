@@ -99,6 +99,15 @@ final class AboutBoxController {
 }
 
 struct AboutBoxView: View {
+    private var versionText: String {
+        if let buildTimestamp = Bundle.main.object(forInfoDictionaryKey: "FB01EditorBuildTimestamp") as? String,
+           !buildTimestamp.isEmpty {
+            return "Version: \(buildTimestamp)"
+        }
+
+        return "Version: Development"
+    }
+
     var body: some View {
         ZStack {
             VisualEffectBackground()
@@ -109,6 +118,10 @@ struct AboutBoxView: View {
 
                 Text("FB01 Editor")
                     .font(.headline.weight(.semibold))
+                    .padding(.bottom, 4)
+
+                Text(versionText)
+                    .font(.body)
                     .padding(.bottom, 14)
 
                 Text("©2026 Mark Gadzikowski. All Rights Reserved Worldwide.")

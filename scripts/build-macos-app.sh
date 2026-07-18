@@ -7,6 +7,7 @@ APP_NAME="FB01 Editor"
 EXECUTABLE_NAME="FB01EditorApp"
 BUNDLE_ID="com.gadzikowski.FB01Editor"
 ICON_FILE="AppIcon.icns"
+BUILD_TIMESTAMP="$(date +%y%m%d-%H%M)"
 
 cd "$ROOT_DIR"
 
@@ -43,6 +44,7 @@ cp "$ICON_PATH" "$RESOURCES_DIR/$ICON_FILE"
 /usr/libexec/PlistBuddy -c "Add :CFBundlePackageType string APPL" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string 1" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string 0.1.0" "$CONTENTS_DIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :FB01EditorBuildTimestamp string $BUILD_TIMESTAMP" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 14.0" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$CONTENTS_DIR/Info.plist"
 
