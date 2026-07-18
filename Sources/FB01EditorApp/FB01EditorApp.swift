@@ -475,6 +475,26 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func saveEditedVoiceBankAs(sourceID: LibrarySource.ID) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.sysex]
+        panel.directoryURL = preferredSaveDirectoryURL()
+        panel.nameFieldStringValue = "\(safeFileName(sources[index].title))-edited.syx"
+        panel.message = "Save the edited voice bank as a SysEx file."
+        panel.prompt = "Save Edited Bank"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        _ = saveEditedSource(at: index, to: url)
+        selectedSourceID = sources[index].id
+    }
+
     func confirmApplicationTermination() -> NSApplication.TerminateReply {
         guard hasUnsavedEdits else {
             return .terminateNow
@@ -2590,6 +2610,14 @@ struct VoiceBankBrowser: View {
                     }
 
                     Spacer()
+
+                    Button {
+                        document.saveEditedVoiceBankAs(sourceID: sourceID)
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    .help("Save edited bank as a SysEx file")
+                    .disabled(editedVoiceCount == 0)
 
                     Button {
                         document.resetAllVoiceEdits(sourceID: sourceID)
