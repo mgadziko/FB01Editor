@@ -589,6 +589,21 @@ private final class VoiceFetchDialogController: NSObject {
 }
 
 @MainActor
+private final class ConfigurationFetchDialogController: NSObject {
+    var result: NSApplication.ModalResponse = .cancel
+
+    @objc func accept() {
+        result = .OK
+        NSApp.stopModal()
+    }
+
+    @objc func cancel() {
+        result = .cancel
+        NSApp.stopModal()
+    }
+}
+
+@MainActor
 final class VoiceDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
     @Published var voice: FB01VoiceData
@@ -1420,12 +1435,6 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
     }
 
     private static func chooseFetchOptions(title: String, actionTitle: String) -> ConfigurationFetchOptions? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = "Choose the current configuration edit buffer or one stored FB-01 configuration."
-        alert.addButton(withTitle: actionTitle)
-        alert.addButton(withTitle: "Cancel")
-
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.addItem(withTitle: "Current Configuration")
         popup.lastItem?.representedObject = ConfigurationFetchOptions(isCurrent: true, slot: 0)
@@ -1433,9 +1442,63 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
             popup.addItem(withTitle: "Configuration \(slot + 1)\(slot >= 16 ? " Read Only" : "")")
             popup.lastItem?.representedObject = ConfigurationFetchOptions(isCurrent: false, slot: slot)
         }
-        alert.accessoryView = labelledEditorPopup(label: "Source:", popup: popup)
 
-        guard alert.runModal() == .alertFirstButtonReturn else {
+        let controller = ConfigurationFetchDialogController()
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 235),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = title
+        panel.isReleasedWhenClosed = false
+        panel.center()
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 235))
+        panel.contentView = content
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .boldSystemFont(ofSize: 16)
+        titleLabel.frame = NSRect(x: 24, y: 190, width: 512, height: 22)
+        content.addSubview(titleLabel)
+
+        let infoLabel = NSTextField(wrappingLabelWithString: "Choose the current configuration edit buffer or one stored FB-01 configuration.")
+        infoLabel.textColor = .secondaryLabelColor
+        infoLabel.font = .systemFont(ofSize: 13)
+        infoLabel.frame = NSRect(x: 24, y: 148, width: 512, height: 36)
+        content.addSubview(infoLabel)
+
+        let sourceLabel = NSTextField(labelWithString: "Source:")
+        sourceLabel.alignment = .right
+        sourceLabel.frame = NSRect(x: 48, y: 105, width: 132, height: 20)
+        content.addSubview(sourceLabel)
+
+        popup.controlSize = .regular
+        popup.frame = NSRect(x: 196, y: 101, width: 300, height: 26)
+        content.addSubview(popup)
+
+        let noteLabel = NSTextField(wrappingLabelWithString: "Configurations 17-20 are read-only on the FB-01, but they can still be fetched into a local document.")
+        noteLabel.textColor = .secondaryLabelColor
+        noteLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        noteLabel.frame = NSRect(x: 24, y: 58, width: 512, height: 32)
+        content.addSubview(noteLabel)
+
+        let cancelButton = NSButton(title: "Cancel", target: controller, action: #selector(ConfigurationFetchDialogController.cancel))
+        cancelButton.frame = NSRect(x: 316, y: 18, width: 96, height: 30)
+        cancelButton.keyEquivalent = "\u{1b}"
+        content.addSubview(cancelButton)
+
+        let fetchButton = NSButton(title: actionTitle, target: controller, action: #selector(ConfigurationFetchDialogController.accept))
+        fetchButton.frame = NSRect(x: 424, y: 18, width: 112, height: 30)
+        fetchButton.keyEquivalent = "\r"
+        content.addSubview(fetchButton)
+
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.runModal(for: panel)
+        panel.orderOut(nil)
+
+        guard controller.result == .OK else {
             return nil
         }
         return popup.selectedItem?.representedObject as? ConfigurationFetchOptions
