@@ -113,14 +113,19 @@ enum SidebarSelection: Equatable {
 
 struct ActiveEditorDocumentActions {
     var save: () -> Void
+    var saveTitle: String
     var saveAs: () -> Void
+    var saveAsTitle: String
     var reset: () -> Void
     var importFromDisk: () -> Void
+    var importFromDiskTitle: String
     var importFromLibrary: (DocumentModel) -> Void
     var canImportFromLibrary: (DocumentModel) -> Bool
     var importFromLibraryTitle: String
     var fetchFromDevice: (DocumentModel) -> Void
+    var fetchFromDeviceTitle: String
     var storeToDevice: (DocumentModel) -> Void
+    var storeToDeviceTitle: String
     var isEdited: Bool
     var isBusy: Bool
 }
@@ -194,21 +199,21 @@ struct EditorDocumentCommands: View {
 
         Divider()
 
-        Button("Load Voice Document...") {
+        Button("Load Voice from File...") {
             if let id = workspace.loadVoiceDocument() {
                 openWindow(id: "voice-document", value: id)
             }
         }
         .keyboardShortcut("o", modifiers: [.command, .option])
 
-        Button("Load Configuration Document...") {
+        Button("Load Configuration from File...") {
             if let id = workspace.loadConfigurationDocument() {
                 openWindow(id: "configuration-document", value: id)
             }
         }
         .keyboardShortcut("o", modifiers: [.command, .option, .shift])
 
-        Button("Fetch Voice Document...") {
+        Button("Fetch Voice from Device...") {
             let id = workspace.createVoiceDocument()
             openWindow(id: "voice-document", value: id)
             Task { @MainActor in
@@ -218,7 +223,7 @@ struct EditorDocumentCommands: View {
         }
         .disabled(document.isBusy)
 
-        Button("Fetch Configuration Document...") {
+        Button("Fetch Configuration from Device...") {
             let id = workspace.createConfigurationDocument()
             openWindow(id: "configuration-document", value: id)
             Task { @MainActor in
@@ -230,7 +235,7 @@ struct EditorDocumentCommands: View {
 
         Divider()
 
-        Button("Import Into Current Document...") {
+        Button(activeDocumentActions?.importFromDiskTitle ?? "Import from File into Current Document...") {
             activeDocumentActions?.importFromDisk()
         }
         .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true)
@@ -240,19 +245,19 @@ struct EditorDocumentCommands: View {
         }
         .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true || activeDocumentActions?.canImportFromLibrary(document) != true)
 
-        Button("Fetch Into Current Document...") {
+        Button(activeDocumentActions?.fetchFromDeviceTitle ?? "Fetch from Device into Current Document...") {
             activeDocumentActions?.fetchFromDevice(document)
         }
         .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true || document.isBusy)
 
-        Button("Store Current Document to FB-01...") {
+        Button(activeDocumentActions?.storeToDeviceTitle ?? "Store Current Document to Device Slot...") {
             activeDocumentActions?.storeToDevice(document)
         }
         .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true || document.isBusy)
 
         Divider()
 
-        Button(activeDocumentActions == nil ? "Save SysEx..." : "Save") {
+        Button(activeDocumentActions?.saveTitle ?? "Save Library to File...") {
             if let activeDocumentActions {
                 activeDocumentActions.save()
             } else {
@@ -262,7 +267,7 @@ struct EditorDocumentCommands: View {
         .keyboardShortcut("s", modifiers: .command)
         .disabled(!canSaveFocusedDocumentOrLibrary)
 
-        Button(activeDocumentActions == nil ? "Save SysEx As..." : "Save As...") {
+        Button(activeDocumentActions?.saveAsTitle ?? "Save Library to File As...") {
             if let activeDocumentActions {
                 activeDocumentActions.saveAs()
             } else {
@@ -664,8 +669,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.allowedContentTypes = [.sysex]
         panel.directoryURL = preferredEditorSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeEditorFileName(voice.name, fallback: "voice")).syx"
-        panel.message = "Save this voice document as a SysEx file."
-        panel.prompt = "Save Voice"
+        panel.message = "Save this voice document to a voice file."
+        panel.prompt = "Save Voice to File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -680,8 +685,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
-        panel.message = "Load a voice SysEx document into a new voice window."
-        panel.prompt = "Load Voice"
+        panel.message = "Load a voice file into a new voice document window."
+        panel.prompt = "Load Voice from File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil
@@ -704,8 +709,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
-        panel.message = "Import a voice SysEx document into this window, replacing its current contents."
-        panel.prompt = "Import Voice"
+        panel.message = "Import a voice file into this voice document, replacing its current contents."
+        panel.prompt = "Import Voice from File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -727,7 +732,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func fetchFromDevice(device: DocumentModel) {
         guard !isBusy else { return }
-        guard let source = Self.chooseFetchSource(title: "Fetch Voice into Current Document", actionTitle: "Fetch") else {
+        guard let source = Self.chooseFetchSource(title: "Fetch Voice from Device into Current Document", actionTitle: "Fetch") else {
             return
         }
 
@@ -1202,8 +1207,8 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         panel.allowedContentTypes = [.sysex]
         panel.directoryURL = preferredEditorSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeEditorFileName(configuration.name, fallback: "configuration")).syx"
-        panel.message = "Save this configuration document as a SysEx file."
-        panel.prompt = "Save Configuration"
+        panel.message = "Save this configuration document to a configuration file."
+        panel.prompt = "Save Configuration to File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -1218,8 +1223,8 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
-        panel.message = "Load a configuration SysEx document into a new configuration window."
-        panel.prompt = "Load Configuration"
+        panel.message = "Load a configuration file into a new configuration document window."
+        panel.prompt = "Load Configuration from File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil
@@ -1242,8 +1247,8 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
-        panel.message = "Import a configuration SysEx document into this window, replacing its current contents."
-        panel.prompt = "Import Configuration"
+        panel.message = "Import a configuration file into this configuration document, replacing its current contents."
+        panel.prompt = "Import Configuration from File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -1265,7 +1270,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     func fetchFromDevice(device: DocumentModel) {
         guard !isBusy else { return }
-        guard let options = Self.chooseFetchOptions(title: "Fetch Configuration into Current Document", actionTitle: "Fetch") else {
+        guard let options = Self.chooseFetchOptions(title: "Fetch Configuration from Device into Current Document", actionTitle: "Fetch") else {
             return
         }
 
@@ -2303,8 +2308,8 @@ final class DocumentModel: ObservableObject {
         panel.allowedContentTypes = [.sysex]
         panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).syx"
-        panel.message = "Save this configuration as a SysEx file."
-        panel.prompt = "Save Configuration"
+        panel.message = "Save this configuration to a configuration file."
+        panel.prompt = "Save Configuration to File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -5384,25 +5389,25 @@ struct VoiceDocumentWindow: View {
                 Button {
                     document.save()
                 } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
+                    Label("Save File", systemImage: "square.and.arrow.down")
                 }
-                .help("Save voice document")
+                .help("Save voice to file")
                 .disabled(document.isBusy)
 
                 Button {
                     document.fetchFromDevice(device: device)
                 } label: {
-                    Label("Fetch", systemImage: "arrow.down.circle")
+                    Label("Fetch Device", systemImage: "arrow.down.circle")
                 }
-                .help("Fetch into this voice document")
+                .help("Fetch voice from device into this voice document")
                 .disabled(device.isBusy || document.isBusy)
 
                 Button {
                     document.storeToDevice(device: device)
                 } label: {
-                    Label("Store", systemImage: "externaldrive.badge.plus")
+                    Label("Store Slot", systemImage: "externaldrive.badge.plus")
                 }
-                .help("Store this voice document to the FB-01")
+                .help("Store this voice to a device slot")
                 .disabled(device.isBusy || document.isBusy)
 
                 Button {
@@ -5422,14 +5427,19 @@ struct VoiceDocumentWindow: View {
         ))
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
             save: { document.save() },
+            saveTitle: "Save Voice to File",
             saveAs: { document.saveAs() },
+            saveAsTitle: "Save Voice to File As...",
             reset: { document.reset() },
             importFromDisk: { document.importFromDisk() },
+            importFromDiskTitle: "Import Voice from File into Current Document...",
             importFromLibrary: { device in document.importFromLibrary(device: device) },
             canImportFromLibrary: { device in device.selectedVoiceDocumentPayload() != nil },
             importFromLibraryTitle: "Import Selected Library Voice Into Current Document",
             fetchFromDevice: { device in document.fetchFromDevice(device: device) },
+            fetchFromDeviceTitle: "Fetch Voice from Device into Current Document...",
             storeToDevice: { device in document.storeToDevice(device: device) },
+            storeToDeviceTitle: "Store Voice to Device Slot...",
             isEdited: document.isEdited,
             isBusy: document.isBusy
         ))
@@ -5538,25 +5548,25 @@ struct ConfigurationDocumentWindow: View {
                 Button {
                     document.save()
                 } label: {
-                    Label("Save", systemImage: "square.and.arrow.down")
+                    Label("Save File", systemImage: "square.and.arrow.down")
                 }
-                .help("Save configuration document")
+                .help("Save configuration to file")
                 .disabled(document.isBusy)
 
                 Button {
                     document.fetchFromDevice(device: device)
                 } label: {
-                    Label("Fetch", systemImage: "arrow.down.circle")
+                    Label("Fetch Device", systemImage: "arrow.down.circle")
                 }
-                .help("Fetch into this configuration document")
+                .help("Fetch configuration from device into this configuration document")
                 .disabled(device.isBusy || document.isBusy)
 
                 Button {
                     document.storeToDevice(device: device)
                 } label: {
-                    Label("Store", systemImage: "externaldrive.badge.plus")
+                    Label("Store Slot", systemImage: "externaldrive.badge.plus")
                 }
-                .help("Store this configuration document to the FB-01")
+                .help("Store this configuration to a device slot")
                 .disabled(device.isBusy || document.isBusy)
 
                 Button {
@@ -5576,14 +5586,19 @@ struct ConfigurationDocumentWindow: View {
         ))
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
             save: { document.save() },
+            saveTitle: "Save Configuration to File",
             saveAs: { document.saveAs() },
+            saveAsTitle: "Save Configuration to File As...",
             reset: { document.reset() },
             importFromDisk: { document.importFromDisk() },
+            importFromDiskTitle: "Import Configuration from File into Current Document...",
             importFromLibrary: { device in document.importFromLibrary(device: device) },
             canImportFromLibrary: { device in device.selectedConfigurationDocumentPayload() != nil },
             importFromLibraryTitle: "Import Selected Library Configuration Into Current Document",
             fetchFromDevice: { device in document.fetchFromDevice(device: device) },
+            fetchFromDeviceTitle: "Fetch Configuration from Device into Current Document...",
             storeToDevice: { device in document.storeToDevice(device: device) },
+            storeToDeviceTitle: "Store Configuration to Device Slot...",
             isEdited: document.isEdited,
             isBusy: document.isBusy
         ))
@@ -6518,7 +6533,7 @@ struct VoiceDetailView: View {
                     Button {
                         document.storeVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
                     } label: {
-                        Label("Store", systemImage: "externaldrive.badge.plus")
+                        Label("Store Slot", systemImage: "externaldrive.badge.plus")
                     }
                     .disabled(document.isBusy)
                     .frame(width: 150)
@@ -6526,7 +6541,7 @@ struct VoiceDetailView: View {
                     Button {
                         document.storeAndConfirmVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
                     } label: {
-                        Label("Store & Confirm", systemImage: "externaldrive.badge.checkmark")
+                        Label("Store Slot & Confirm", systemImage: "externaldrive.badge.checkmark")
                     }
                     .disabled(document.isBusy)
                     .frame(width: 150)
