@@ -3,6 +3,11 @@ import FB01Editor
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum VoiceSlotOperation {
+    case copy
+    case swap
+}
+
 @main
 struct FB01EditorApplication: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -40,6 +45,44 @@ struct FB01EditorApplication: App {
                     document.saveConfigurationSet()
                 }
                 .disabled(!document.canSaveConfigurationSet)
+
+                Divider()
+
+                Button("New Configuration Document from Selected") {
+                    document.createConfigurationDocumentFromSelected()
+                }
+                .disabled(!document.canSendSelectedConfiguration)
+            }
+
+            CommandMenu("Voice") {
+                Button("Copy Voice to Slot...") {
+                    document.copySelectedVoiceToLocalSlot()
+                }
+                .disabled(!document.canUseSelectedVoiceLibrarianActions)
+
+                Button("Swap Voice with Slot...") {
+                    document.swapSelectedVoiceWithLocalSlot()
+                }
+                .disabled(!document.canUseSelectedVoiceLibrarianActions)
+
+                Divider()
+
+                Button("Reset Selected Voice") {
+                    document.resetSelectedVoiceEdit()
+                }
+                .disabled(!document.canResetSelectedVoice)
+
+                Button("Reset All Voice Edits") {
+                    document.resetAllSelectedVoiceEdits()
+                }
+                .disabled(!document.canResetAllSelectedVoiceEdits)
+
+                Divider()
+
+                Button("Save Edited Bank As...") {
+                    document.saveSelectedEditedVoiceBankAs()
+                }
+                .disabled(!document.canResetAllSelectedVoiceEdits)
             }
 
             CommandMenu("Device") {
@@ -192,6 +235,7 @@ final class DocumentModel: ObservableObject {
     @Published var midiDestinations: [FB01MIDIEndpoint] = []
     @Published var selectedSourceIndex = 0
     @Published var selectedDestinationIndex = 0
+    @Published var selectedVoiceNumbers: [LibrarySource.ID: Int] = [:]
 
     private enum DefaultsKey {
         static let sourceIndex = "FB01Editor.selectedMIDISourceIndex"
@@ -225,6 +269,22 @@ final class DocumentModel: ObservableObject {
         canSendSelectedConfiguration
     }
 
+    var canUseSelectedVoiceLibrarianActions: Bool {
+        selectedVoiceContext != nil
+    }
+
+    var canResetSelectedVoice: Bool {
+        guard let context = selectedVoiceContext,
+              let source = sources.first(where: { $0.id == context.sourceID }) else {
+            return false
+        }
+        return source.isVoiceEdited(number: context.number)
+    }
+
+    var canResetAllSelectedVoiceEdits: Bool {
+        (selectedSource?.editedVoiceCount ?? 0) > 0
+    }
+
     var selectedEditedSourceCount: Int {
         sources.filter(\.isEdited).count
     }
@@ -242,6 +302,20 @@ final class DocumentModel: ObservableObject {
 
     var selectedTitle: String? {
         selectedSource?.title
+    }
+
+    private var selectedVoiceContext: (sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary])? {
+        guard let source = selectedSource,
+              let voiceBank = source.voiceBankData else {
+            return nil
+        }
+
+        let number = selectedVoiceNumbers[source.id] ?? voiceBank.voices.first?.number ?? 1
+        guard let summary = voiceBank.voices.first(where: { $0.number == number }) ?? voiceBank.voices.first else {
+            return nil
+        }
+        let voice = self.voice(sourceID: source.id, number: summary.number, fallback: summary.voice)
+        return (source.id, summary.number, voice, voiceBank.voices)
     }
 
     var editingStatusText: String {
@@ -402,6 +476,34 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func createConfigurationDocumentFromSelected() {
+        guard let source = selectedSource,
+              let payload = source.editableConfigurationPayload else {
+            return
+        }
+
+        do {
+            let systemChannel = source.configurationSystemChannel ?? 0
+            let title = payload.name.isEmpty ? "Configuration Document" : "\(payload.name) Document"
+            let artifact = FB01Artifact(message: .currentConfigurationDump(
+                systemChannel: systemChannel,
+                packet: try FB01SysExPacket(payload: payload.bytes)
+            ))
+            let documentSource = LibrarySource(
+                title: title,
+                subtitle: "Local Configuration Document",
+                artifact: artifact
+            )
+            sources.append(documentSource)
+            selectedSourceID = documentSource.id
+            statusMessage = "Created local configuration document."
+            errorMessage = nil
+        } catch {
+            statusMessage = nil
+            errorMessage = "Create configuration document failed: \(error)"
+        }
+    }
+
     func saveSysEx() {
         guard let selectedSource,
               let index = sources.firstIndex(where: { $0.id == selectedSource.id }) else { return }
@@ -521,6 +623,10 @@ final class DocumentModel: ObservableObject {
 
     func selectSource(_ source: LibrarySource) {
         selectedSourceID = source.id
+    }
+
+    func selectVoice(sourceID: LibrarySource.ID, number: Int) {
+        selectedVoiceNumbers[sourceID] = number
     }
 
     func removeSelectedSource() {
@@ -652,9 +758,43 @@ final class DocumentModel: ObservableObject {
         errorMessage = nil
     }
 
+    func copySelectedVoiceToLocalSlot() {
+        guard let context = selectedVoiceContext else {
+            return
+        }
+        copyVoiceToLocalSlot(sourceID: context.sourceID, number: context.number, voice: context.voice, voices: context.voices)
+    }
+
+    func swapSelectedVoiceWithLocalSlot() {
+        guard let context = selectedVoiceContext else {
+            return
+        }
+        swapVoiceWithLocalSlot(sourceID: context.sourceID, number: context.number, voice: context.voice, voices: context.voices)
+    }
+
+    func resetSelectedVoiceEdit() {
+        guard let context = selectedVoiceContext else {
+            return
+        }
+        resetVoice(sourceID: context.sourceID, number: context.number)
+    }
+
+    func resetAllSelectedVoiceEdits() {
+        guard let sourceID = selectedSource?.id else {
+            return
+        }
+        resetAllVoiceEdits(sourceID: sourceID)
+    }
+
+    func saveSelectedEditedVoiceBankAs() {
+        guard let sourceID = selectedSource?.id else {
+            return
+        }
+        saveEditedVoiceBankAs(sourceID: sourceID)
+    }
+
     func copyVoiceToLocalSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
-        guard let index = sources.firstIndex(where: { $0.id == sourceID }),
-              let targetNumber = chooseVoiceSlot(
+        guard let targetNumber = chooseVoiceSlot(
                 title: "Copy Voice to Slot",
                 message: "This copies \(voice.name.isEmpty ? "the selected voice" : "\"\(voice.name)\"") to another local voice slot. It does not write to disk or change the FB-01.",
                 actionTitle: "Copy",
@@ -665,31 +805,50 @@ final class DocumentModel: ObservableObject {
             return
         }
 
-        sources[index].editedVoices[targetNumber] = voice
-        selectedSourceID = sources[index].id
-        statusMessage = "Copied \(voice.name.isEmpty ? "selected voice" : voice.name) to Voice \(targetNumber) locally."
-        errorMessage = nil
+        applyVoiceSlotOperation(.copy, sourceID: sourceID, number: number, targetNumber: targetNumber, voice: voice, voices: voices)
     }
 
     func swapVoiceWithLocalSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
-        guard let index = sources.firstIndex(where: { $0.id == sourceID }),
-              let targetNumber = chooseVoiceSlot(
+        guard let targetNumber = chooseVoiceSlot(
                 title: "Swap Voice with Slot",
                 message: "This swaps the selected voice with another local voice slot. It does not write to disk or change the FB-01.",
                 actionTitle: "Swap",
                 sourceID: sourceID,
                 currentNumber: number,
                 voices: voices
-              ),
-              let targetSummary = voices.first(where: { $0.number == targetNumber }) else {
+              ) else {
             return
         }
 
-        let targetVoice = sources[index].editedVoices[targetNumber] ?? targetSummary.voice
-        sources[index].editedVoices[number] = targetVoice
-        sources[index].editedVoices[targetNumber] = voice
+        applyVoiceSlotOperation(.swap, sourceID: sourceID, number: number, targetNumber: targetNumber, voice: voice, voices: voices)
+    }
+
+    func applyVoiceSlotOperation(_ operation: VoiceSlotOperation, sourceID: LibrarySource.ID, number: Int, targetNumber: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
+        guard let index = sources.firstIndex(where: { $0.id == sourceID }),
+              number != targetNumber else {
+            return
+        }
+
+        if sources[index].isVoiceEdited(number: targetNumber),
+           !confirmEditedVoiceSlotOverwrite(operation: operation, source: sources[index], targetNumber: targetNumber) {
+            return
+        }
+
+        switch operation {
+        case .copy:
+            sources[index].editedVoices[targetNumber] = voice
+            statusMessage = "Copied \(voice.name.isEmpty ? "selected voice" : voice.name) to Voice \(targetNumber) locally."
+        case .swap:
+            guard let targetSummary = voices.first(where: { $0.number == targetNumber }) else {
+                return
+            }
+            let targetVoice = sources[index].editedVoices[targetNumber] ?? targetSummary.voice
+            sources[index].editedVoices[number] = targetVoice
+            sources[index].editedVoices[targetNumber] = voice
+            statusMessage = "Swapped Voice \(number) with Voice \(targetNumber) locally."
+        }
+
         selectedSourceID = sources[index].id
-        statusMessage = "Swapped Voice \(number) with Voice \(targetNumber) locally."
         errorMessage = nil
     }
 
@@ -1401,11 +1560,26 @@ final class DocumentModel: ObservableObject {
         return popup.selectedItem?.representedObject as? Int
     }
 
+    private func confirmEditedVoiceSlotOverwrite(operation: VoiceSlotOperation, source: LibrarySource, targetNumber: Int) -> Bool {
+        let action = switch operation {
+        case .copy: "Copy"
+        case .swap: "Swap"
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "\(action) Over Edited Voice?"
+        alert.informativeText = "Voice \(targetNumber) in \(source.title) already has a local edit. Continuing will replace that local edited slot state. It will not write to disk or change the FB-01."
+        alert.addButton(withTitle: action)
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     private func localVoiceSlotTitle(sourceID: LibrarySource.ID, summary: FB01VoiceSummary) -> String {
         let voice = self.voice(sourceID: sourceID, number: summary.number, fallback: summary.voice)
         let name = voice.name.isEmpty ? "Untitled" : voice.name
         let edited = sources.first { $0.id == sourceID }?.isVoiceEdited(number: summary.number) ?? false
-        return "Voice \(summary.number) - \(name)\(edited ? " (edited)" : "")"
+        return "Voice \(summary.number) - \(name)\(edited ? " (LOCAL EDIT)" : "")"
     }
 
     private func voiceDisplayName(_ voice: FB01VoiceData) -> String {
@@ -1571,6 +1745,21 @@ struct LibrarySource: Identifiable, Equatable {
             return false
         }
         return storedConfigurationNumber >= 16
+    }
+
+    var voiceBankData: FB01VoiceBankData? {
+        guard artifact.messages.count == 1 else {
+            return nil
+        }
+
+        switch artifact.messages[0] {
+        case let .voiceBankDumpData(_, bank, _, data, _):
+            return try? FB01VoiceBankData(bank: bank, data: data)
+        case let .voiceRAMDumpData(_, _, data, _):
+            return try? FB01VoiceBankData(bank: 0, data: data)
+        default:
+            return nil
+        }
     }
 
     var editableConfigurationPayload: FB01ConfigurationData? {
@@ -2587,6 +2776,7 @@ struct VoiceBankBrowser: View {
     var systemChannel: Int
     var voices: [FB01VoiceSummary]
     @Binding var selectedVoiceNumber: Int
+    private let voiceDragType = UTType.plainText
 
     private var selectedVoice: FB01VoiceSummary? {
         voices.first { $0.number == selectedVoiceNumber } ?? voices.first
@@ -2632,6 +2822,7 @@ struct VoiceBankBrowser: View {
                     ForEach(voices) { voice in
                         Button {
                             selectedVoiceNumber = voice.number
+                            document.selectVoice(sourceID: sourceID, number: voice.number)
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: isVoiceEdited(voice.number) ? "circle.fill" : "circle")
@@ -2655,6 +2846,12 @@ struct VoiceBankBrowser: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .onDrag {
+                            NSItemProvider(object: "\(voice.number)" as NSString)
+                        }
+                        .onDrop(of: [voiceDragType], isTargeted: nil) { providers in
+                            handleVoiceDrop(providers: providers, targetVoice: voice)
+                        }
                     }
                 }
             }
@@ -2667,6 +2864,12 @@ struct VoiceBankBrowser: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
+        .onAppear {
+            document.selectVoice(sourceID: sourceID, number: selectedVoice?.number ?? selectedVoiceNumber)
+        }
+        .onChange(of: selectedVoiceNumber) { _, newValue in
+            document.selectVoice(sourceID: sourceID, number: newValue)
+        }
     }
 
     private func isVoiceEdited(_ number: Int) -> Bool {
@@ -2676,6 +2879,58 @@ struct VoiceBankBrowser: View {
     private func displayName(for summary: FB01VoiceSummary) -> String {
         let voice = document.voice(sourceID: sourceID, number: summary.number, fallback: summary.voice)
         return voice.name.isEmpty ? "Untitled" : voice.name
+    }
+
+    private func handleVoiceDrop(providers: [NSItemProvider], targetVoice: FB01VoiceSummary) -> Bool {
+        guard let provider = providers.first(where: { $0.canLoadObject(ofClass: NSString.self) }) else {
+            return false
+        }
+
+        provider.loadObject(ofClass: NSString.self) { object, _ in
+            guard let string = object as? String,
+                  let sourceNumber = Int(string),
+                  sourceNumber != targetVoice.number,
+                  let sourceSummary = voices.first(where: { $0.number == sourceNumber }) else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                let sourceVoice = document.voice(sourceID: sourceID, number: sourceSummary.number, fallback: sourceSummary.voice)
+                guard let operation = chooseDropOperation(sourceNumber: sourceNumber, targetNumber: targetVoice.number) else {
+                    return
+                }
+                document.applyVoiceSlotOperation(
+                    operation,
+                    sourceID: sourceID,
+                    number: sourceNumber,
+                    targetNumber: targetVoice.number,
+                    voice: sourceVoice,
+                    voices: voices
+                )
+                selectedVoiceNumber = targetVoice.number
+            }
+        }
+
+        return true
+    }
+
+    private func chooseDropOperation(sourceNumber: Int, targetNumber: Int) -> VoiceSlotOperation? {
+        let alert = NSAlert()
+        alert.messageText = "Drop Voice \(sourceNumber) on Voice \(targetNumber)"
+        alert.informativeText = "Choose a local librarian action. This does not write to disk or change the FB-01."
+        alert.addButton(withTitle: "Copy")
+        alert.addButton(withTitle: "Swap")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .informational
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return .copy
+        case .alertSecondButtonReturn:
+            return .swap
+        default:
+            return nil
+        }
     }
 }
 
