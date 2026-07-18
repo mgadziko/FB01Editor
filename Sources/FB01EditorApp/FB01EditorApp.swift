@@ -4224,53 +4224,75 @@ struct VoiceDetailView: View {
                 Text("Voice \(summary.number)")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
-                if isEdited {
-                    Button {
-                        resetVoice()
-                    } label: {
-                        Label("Reset", systemImage: "arrow.uturn.backward")
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    if isEdited {
+                        Button {
+                            resetVoice()
+                        } label: {
+                            Label("Reset", systemImage: "arrow.uturn.backward")
+                        }
+                        .frame(width: 150)
                     }
-                }
-                if bankVoices.count > 1 {
-                    Button {
-                        copyVoice()
-                    } label: {
-                        Label("Copy To", systemImage: "doc.on.doc")
+
+                    if bankVoices.count > 1 {
+                        Button {
+                            copyVoice()
+                        } label: {
+                            Label("Copy To", systemImage: "doc.on.doc")
+                        }
+                        .frame(width: 150)
+
+                        Button {
+                            swapVoice()
+                        } label: {
+                            Label("Swap With", systemImage: "arrow.left.arrow.right")
+                        }
+                        .frame(width: 150)
                     }
+
                     Button {
-                        swapVoice()
+                        exportVoice()
                     } label: {
-                        Label("Swap With", systemImage: "arrow.left.arrow.right")
+                        Label("Export Voice", systemImage: "square.and.arrow.down")
                     }
+                    .frame(width: 150)
                 }
-                Button {
-                    document.sendVoiceToInstrument(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
-                } label: {
-                    Label("Send", systemImage: "arrow.up.circle")
-                }
-                .disabled(document.isBusy)
-                Button {
-                    document.sendAndConfirmVoiceToInstrument(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
-                } label: {
-                    Label("Send & Confirm", systemImage: "checkmark.seal")
-                }
-                .disabled(document.isBusy)
-                Button {
-                    document.storeVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
-                } label: {
-                    Label("Store", systemImage: "externaldrive.badge.plus")
-                }
-                .disabled(document.isBusy)
-                Button {
-                    document.storeAndConfirmVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
-                } label: {
-                    Label("Store & Confirm", systemImage: "externaldrive.badge.checkmark")
-                }
-                .disabled(document.isBusy)
-                Button {
-                    exportVoice()
-                } label: {
-                    Label("Export Voice", systemImage: "square.and.arrow.down")
+
+                HStack(spacing: 8) {
+                    Button {
+                        document.sendVoiceToInstrument(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
+                    } label: {
+                        Label("Send", systemImage: "arrow.up.circle")
+                    }
+                    .disabled(document.isBusy)
+                    .frame(width: 150)
+
+                    Button {
+                        document.sendAndConfirmVoiceToInstrument(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
+                    } label: {
+                        Label("Send & Confirm", systemImage: "checkmark.seal")
+                    }
+                    .disabled(document.isBusy)
+                    .frame(width: 150)
+
+                    Button {
+                        document.storeVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
+                    } label: {
+                        Label("Store", systemImage: "externaldrive.badge.plus")
+                    }
+                    .disabled(document.isBusy)
+                    .frame(width: 150)
+
+                    Button {
+                        document.storeAndConfirmVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
+                    } label: {
+                        Label("Store & Confirm", systemImage: "externaldrive.badge.checkmark")
+                    }
+                    .disabled(document.isBusy)
+                    .frame(width: 150)
                 }
             }
 
