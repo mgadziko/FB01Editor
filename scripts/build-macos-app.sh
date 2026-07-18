@@ -16,9 +16,16 @@ BIN_DIR="$(swift build -c "$CONFIGURATION" --show-bin-path)"
 EXECUTABLE_PATH="$BIN_DIR/$EXECUTABLE_NAME"
 ICON_PATH="$ROOT_DIR/Resources/$ICON_FILE"
 APP_DIR="$ROOT_DIR/dist/$APP_NAME.app"
-CONTENTS_DIR="$APP_DIR/Contents"
+STAGING_DIR="$(mktemp -d "${TMPDIR:-/private/tmp}/fb01-editor-app.XXXXXX")"
+STAGED_APP_DIR="$STAGING_DIR/$APP_NAME.app"
+CONTENTS_DIR="$STAGED_APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+
+cleanup() {
+  rm -rf "$STAGING_DIR"
+}
+trap cleanup EXIT
 
 if [[ ! -x "$EXECUTABLE_PATH" ]]; then
   echo "Missing executable: $EXECUTABLE_PATH" >&2
@@ -30,7 +37,7 @@ if [[ ! -f "$ICON_PATH" ]]; then
   exit 1
 fi
 
-rm -rf "$APP_DIR"
+rm -rf "$STAGED_APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/$EXECUTABLE_NAME"
 cp "$ICON_PATH" "$RESOURCES_DIR/$ICON_FILE"
@@ -48,6 +55,35 @@ cp "$ICON_PATH" "$RESOURCES_DIR/$ICON_FILE"
 /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 14.0" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$CONTENTS_DIR/Info.plist"
 
+printf "APPL????" > "$CONTENTS_DIR/PkgInfo"
+
+if command -v xattr >/dev/null 2>&1; then
+  xattr -cr "$STAGED_APP_DIR"
+  xattr -rd com.apple.macl "$STAGED_APP_DIR" >/dev/null 2>&1 || true
+  xattr -rd com.apple.provenance "$STAGED_APP_DIR" >/dev/null 2>&1 || true
+  xattr -d com.apple.FinderInfo "$STAGED_APP_DIR" >/dev/null 2>&1 || true
+  xattr -d "com.apple.fileprovider.fpfs#P" "$STAGED_APP_DIR" >/dev/null 2>&1 || true
+fi
+
+if command -v codesign >/dev/null 2>&1; then
+  if ! codesign --force --sign - "$STAGED_APP_DIR" >/dev/null 2>&1; then
+    if command -v xattr >/dev/null 2>&1; then
+      xattr -rd com.apple.macl "$STAGED_APP_DIR" >/dev/null 2>&1 || true
+      xattr -rd com.apple.provenance "$STAGED_APP_DIR" >/dev/null 2>&1 || true
+      xattr -d com.apple.FinderInfo "$STAGED_APP_DIR" >/dev/null 2>&1 || true
+      xattr -d "com.apple.fileprovider.fpfs#P" "$STAGED_APP_DIR" >/dev/null 2>&1 || true
+    fi
+
+    if ! codesign --force --sign - "$STAGED_APP_DIR" >/dev/null 2>&1; then
+      echo "warning: ad-hoc signing failed; leaving local development app bundle unsigned" >&2
+    fi
+  fi
+fi
+
+rm -rf "$APP_DIR"
+mkdir -p "$(dirname "$APP_DIR")"
+ditto --noextattr --norsrc --noacl "$STAGED_APP_DIR" "$APP_DIR"
+
 if command -v xattr >/dev/null 2>&1; then
   xattr -cr "$APP_DIR"
   xattr -rd com.apple.macl "$APP_DIR" >/dev/null 2>&1 || true
@@ -56,19 +92,12 @@ if command -v xattr >/dev/null 2>&1; then
   xattr -d "com.apple.fileprovider.fpfs#P" "$APP_DIR" >/dev/null 2>&1 || true
 fi
 
-if command -v codesign >/dev/null 2>&1; then
-  if ! codesign --force --sign - "$APP_DIR" >/dev/null 2>&1; then
-    if command -v xattr >/dev/null 2>&1; then
-      xattr -rd com.apple.macl "$APP_DIR" >/dev/null 2>&1 || true
-      xattr -rd com.apple.provenance "$APP_DIR" >/dev/null 2>&1 || true
-      xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
-      xattr -d "com.apple.fileprovider.fpfs#P" "$APP_DIR" >/dev/null 2>&1 || true
-    fi
+if command -v SetFile >/dev/null 2>&1; then
+  SetFile -a bc "$APP_DIR" >/dev/null 2>&1 || true
+fi
 
-    if ! codesign --force --sign - "$APP_DIR" >/dev/null 2>&1; then
-      echo "warning: ad-hoc signing failed; leaving local development app bundle unsigned" >&2
-    fi
-  fi
+if command -v xattr >/dev/null 2>&1; then
+  xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
 fi
 
 echo "$APP_DIR"
