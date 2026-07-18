@@ -91,7 +91,7 @@ struct AboutBoxView: View {
             VisualEffectBackground()
 
             VStack(alignment: .leading, spacing: 0) {
-                PlaceholderAppIcon()
+                AboutAppIcon()
                     .padding(.bottom, 22)
 
                 Text("FB01 Editor")
@@ -128,25 +128,13 @@ struct AboutBoxView: View {
     }
 }
 
-struct PlaceholderAppIcon: View {
+struct AboutAppIcon: View {
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 11)
-                .fill(.regularMaterial)
-                .frame(width: 52, height: 52)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 11)
-                        .stroke(.white.opacity(0.35), lineWidth: 1)
-                )
-
-            VStack(spacing: 2) {
-                Text("FB")
-                    .font(.system(size: 15, weight: .bold, design: .rounded))
-                Text("01")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-            }
-            .foregroundStyle(.blue)
-        }
+        Image(nsImage: NSApp.applicationIconImage)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: 52, height: 52)
     }
 }
 
