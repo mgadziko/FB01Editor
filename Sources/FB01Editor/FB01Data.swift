@@ -57,6 +57,86 @@ public struct FB01VoiceData: Equatable, Sendable {
         return try FB01VoiceData(bytes: copy)
     }
 
+    public func settingAmplitudeModulationDepth(_ value: Int) throws -> FB01VoiceData {
+        let depth = try FB01.validate(value, name: "amplitudeModulationDepth", range: 0...127)
+        var copy = bytes
+        copy[0x09] = (copy[0x09] & 0x80) | depth
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingLoadLFODataEnabled(_ enabled: Bool) throws -> FB01VoiceData {
+        var copy = bytes
+        copy[0x09] = enabled ? (copy[0x09] | 0x80) : (copy[0x09] & 0x7F)
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingPitchModulationDepth(_ value: Int) throws -> FB01VoiceData {
+        let depth = try FB01.validate(value, name: "pitchModulationDepth", range: 0...127)
+        var copy = bytes
+        copy[0x0A] = (copy[0x0A] & 0x80) | depth
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingLFOSyncEnabled(_ enabled: Bool) throws -> FB01VoiceData {
+        var copy = bytes
+        copy[0x0A] = enabled ? (copy[0x0A] | 0x80) : (copy[0x0A] & 0x7F)
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingOperatorEnabled(index: Int, enabled: Bool) throws -> FB01VoiceData {
+        guard (0..<Self.operatorCount).contains(index) else {
+            throw FB01SysExError.valueOutOfRange(name: "operator", value: index, range: 0...(Self.operatorCount - 1))
+        }
+
+        var copy = bytes
+        let mask = UInt8(1 << (index + 3))
+        copy[0x0B] = enabled ? (copy[0x0B] | mask) : (copy[0x0B] & ~mask)
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingLeftOutputEnabled(_ enabled: Bool) throws -> FB01VoiceData {
+        var copy = bytes
+        copy[0x0C] = enabled ? (copy[0x0C] | 0x80) : (copy[0x0C] & 0x7F)
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingRightOutputEnabled(_ enabled: Bool) throws -> FB01VoiceData {
+        var copy = bytes
+        copy[0x0C] = enabled ? (copy[0x0C] | 0x40) : (copy[0x0C] & 0xBF)
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingPitchModulationSensitivity(_ value: Int) throws -> FB01VoiceData {
+        let sensitivity = try FB01.validate(value, name: "pitchModulationSensitivity", range: 0...7)
+        var copy = bytes
+        copy[0x0D] = (copy[0x0D] & 0x8F) | (sensitivity << 4)
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingAmplitudeModulationSensitivity(_ value: Int) throws -> FB01VoiceData {
+        let sensitivity = try FB01.validate(value, name: "amplitudeModulationSensitivity", range: 0...3)
+        var copy = bytes
+        copy[0x0D] = (copy[0x0D] & 0xFC) | sensitivity
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingLFOWaveform(_ value: Int) throws -> FB01VoiceData {
+        let waveform = try FB01.validate(value, name: "lfoWaveform", range: 0...3)
+        var copy = bytes
+        copy[0x0E] = (copy[0x0E] & 0x9F) | (waveform << 5)
+        return try FB01VoiceData(bytes: copy)
+    }
+
+    public func settingTranspose(_ value: Int) throws -> FB01VoiceData {
+        guard (-128...127).contains(value) else {
+            throw FB01SysExError.valueOutOfRange(name: "transpose", value: value, range: -128...127)
+        }
+
+        var copy = bytes
+        copy[0x0F] = UInt8(bitPattern: Int8(value))
+        return try FB01VoiceData(bytes: copy)
+    }
+
     public var name: String {
         String(bytes: bytes.prefix(Self.nameLength), encoding: .ascii)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -388,12 +468,38 @@ public struct FB01InstrumentConfiguration: Equatable, Sendable {
         try settingByte(at: 0x05, value: value, name: "voiceNumber", range: 0...95)
     }
 
+    public func settingHighKeyLimit(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x02, value: value, name: "highKeyLimit", range: 0...127)
+    }
+
+    public func settingLowKeyLimit(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x03, value: value, name: "lowKeyLimit", range: 0...127)
+    }
+
+    public func settingOctaveTranspose(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x07, value: value + 2, name: "octaveTranspose", range: 0...4)
+    }
+
     public func settingOutputLevel(_ value: Int) throws -> FB01InstrumentConfiguration {
         try settingByte(at: 0x08, value: value, name: "outputLevel", range: 0...127)
     }
 
     public func settingPan(_ value: Int) throws -> FB01InstrumentConfiguration {
         try settingByte(at: 0x09, value: value, name: "pan", range: 0...127)
+    }
+
+    public func settingLFOEnabled(_ enabled: Bool) throws -> FB01InstrumentConfiguration {
+        var copy = bytes
+        copy[0x0A] = enabled ? (copy[0x0A] | 0x01) : (copy[0x0A] & 0x7E)
+        return FB01InstrumentConfiguration(index: index, bytes: copy)
+    }
+
+    public func settingPortamentoTime(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x0B, value: value, name: "portamentoTime", range: 0...127)
+    }
+
+    public func settingPitchBendRange(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x0C, value: value, name: "pitchBendRange", range: 0...12)
     }
 
     public func settingMonoPolyMode(_ mode: FB01MonoPolyMode) throws -> FB01InstrumentConfiguration {

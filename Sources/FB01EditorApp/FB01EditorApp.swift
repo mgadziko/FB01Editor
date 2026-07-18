@@ -225,6 +225,10 @@ final class DocumentModel: ObservableObject {
         canSendSelectedConfiguration
     }
 
+    var selectedEditedSourceCount: Int {
+        sources.filter(\.isEdited).count
+    }
+
     var selectedSource: LibrarySource? {
         guard let selectedSourceID else {
             return sources.first
@@ -402,6 +406,12 @@ final class DocumentModel: ObservableObject {
         guard let selectedSource,
               let index = sources.firstIndex(where: { $0.id == selectedSource.id }) else { return }
 
+        if selectedSource.isEdited, let url = selectedSource.fileURL {
+            _ = saveEditedSource(at: index, to: url)
+            selectedSourceID = sources[index].id
+            return
+        }
+
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.sysex]
         panel.directoryURL = preferredSaveDirectoryURL()
@@ -414,7 +424,7 @@ final class DocumentModel: ObservableObject {
         do {
             let artifact = try selectedSource.artifactForSaving()
             try artifact.writeSysEx(to: url)
-            sources[index].markSaved(as: artifact)
+            sources[index].markSaved(as: artifact, fileURL: url)
             selectedSourceID = sources[index].id
             rememberSaveDirectory(for: url)
             statusMessage = "Saved \(sources[index].title)."
@@ -707,6 +717,94 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func sendVoiceToInstrument(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
+        guard let source = sources.first(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Send Voice to FB-01 Instrument?"
+        alert.informativeText = "This sends \(voice.name.isEmpty ? "the selected voice" : voice.name) from \(source.title) to a current instrument edit buffer through \(selectedDestinationName). It does not store the voice in a bank slot."
+        alert.addButton(withTitle: "Send")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
+        for instrument in 1...8 {
+            popup.addItem(withTitle: "Instrument \(instrument)")
+        }
+        popup.selectItem(at: min(max(number - 1, 0), 7))
+        alert.accessoryView = popup
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        let instrument = popup.indexOfSelectedItem
+        sendVoicePayload(
+            voice,
+            systemChannel: systemChannel,
+            instrument: instrument,
+            statusMessage: "Sent voice to instrument \(instrument + 1) on \(selectedDestinationName)."
+        )
+    }
+
+    func storeVoiceToDeviceSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
+        guard let source = sources.first(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Store Voice to FB-01 Slot"
+        alert.informativeText = "This sends \(voice.name.isEmpty ? "the selected voice" : voice.name) from \(source.title) to a current instrument edit buffer, then stores that instrument voice to a voice slot on the FB-01."
+        alert.addButton(withTitle: "Store")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let instrumentPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
+        for instrument in 1...8 {
+            instrumentPopup.addItem(withTitle: "Instrument \(instrument)")
+        }
+        instrumentPopup.selectItem(at: min(max(number - 1, 0), 7))
+
+        let voicePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
+        for voiceNumber in 1...96 {
+            voicePopup.addItem(withTitle: "Voice \(voiceNumber)")
+        }
+        voicePopup.selectItem(at: min(max(number - 1, 0), 95))
+
+        stack.addArrangedSubview(labelledPopup(label: "Edit buffer:", popup: instrumentPopup))
+        stack.addArrangedSubview(labelledPopup(label: "Store slot:", popup: voicePopup))
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        let instrument = instrumentPopup.indexOfSelectedItem
+        let voiceSlot = voicePopup.indexOfSelectedItem
+        do {
+            let voiceMessage = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument).messages[0]
+            let storeCommand = FB01SysExMessage.command(.storeCurrentInstrumentVoice(
+                systemChannel: systemChannel,
+                instrument: instrument,
+                voiceNumber: voiceSlot
+            ))
+            sendMIDI(
+                [try voiceMessage.bytes, try storeCommand.bytes],
+                statusMessage: "Stored voice to slot \(voiceSlot + 1) on \(selectedDestinationName)."
+            )
+        } catch {
+            errorMessage = "Store voice failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
     private func load(urls: [URL]) {
         var loadedSources: [LibrarySource] = []
         var failures: [String] = []
@@ -714,7 +812,11 @@ final class DocumentModel: ObservableObject {
         for url in urls {
             do {
                 let artifact = try FB01Artifact.readSysEx(from: url)
-                loadedSources.append(contentsOf: LibrarySource.sources(from: artifact, fileName: url.lastPathComponent))
+                var sources = LibrarySource.sources(from: artifact, fileName: url.lastPathComponent)
+                if sources.count == 1 {
+                    sources[0].fileURL = url
+                }
+                loadedSources.append(contentsOf: sources)
             } catch {
                 failures.append("\(url.lastPathComponent): \(error)")
             }
@@ -878,7 +980,7 @@ final class DocumentModel: ObservableObject {
         do {
             let artifact = try sources[index].artifactForSaving()
             try artifact.writeSysEx(to: url)
-            sources[index].markSaved(as: artifact)
+            sources[index].markSaved(as: artifact, fileURL: url)
             rememberSaveDirectory(for: url)
             statusMessage = "Saved \(sources[index].title)."
             errorMessage = nil
@@ -947,6 +1049,29 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    private func sendVoicePayload(_ voice: FB01VoiceData, systemChannel: Int, instrument: Int, statusMessage successMessage: String) {
+        do {
+            let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument)
+            sendMIDI([try artifact.sysexBytes], statusMessage: successMessage)
+        } catch {
+            errorMessage = "Send voice failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    private func labelledPopup(label: String, popup: NSPopUpButton) -> NSView {
+        let stack = NSStackView()
+        stack.orientation = .horizontal
+        stack.spacing = 8
+        stack.alignment = .centerY
+
+        let text = NSTextField(labelWithString: label)
+        text.frame = NSRect(x: 0, y: 0, width: 82, height: 18)
+        stack.addArrangedSubview(text)
+        stack.addArrangedSubview(popup)
+        return stack
+    }
+
     private func sendMIDI(_ messages: [[UInt8]], statusMessage successMessage: String) {
         guard !isBusy else { return }
 
@@ -982,11 +1107,16 @@ struct LibrarySource: Identifiable, Equatable {
     var title: String
     var subtitle: String
     var artifact: FB01Artifact
+    var fileURL: URL?
     var editedVoices: [Int: FB01VoiceData] = [:]
     var editedConfiguration: FB01ConfigurationData?
 
     var isEdited: Bool {
         !editedVoices.isEmpty || editedConfiguration != nil
+    }
+
+    func isVoiceEdited(number: Int) -> Bool {
+        editedVoices[number] != nil
     }
 
     var isSingleVoiceSource: Bool {
@@ -1121,8 +1251,11 @@ struct LibrarySource: Identifiable, Equatable {
         }
     }
 
-    mutating func markSaved(as savedArtifact: FB01Artifact) {
+    mutating func markSaved(as savedArtifact: FB01Artifact, fileURL: URL? = nil) {
         artifact = savedArtifact
+        if let fileURL {
+            self.fileURL = fileURL
+        }
         editedVoices.removeAll()
         editedConfiguration = nil
     }
@@ -1258,6 +1391,7 @@ struct ToolbarView: View {
             Text(document.editingStatusText)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
+                .help(document.selectedEditedSourceCount == 0 ? "No local edits" : "\(document.selectedEditedSourceCount) source\(document.selectedEditedSourceCount == 1 ? "" : "s") with unsaved local edits")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -1331,20 +1465,22 @@ struct LibraryView: View {
                             Button {
                                 document.selectSource(source)
                             } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(source.title)
-                                        .font(.body.weight(.medium))
-                                        .lineLimit(1)
-                                    if source.isEdited {
-                                        Text("Edited")
-                                            .font(.caption2.weight(.semibold))
-                                            .foregroundStyle(.orange)
+                                HStack(alignment: .top, spacing: 7) {
+                                    Image(systemName: source.isEdited ? "circle.fill" : "circle")
+                                        .font(.system(size: 7, weight: .semibold))
+                                        .foregroundStyle(source.isEdited ? .orange : .clear)
+                                        .frame(width: 8, height: 16)
+                                        .padding(.top, 2)
+
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(source.title)
+                                            .font(.body.weight(.medium))
+                                            .lineLimit(1)
+                                        Text(source.subtitle)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                             .lineLimit(1)
                                     }
-                                    Text(source.subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 10)
@@ -1802,15 +1938,20 @@ struct ConfigurationInstrumentEditor: View {
                     header("#")
                     header("Notes")
                     header("MIDI")
+                    header("Key")
                     header("Voice")
+                    header("Oct")
                     header("Level")
                     header("Pan")
+                    header("LFO")
+                    header("Porta")
+                    header("Bend")
                     header("Mode")
                     header("PMD")
                 }
 
                 Divider()
-                    .gridCellColumns(8)
+                    .gridCellColumns(13)
 
                 ForEach(instruments, id: \.index) { instrument in
                     ConfigurationInstrumentRow(instrument: instrument, updateInstrument: updateInstrument)
@@ -1838,13 +1979,24 @@ struct ConfigurationInstrumentRow: View {
             Text("\(instrument.noteCount)")
             smallStepper(value: instrument.midiChannel + 1, range: 1...16) { try instrument.settingMIDIChannel($0 - 1) }
             HStack(spacing: 4) {
+                smallStepper(value: instrument.lowKeyLimit, range: 0...127) { try instrument.settingLowKeyLimit($0) }
+                Text("-")
+                    .foregroundStyle(.secondary)
+                smallStepper(value: instrument.highKeyLimit, range: 0...127) { try instrument.settingHighKeyLimit($0) }
+            }
+            HStack(spacing: 4) {
                 smallStepper(value: instrument.voiceBank, range: 1...7) { try instrument.settingVoiceBank($0) }
                 Text("/")
                     .foregroundStyle(.secondary)
                 smallStepper(value: instrument.voiceNumber, range: 0...95) { try instrument.settingVoiceNumber($0) }
             }
+            smallStepper(value: instrument.octaveTranspose, range: -2...2) { try instrument.settingOctaveTranspose($0) }
             smallStepper(value: instrument.outputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
             smallStepper(value: instrument.pan, range: 0...127) { try instrument.settingPan($0) }
+            Toggle("", isOn: lfoEnabledBinding)
+                .labelsHidden()
+            smallStepper(value: instrument.portamentoTime, range: 0...127) { try instrument.settingPortamentoTime($0) }
+            smallStepper(value: instrument.pitchBendRange, range: 0...12) { try instrument.settingPitchBendRange($0) }
             Picker("", selection: modeBinding) {
                 Text("Poly").tag(FB01MonoPolyMode.poly)
                 Text("Mono").tag(FB01MonoPolyMode.mono)
@@ -1868,6 +2020,17 @@ struct ConfigurationInstrumentRow: View {
             get: { instrument.monoPolyMode == .unknown ? .poly : instrument.monoPolyMode },
             set: { mode in
                 if let updated = try? instrument.settingMonoPolyMode(mode) {
+                    updateInstrument(updated)
+                }
+            }
+        )
+    }
+
+    private var lfoEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { instrument.lfoEnabled },
+            set: { enabled in
+                if let updated = try? instrument.settingLFOEnabled(enabled) {
                     updateInstrument(updated)
                 }
             }
@@ -2007,6 +2170,10 @@ struct VoiceBankBrowser: View {
                             selectedVoiceNumber = voice.number
                         } label: {
                             HStack(spacing: 8) {
+                                Image(systemName: isVoiceEdited(voice.number) ? "circle.fill" : "circle")
+                                    .font(.system(size: 6, weight: .semibold))
+                                    .foregroundStyle(isVoiceEdited(voice.number) ? .orange : .clear)
+                                    .frame(width: 8)
                                 Text("\(voice.number)")
                                     .frame(width: 28, alignment: .trailing)
                                     .foregroundStyle(.secondary)
@@ -2036,6 +2203,10 @@ struct VoiceBankBrowser: View {
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
+    }
+
+    private func isVoiceEdited(_ number: Int) -> Bool {
+        document.sources.first { $0.id == sourceID }?.isVoiceEdited(number: number) ?? false
     }
 }
 
@@ -2081,6 +2252,18 @@ struct VoiceDetailView: View {
                     }
                 }
                 Button {
+                    document.sendVoiceToInstrument(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
+                } label: {
+                    Label("Send", systemImage: "arrow.up.circle")
+                }
+                .disabled(document.isBusy)
+                Button {
+                    document.storeVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
+                } label: {
+                    Label("Store", systemImage: "externaldrive.badge.plus")
+                }
+                .disabled(document.isBusy)
+                Button {
                     exportVoice()
                 } label: {
                     Label("Export Voice", systemImage: "square.and.arrow.down")
@@ -2115,7 +2298,49 @@ struct VoiceDetailView: View {
                 lfoSpeed: Binding(
                     get: { editableVoice.lfoSpeed },
                     set: { setLFOSpeed($0) }
-                )
+                ),
+                lfoWaveform: Binding(
+                    get: { editableVoice.lfoWaveform },
+                    set: { setLFOWaveform($0) }
+                ),
+                lfoSyncEnabled: Binding(
+                    get: { editableVoice.lfoSyncEnabled },
+                    set: { setLFOSyncEnabled($0) }
+                ),
+                amplitudeModulationDepth: Binding(
+                    get: { editableVoice.amplitudeModulationDepth },
+                    set: { setAmplitudeModulationDepth($0) }
+                ),
+                pitchModulationDepth: Binding(
+                    get: { editableVoice.pitchModulationDepth },
+                    set: { setPitchModulationDepth($0) }
+                ),
+                amplitudeModulationSensitivity: Binding(
+                    get: { editableVoice.amplitudeModulationSensitivity },
+                    set: { setAmplitudeModulationSensitivity($0) }
+                ),
+                pitchModulationSensitivity: Binding(
+                    get: { editableVoice.pitchModulationSensitivity },
+                    set: { setPitchModulationSensitivity($0) }
+                ),
+                transpose: Binding(
+                    get: { editableVoice.transpose },
+                    set: { setTranspose($0) }
+                ),
+                leftOutputEnabled: Binding(
+                    get: { editableVoice.leftOutputEnabled },
+                    set: { setLeftOutputEnabled($0) }
+                ),
+                rightOutputEnabled: Binding(
+                    get: { editableVoice.rightOutputEnabled },
+                    set: { setRightOutputEnabled($0) }
+                ),
+                operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
+                    Binding(
+                        get: { editableVoice.operatorEnabled[index] },
+                        set: { setOperatorEnabled(index: index, enabled: $0) }
+                    )
+                }
             )
 
             OperatorTable(operators: editableVoice.operators)
@@ -2178,6 +2403,46 @@ struct VoiceDetailView: View {
         updateVoice { try $0.settingLFOSpeed(value) }
     }
 
+    private func setLFOWaveform(_ value: Int) {
+        updateVoice { try $0.settingLFOWaveform(value) }
+    }
+
+    private func setLFOSyncEnabled(_ value: Bool) {
+        updateVoice { try $0.settingLFOSyncEnabled(value) }
+    }
+
+    private func setAmplitudeModulationDepth(_ value: Int) {
+        updateVoice { try $0.settingAmplitudeModulationDepth(value) }
+    }
+
+    private func setPitchModulationDepth(_ value: Int) {
+        updateVoice { try $0.settingPitchModulationDepth(value) }
+    }
+
+    private func setAmplitudeModulationSensitivity(_ value: Int) {
+        updateVoice { try $0.settingAmplitudeModulationSensitivity(value) }
+    }
+
+    private func setPitchModulationSensitivity(_ value: Int) {
+        updateVoice { try $0.settingPitchModulationSensitivity(value) }
+    }
+
+    private func setTranspose(_ value: Int) {
+        updateVoice { try $0.settingTranspose(value) }
+    }
+
+    private func setLeftOutputEnabled(_ value: Bool) {
+        updateVoice { try $0.settingLeftOutputEnabled(value) }
+    }
+
+    private func setRightOutputEnabled(_ value: Bool) {
+        updateVoice { try $0.settingRightOutputEnabled(value) }
+    }
+
+    private func setOperatorEnabled(index: Int, enabled: Bool) {
+        updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
+    }
+
     private func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
         do {
             let editedVoice = try edit(editableVoice)
@@ -2225,6 +2490,16 @@ struct VoiceEditorControls: View {
     @Binding var algorithm: Int
     @Binding var feedback: Int
     @Binding var lfoSpeed: Int
+    @Binding var lfoWaveform: Int
+    @Binding var lfoSyncEnabled: Bool
+    @Binding var amplitudeModulationDepth: Int
+    @Binding var pitchModulationDepth: Int
+    @Binding var amplitudeModulationSensitivity: Int
+    @Binding var pitchModulationSensitivity: Int
+    @Binding var transpose: Int
+    @Binding var leftOutputEnabled: Bool
+    @Binding var rightOutputEnabled: Bool
+    var operatorEnabled: [Binding<Bool>]
 
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
@@ -2256,6 +2531,82 @@ struct VoiceEditorControls: View {
                 Stepper(value: $lfoSpeed, in: 0...255) {
                     Text("\(lfoSpeed)")
                         .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("Waveform")
+                Picker("", selection: $lfoWaveform) {
+                    Text("Saw").tag(0)
+                    Text("Square").tag(1)
+                    Text("Triangle").tag(2)
+                    Text("Random").tag(3)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 260)
+            }
+
+            GridRow {
+                label("LFO Sync")
+                Toggle("", isOn: $lfoSyncEnabled)
+                    .labelsHidden()
+            }
+
+            GridRow {
+                label("AMD")
+                Stepper(value: $amplitudeModulationDepth, in: 0...127) {
+                    Text("\(amplitudeModulationDepth)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("PMD")
+                Stepper(value: $pitchModulationDepth, in: 0...127) {
+                    Text("\(pitchModulationDepth)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("AMS")
+                Stepper(value: $amplitudeModulationSensitivity, in: 0...3) {
+                    Text("\(amplitudeModulationSensitivity)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("PMS")
+                Stepper(value: $pitchModulationSensitivity, in: 0...7) {
+                    Text("\(pitchModulationSensitivity)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("Transpose")
+                Stepper(value: $transpose, in: -128...127) {
+                    Text("\(transpose)")
+                        .monospacedDigit()
+                }
+            }
+
+            GridRow {
+                label("Output")
+                HStack(spacing: 12) {
+                    Toggle("Left", isOn: $leftOutputEnabled)
+                    Toggle("Right", isOn: $rightOutputEnabled)
+                }
+            }
+
+            GridRow {
+                label("Operators")
+                HStack(spacing: 12) {
+                    ForEach(Array(operatorEnabled.enumerated()), id: \.offset) { index, binding in
+                        Toggle("\(index + 1)", isOn: binding)
+                    }
                 }
             }
         }
