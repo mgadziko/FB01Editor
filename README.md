@@ -65,10 +65,10 @@ To build a launchable local `.app` bundle:
 
 ```sh
 ./scripts/build-macos-app.sh
-open ".build/release/FB01 Editor.app"
+open "dist/FB01 Editor.app"
 ```
 
-The script creates an ad-hoc signed development bundle at `.build/release/FB01 Editor.app`.
+The script creates an ad-hoc signed development bundle at `dist/FB01 Editor.app`.
 
 ## MIDI Capture And Safe Dump Requests
 
