@@ -153,6 +153,24 @@ struct EditorDocumentCommands: View {
 
         Divider()
 
+        Button("Open Selected Voice as Document") {
+            if let payload = document.selectedVoiceDocumentPayload() {
+                let id = workspace.createVoiceDocument(voice: payload.voice, systemChannel: payload.systemChannel)
+                openWindow(id: "voice-document", value: id)
+            }
+        }
+        .disabled(!document.canOpenSelectedVoiceAsDocument)
+
+        Button("Open Selected Configuration as Document") {
+            if let payload = document.selectedConfigurationDocumentPayload() {
+                let id = workspace.createConfigurationDocument(configuration: payload.configuration, systemChannel: payload.systemChannel)
+                openWindow(id: "configuration-document", value: id)
+            }
+        }
+        .disabled(!document.canOpenSelectedConfigurationAsDocument)
+
+        Divider()
+
         Button("Load Voice Document...") {
             if let id = workspace.loadVoiceDocument() {
                 openWindow(id: "voice-document", value: id)
@@ -358,6 +376,23 @@ private struct VoiceDocumentStoreOptions {
     }
 }
 
+private enum VoiceDocumentFetchSource {
+    case instrument(Int)
+    case storedSlot(bank: Int, voiceNumber: Int)
+}
+
+private struct VoiceDocumentCandidate {
+    var title: String
+    var voice: FB01VoiceData
+    var systemChannel: Int
+}
+
+private struct ConfigurationDocumentCandidate {
+    var title: String
+    var configuration: FB01ConfigurationData
+    var systemChannel: Int
+}
+
 private struct ConfigurationFetchOptions {
     var isCurrent: Bool
     var slot: Int
@@ -481,9 +516,9 @@ private func makeWarningLabel(_ string: String) -> NSTextField {
 @MainActor
 final class VoiceDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
-    let systemChannel: Int
     @Published var voice: FB01VoiceData
     @Published var savedVoice: FB01VoiceData
+    @Published var systemChannel: Int
     @Published var fileURL: URL?
     @Published var errorMessage: String?
     @Published var statusMessage: String?
@@ -569,22 +604,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     static func fetchFromDevice(device: DocumentModel) -> VoiceDocumentModel? {
-        guard let instrument = chooseInstrument(title: "Fetch Voice from FB-01", actionTitle: "Fetch") else {
+        guard let source = chooseFetchSource(title: "Fetch Voice from FB-01", actionTitle: "Fetch") else {
             return nil
         }
 
         do {
-            let bytes = try FB01MIDI.request(
-                .instrumentVoice(instrument + 1),
-                sourceIndex: device.selectedSourceIndex,
-                destinationIndex: device.selectedDestinationIndex,
-                systemChannel: device.systemChannel,
-                timeout: 8
-            )
-            let artifact = try FB01Artifact(sysexBytes: bytes)
-            let (voice, systemChannel) = try extractVoice(from: artifact)
+            let (voice, systemChannel, title) = try fetchVoice(source: source, device: device)
             let model = VoiceDocumentModel(voice: voice, systemChannel: systemChannel)
-            model.statusMessage = "Fetched instrument \(instrument + 1) voice from \(device.selectedSourceName)."
+            model.statusMessage = "Fetched \(title) from \(device.selectedSourceName)."
             return model
         } catch {
             showEditorError(title: "Fetch Voice Failed", message: "\(error)")
@@ -606,8 +633,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         do {
-            let (importedVoice, _) = try Self.readVoice(from: url)
+            let (importedVoice, importedSystemChannel) = try Self.readVoice(from: url)
             voice = importedVoice
+            systemChannel = importedSystemChannel
             fileURL = url
             rememberEditorLoadDirectory(for: url)
             statusMessage = "Imported \(url.lastPathComponent)."
@@ -619,23 +647,16 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     func fetchFromDevice(device: DocumentModel) {
-        guard let instrument = Self.chooseInstrument(title: "Fetch Voice into Current Document", actionTitle: "Fetch") else {
+        guard let source = Self.chooseFetchSource(title: "Fetch Voice into Current Document", actionTitle: "Fetch") else {
             return
         }
 
         do {
-            let bytes = try FB01MIDI.request(
-                .instrumentVoice(instrument + 1),
-                sourceIndex: device.selectedSourceIndex,
-                destinationIndex: device.selectedDestinationIndex,
-                systemChannel: device.systemChannel,
-                timeout: 8
-            )
-            let artifact = try FB01Artifact(sysexBytes: bytes)
-            let (fetchedVoice, _) = try Self.extractVoice(from: artifact)
+            let (fetchedVoice, fetchedSystemChannel, title) = try Self.fetchVoice(source: source, device: device)
             voice = fetchedVoice
+            systemChannel = fetchedSystemChannel
             fileURL = nil
-            statusMessage = "Fetched instrument \(instrument + 1) voice into this document."
+            statusMessage = "Fetched \(title) into this document."
             errorMessage = nil
         } catch {
             errorMessage = "Fetch failed: \(error)"
@@ -751,35 +772,155 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     private static func readVoice(from url: URL) throws -> (voice: FB01VoiceData, systemChannel: Int) {
-        try extractVoice(from: FB01Artifact.readSysEx(from: url))
+        let artifact = try FB01Artifact.readSysEx(from: url)
+        let candidates = try voiceCandidates(from: artifact)
+        guard let candidate = chooseVoiceCandidate(candidates, title: "Choose Voice Document") else {
+            throw FB01AppError.noVoiceSource
+        }
+        return (candidate.voice, candidate.systemChannel)
     }
 
     private static func extractVoice(from artifact: FB01Artifact) throws -> (voice: FB01VoiceData, systemChannel: Int) {
-        for message in artifact.messages {
-            if case let .instrumentVoiceDump(systemChannel, _, packet) = message {
-                return (try FB01VoiceData(bytes: FB01.nibbleDecode(packet.payload)), systemChannel)
-            }
+        let candidates = try voiceCandidates(from: artifact)
+        guard let candidate = candidates.first else {
+            throw FB01AppError.noVoiceSource
         }
-        throw FB01AppError.noVoiceSource
+        return (candidate.voice, candidate.systemChannel)
     }
 
-    private static func chooseInstrument(title: String, actionTitle: String) -> Int? {
+    private static func voiceCandidates(from artifact: FB01Artifact) throws -> [VoiceDocumentCandidate] {
+        var candidates: [VoiceDocumentCandidate] = []
+        for message in artifact.messages {
+            switch message {
+            case let .instrumentVoiceDump(systemChannel, instrument, packet):
+                let voice = try FB01VoiceData(bytes: FB01.nibbleDecode(packet.payload))
+                candidates.append(VoiceDocumentCandidate(
+                    title: "Instrument \(instrument + 1): \(voice.name.isEmpty ? "Untitled" : voice.name)",
+                    voice: voice,
+                    systemChannel: systemChannel
+                ))
+            case let .voiceRAMDumpData(systemChannel, _, data, _):
+                let bank = try FB01VoiceBankData(bank: 0, data: data)
+                for summary in bank.voices {
+                    candidates.append(VoiceDocumentCandidate(
+                        title: "Voice RAM 1 Voice \(summary.number): \(summary.voice.name.isEmpty ? "Untitled" : summary.voice.name)",
+                        voice: summary.voice,
+                        systemChannel: systemChannel
+                    ))
+                }
+            case let .voiceBankDumpData(systemChannel, bankNumber, _, data, _):
+                let bank = try FB01VoiceBankData(bank: bankNumber, data: data)
+                for summary in bank.voices {
+                    candidates.append(VoiceDocumentCandidate(
+                        title: "Bank \(bankNumber + 1) Voice \(summary.number): \(summary.voice.name.isEmpty ? "Untitled" : summary.voice.name)",
+                        voice: summary.voice,
+                        systemChannel: systemChannel
+                    ))
+                }
+            default:
+                break
+            }
+        }
+        return candidates
+    }
+
+    private static func chooseVoiceCandidate(_ candidates: [VoiceDocumentCandidate], title: String) -> VoiceDocumentCandidate? {
+        guard candidates.count > 1 else {
+            return candidates.first
+        }
+
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = "Choose the current FB-01 instrument voice to fetch. This does not fetch whole voice banks."
-        alert.addButton(withTitle: actionTitle)
+        alert.informativeText = "This SysEx file contains multiple voices. Choose the one to open in this document window."
+        alert.addButton(withTitle: "Open")
         alert.addButton(withTitle: "Cancel")
 
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 240, height: 26), pullsDown: false)
-        for instrument in 1...8 {
-            popup.addItem(withTitle: "Instrument \(instrument)")
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for candidate in candidates {
+            popup.addItem(withTitle: candidate.title)
+            popup.lastItem?.representedObject = candidate.title
         }
-        alert.accessoryView = labelledEditorPopup(label: "Instrument:", popup: popup)
+        alert.accessoryView = labelledEditorPopup(label: "Voice:", popup: popup)
 
         guard alert.runModal() == .alertFirstButtonReturn else {
             return nil
         }
-        return popup.indexOfSelectedItem
+        return candidates[popup.indexOfSelectedItem]
+    }
+
+    private static func fetchVoice(source: VoiceDocumentFetchSource, device: DocumentModel) throws -> (voice: FB01VoiceData, systemChannel: Int, title: String) {
+        switch source {
+        case .instrument(let instrument):
+            let bytes = try FB01MIDI.request(
+                .instrumentVoice(instrument + 1),
+                sourceIndex: device.selectedSourceIndex,
+                destinationIndex: device.selectedDestinationIndex,
+                systemChannel: device.systemChannel,
+                timeout: 8
+            )
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            let payload = try extractVoice(from: artifact)
+            return (payload.voice, payload.systemChannel, "instrument \(instrument + 1) voice")
+        case let .storedSlot(bank, voiceNumber):
+            let bytes = try FB01MIDI.request(
+                .voiceBank(bank + 1),
+                sourceIndex: device.selectedSourceIndex,
+                destinationIndex: device.selectedDestinationIndex,
+                systemChannel: device.systemChannel,
+                timeout: 15
+            )
+            guard let voice = try storedVoice(from: bytes, bank: bank, voiceNumber: voiceNumber) else {
+                throw FB01AppError.noVoiceSource
+            }
+            return (voice, device.systemChannel, "Bank \(bank + 1) Voice \(voiceNumber + 1)")
+        }
+    }
+
+    private static func chooseFetchSource(title: String, actionTitle: String) -> VoiceDocumentFetchSource? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "Choose a current instrument voice, or fetch one stored voice by reading Bank 1 or Bank 2 and extracting the selected slot."
+        alert.addButton(withTitle: actionTitle)
+        alert.addButton(withTitle: "Cancel")
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let sourcePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        sourcePopup.addItem(withTitle: "Current Instrument Voice")
+        sourcePopup.addItem(withTitle: "Stored Voice Slot")
+
+        let instrumentPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for instrument in 1...8 {
+            instrumentPopup.addItem(withTitle: "Instrument \(instrument)")
+        }
+
+        let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        bankPopup.addItem(withTitle: "Bank 1")
+        bankPopup.addItem(withTitle: "Bank 2")
+
+        let voicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for voice in 1...FB01VoiceBankData.voiceCount {
+            voicePopup.addItem(withTitle: "Voice \(voice)")
+        }
+
+        stack.addArrangedSubview(labelledEditorPopup(label: "Fetch:", popup: sourcePopup))
+        stack.addArrangedSubview(labelledEditorPopup(label: "Instrument:", popup: instrumentPopup))
+        stack.addArrangedSubview(labelledEditorPopup(label: "Bank:", popup: bankPopup))
+        stack.addArrangedSubview(labelledEditorPopup(label: "Voice:", popup: voicePopup))
+        stack.addArrangedSubview(makeWarningLabel("Stored voice fetch reads the whole selected bank internally, then opens only the chosen voice document."))
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+
+        if sourcePopup.indexOfSelectedItem == 0 {
+            return .instrument(instrumentPopup.indexOfSelectedItem)
+        }
+        return .storedSlot(bank: bankPopup.indexOfSelectedItem, voiceNumber: voicePopup.indexOfSelectedItem)
     }
 
     private static func chooseStoreOptions(defaultVoiceName: String) -> VoiceDocumentStoreOptions? {
@@ -859,9 +1000,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 @MainActor
 final class ConfigurationDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
-    let systemChannel: Int
     @Published var configuration: FB01ConfigurationData
     @Published var savedConfiguration: FB01ConfigurationData
+    @Published var systemChannel: Int
     @Published var fileURL: URL?
     @Published var errorMessage: String?
     @Published var statusMessage: String?
@@ -985,8 +1126,9 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         }
 
         do {
-            let (importedConfiguration, _) = try Self.readConfiguration(from: url)
+            let (importedConfiguration, importedSystemChannel) = try Self.readConfiguration(from: url)
             configuration = importedConfiguration
+            systemChannel = importedSystemChannel
             fileURL = url
             rememberEditorLoadDirectory(for: url)
             statusMessage = "Imported \(url.lastPathComponent)."
@@ -1012,8 +1154,9 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                 timeout: 8
             )
             let artifact = try FB01Artifact(sysexBytes: bytes)
-            let (fetchedConfiguration, _) = try Self.extractConfiguration(from: artifact)
+            let (fetchedConfiguration, fetchedSystemChannel) = try Self.extractConfiguration(from: artifact)
             configuration = fetchedConfiguration
+            systemChannel = fetchedSystemChannel
             fileURL = nil
             statusMessage = options.isCurrent
                 ? "Fetched current configuration into this document."
@@ -1098,21 +1241,68 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
     }
 
     private static func readConfiguration(from url: URL) throws -> (configuration: FB01ConfigurationData, systemChannel: Int) {
-        try extractConfiguration(from: FB01Artifact.readSysEx(from: url))
+        let artifact = try FB01Artifact.readSysEx(from: url)
+        let candidates = try configurationCandidates(from: artifact)
+        guard let candidate = chooseConfigurationCandidate(candidates, title: "Choose Configuration Document") else {
+            throw FB01AppError.noConfigurationSource
+        }
+        return (candidate.configuration, candidate.systemChannel)
     }
 
     private static func extractConfiguration(from artifact: FB01Artifact) throws -> (configuration: FB01ConfigurationData, systemChannel: Int) {
+        let candidates = try configurationCandidates(from: artifact)
+        guard let candidate = candidates.first else {
+            throw FB01AppError.noConfigurationSource
+        }
+        return (candidate.configuration, candidate.systemChannel)
+    }
+
+    private static func configurationCandidates(from artifact: FB01Artifact) throws -> [ConfigurationDocumentCandidate] {
+        var candidates: [ConfigurationDocumentCandidate] = []
         for message in artifact.messages {
             switch message {
             case let .currentConfigurationDump(systemChannel, packet):
-                return (try FB01ConfigurationData(bytes: packet.payload), systemChannel)
-            case let .configurationDump(systemChannel, _, packet):
-                return (try FB01ConfigurationData(bytes: packet.payload), systemChannel)
+                let configuration = try FB01ConfigurationData(bytes: packet.payload)
+                candidates.append(ConfigurationDocumentCandidate(
+                    title: "Current Configuration: \(configuration.name.isEmpty ? "Untitled" : configuration.name)",
+                    configuration: configuration,
+                    systemChannel: systemChannel
+                ))
+            case let .configurationDump(systemChannel, number, packet):
+                let configuration = try FB01ConfigurationData(bytes: packet.payload)
+                candidates.append(ConfigurationDocumentCandidate(
+                    title: "Configuration \(number + 1): \(configuration.name.isEmpty ? "Untitled" : configuration.name)\(number >= 16 ? " Read Only" : "")",
+                    configuration: configuration,
+                    systemChannel: systemChannel
+                ))
             default:
                 break
             }
         }
-        throw FB01AppError.noConfigurationSource
+        return candidates
+    }
+
+    private static func chooseConfigurationCandidate(_ candidates: [ConfigurationDocumentCandidate], title: String) -> ConfigurationDocumentCandidate? {
+        guard candidates.count > 1 else {
+            return candidates.first
+        }
+
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "This SysEx file contains multiple configurations. Choose the one to open in this document window."
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Cancel")
+
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for candidate in candidates {
+            popup.addItem(withTitle: candidate.title)
+        }
+        alert.accessoryView = labelledEditorPopup(label: "Config:", popup: popup)
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+        return candidates[popup.indexOfSelectedItem]
     }
 
     private static func chooseFetchOptions(title: String, actionTitle: String) -> ConfigurationFetchOptions? {
@@ -1527,6 +1717,14 @@ final class DocumentModel: ObservableObject {
         selectedVoiceContext != nil
     }
 
+    var canOpenSelectedVoiceAsDocument: Bool {
+        selectedVoiceContext != nil
+    }
+
+    var canOpenSelectedConfigurationAsDocument: Bool {
+        selectedSource?.editableConfigurationPayload != nil
+    }
+
     var canResetSelectedVoice: Bool {
         guard let context = selectedVoiceContext,
               let source = sources.first(where: { $0.id == context.sourceID }) else {
@@ -1559,6 +1757,21 @@ final class DocumentModel: ObservableObject {
             return "System"
         }
         return selectedSource?.title
+    }
+
+    func selectedVoiceDocumentPayload() -> (voice: FB01VoiceData, systemChannel: Int)? {
+        guard let context = selectedVoiceContext else {
+            return nil
+        }
+        return (context.voice, context.systemChannel)
+    }
+
+    func selectedConfigurationDocumentPayload() -> (configuration: FB01ConfigurationData, systemChannel: Int)? {
+        guard let source = selectedSource,
+              let configuration = source.editableConfigurationPayload else {
+            return nil
+        }
+        return (configuration, source.configurationSystemChannel ?? systemChannel)
     }
 
     private var selectedVoiceContext: (sourceID: LibrarySource.ID, systemChannel: Int, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary])? {
@@ -4958,6 +5171,40 @@ struct VoiceDocumentWindow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(document.title)
+        .toolbar {
+            ToolbarItemGroup {
+                Button {
+                    document.save()
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .help("Save voice document")
+
+                Button {
+                    document.fetchFromDevice(device: device)
+                } label: {
+                    Label("Fetch", systemImage: "arrow.down.circle")
+                }
+                .help("Fetch into this voice document")
+                .disabled(device.isBusy)
+
+                Button {
+                    document.storeToDevice(device: device)
+                } label: {
+                    Label("Store", systemImage: "externaldrive.badge.plus")
+                }
+                .help("Store this voice document to the FB-01")
+                .disabled(device.isBusy)
+
+                Button {
+                    document.reset()
+                } label: {
+                    Label("Revert", systemImage: "arrow.uturn.backward")
+                }
+                .help("Revert to last saved voice")
+                .disabled(!document.isEdited)
+            }
+        }
         .background(DocumentWindowCloseGuard(
             isEdited: { document.isEdited },
             title: { document.title },
@@ -5071,6 +5318,40 @@ struct ConfigurationDocumentWindow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(document.title)
+        .toolbar {
+            ToolbarItemGroup {
+                Button {
+                    document.save()
+                } label: {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .help("Save configuration document")
+
+                Button {
+                    document.fetchFromDevice(device: device)
+                } label: {
+                    Label("Fetch", systemImage: "arrow.down.circle")
+                }
+                .help("Fetch into this configuration document")
+                .disabled(device.isBusy)
+
+                Button {
+                    document.storeToDevice(device: device)
+                } label: {
+                    Label("Store", systemImage: "externaldrive.badge.plus")
+                }
+                .help("Store this configuration document to the FB-01")
+                .disabled(device.isBusy)
+
+                Button {
+                    document.reset()
+                } label: {
+                    Label("Revert", systemImage: "arrow.uturn.backward")
+                }
+                .help("Revert to last saved configuration")
+                .disabled(!document.isEdited)
+            }
+        }
         .background(DocumentWindowCloseGuard(
             isEdited: { document.isEdited },
             title: { document.title },
@@ -5100,15 +5381,26 @@ struct DocumentStatusFooter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
+                Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.red)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.red.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
             }
 
             if let statusMessage {
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Label(statusMessage, systemImage: statusMessage.localizedCaseInsensitiveContains("confirmed") ? "checkmark.seal.fill" : "info.circle")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(statusMessage.localizedCaseInsensitiveContains("confirmed") ? .green : .secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        (statusMessage.localizedCaseInsensitiveContains("confirmed") ? Color.green : Color.secondary).opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
             }
         }
     }
