@@ -110,6 +110,11 @@ struct FB01EditorApplication: App {
                     document.storeSelectedConfigurationToDeviceSlot()
                 }
                 .disabled(!document.canStoreSelectedConfiguration)
+
+                Button("Store and Confirm Selected Configuration...") {
+                    document.storeAndConfirmSelectedConfigurationToDeviceSlot()
+                }
+                .disabled(!document.canStoreSelectedConfiguration)
             }
         }
     }
@@ -1085,10 +1090,51 @@ final class DocumentModel: ObservableObject {
             return
         }
 
+        guard let options = chooseConfigurationStoreOptions(
+            source: selectedSource,
+            requiresConfirmation: false
+        ) else {
+            return
+        }
+
+        storeConfigurationPayload(
+            payload,
+            sourceTitle: selectedSource.title,
+            systemChannel: selectedSource.configurationSystemChannel ?? 0,
+            slot: options.slot,
+            backupURL: options.backupURL,
+            confirmAfterStore: options.confirmAfterStore
+        )
+    }
+
+    func storeAndConfirmSelectedConfigurationToDeviceSlot() {
+        guard let selectedSource,
+              let payload = selectedSource.editableConfigurationPayload else {
+            return
+        }
+
+        guard let options = chooseConfigurationStoreOptions(
+            source: selectedSource,
+            requiresConfirmation: true
+        ) else {
+            return
+        }
+
+        storeConfigurationPayload(
+            payload,
+            sourceTitle: selectedSource.title,
+            systemChannel: selectedSource.configurationSystemChannel ?? 0,
+            slot: options.slot,
+            backupURL: options.backupURL,
+            confirmAfterStore: true
+        )
+    }
+
+    private func chooseConfigurationStoreOptions(source selectedSource: LibrarySource, requiresConfirmation: Bool) -> ConfigurationStoreOptions? {
         let alert = NSAlert()
-        alert.messageText = "Store Configuration to FB-01 Slot"
+        alert.messageText = requiresConfirmation ? "Store and Confirm Configuration to FB-01 Slot" : "Store Configuration to FB-01 Slot"
         alert.informativeText = "Choose a writable configuration slot. This permanently overwrites that slot on the FB-01 after first sending the selected configuration to the current edit buffer. Fetch and save a backup of the destination slot before continuing unless you are certain it can be replaced."
-        alert.addButton(withTitle: "Store and Overwrite")
+        alert.addButton(withTitle: requiresConfirmation ? "Store, Overwrite, and Confirm" : "Store and Overwrite")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
@@ -1104,30 +1150,148 @@ final class DocumentModel: ObservableObject {
         if let storedNumber = selectedSource.storedConfigurationNumber, storedNumber < 16 {
             popup.selectItem(at: storedNumber)
         }
+        let backupCheckbox = NSButton(checkboxWithTitle: "Fetch and save a backup of the destination slot before overwriting", target: nil, action: nil)
+        backupCheckbox.state = .on
+        let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored slot after writing and compare it to the source", target: nil, action: nil)
+        confirmCheckbox.state = requiresConfirmation ? .on : .off
+        confirmCheckbox.isEnabled = !requiresConfirmation
         stack.addArrangedSubview(labelledPopup(label: "Overwrite slot:", popup: popup))
+        stack.addArrangedSubview(backupCheckbox)
+        stack.addArrangedSubview(confirmCheckbox)
         stack.addArrangedSubview(makeWarningLabel("Writable slots are 1-16. Configurations 17-20 are read only and are intentionally unavailable here."))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
-            return
+            return nil
         }
 
         let slot = popup.indexOfSelectedItem
-        do {
-            let currentMessage = FB01SysExMessage.currentConfigurationDump(
-                systemChannel: selectedSource.configurationSystemChannel ?? 0,
-                packet: try FB01SysExPacket(payload: payload.bytes)
-            )
-            let storeCommand = FB01SysExMessage.command(.storeCurrentConfiguration(
-                systemChannel: selectedSource.configurationSystemChannel ?? 0,
-                number: slot
-            ))
-            let messages = try [currentMessage.bytes, storeCommand.bytes]
-            sendMIDI(messages, statusMessage: "Stored configuration to slot \(slot + 1) on \(selectedDestinationName).")
-        } catch {
-            errorMessage = "Store configuration failed: \(error)"
-            statusMessage = nil
+        var backupURL: URL?
+        if backupCheckbox.state == .on {
+            guard let url = chooseConfigurationBackupURL(slot: slot) else {
+                return nil
+            }
+            backupURL = url
         }
+
+        return ConfigurationStoreOptions(
+            slot: slot,
+            backupURL: backupURL,
+            confirmAfterStore: confirmCheckbox.state == .on || requiresConfirmation
+        )
+    }
+
+    private func chooseConfigurationBackupURL(slot: Int) -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.sysex]
+        panel.directoryURL = preferredSaveDirectoryURL()
+        panel.nameFieldStringValue = "configuration-\(slot + 1)-backup.syx"
+        panel.message = "Choose where to save the current contents of Configuration \(slot + 1) before overwriting it."
+        panel.prompt = "Save Backup"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return nil
+        }
+
+        rememberSaveDirectory(for: url)
+        return url
+    }
+
+    private func storeConfigurationPayload(
+        _ payload: FB01ConfigurationData,
+        sourceTitle: String,
+        systemChannel: Int,
+        slot: Int,
+        backupURL: URL?,
+        confirmAfterStore: Bool
+    ) {
+        guard !isBusy else { return }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
+        isFetchingFromDevice = true
+        statusMessage = backupURL == nil
+            ? "Storing configuration to slot \(slot + 1)..."
+            : "Backing up configuration \(slot + 1) before storing..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let storeMessages = try storeConfigurationMessages(payload: payload, systemChannel: systemChannel, slot: slot)
+                let backupArtifact = try await Task.detached(priority: .userInitiated) { () -> FB01Artifact? in
+                    if let backupURL {
+                        let backupBytes = try FB01MIDI.request(
+                            .configuration(slot + 1),
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 8
+                        )
+                        let artifact = try FB01Artifact(sysexBytes: backupBytes)
+                        try artifact.writeSysEx(to: backupURL)
+                        try await Task.sleep(for: .milliseconds(400))
+                        return artifact
+                    }
+                    return nil
+                }.value
+
+                let response = try await Task.detached(priority: .userInitiated) { () -> [[UInt8]] in
+                    try FB01MIDI.sendSysEx(
+                        storeMessages,
+                        destinationIndex: destinationIndex,
+                        delayBetweenMessages: 0.35
+                    )
+                    guard confirmAfterStore else {
+                        return []
+                    }
+                    try await Task.sleep(for: .milliseconds(800))
+                    return [
+                        try FB01MIDI.request(
+                            .configuration(slot + 1),
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 8
+                        ),
+                    ]
+                }.value
+
+                let backupText = backupArtifact == nil ? "" : " Backup saved."
+                if confirmAfterStore {
+                    if let confirmedConfiguration = try storedConfigurationPayload(from: response, slot: slot),
+                       confirmedConfiguration.bytes == payload.bytes {
+                        statusMessage = "FB-01 confirmed \(sourceTitle) stored to configuration \(slot + 1) on \(destinationName).\(backupText)"
+                    } else {
+                        statusMessage = "Stored \(sourceTitle) to configuration \(slot + 1), but fetched data did not match exactly.\(backupText)"
+                    }
+                } else {
+                    statusMessage = "Stored \(sourceTitle) to configuration \(slot + 1) on \(destinationName).\(backupText)"
+                }
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store configuration failed: \(error)"
+            }
+
+            isFetchingFromDevice = false
+        }
+    }
+
+    func storeConfigurationMessages(payload: FB01ConfigurationData, systemChannel: Int, slot: Int) throws -> [[UInt8]] {
+        guard (0...15).contains(slot) else {
+            throw FB01AppError.readOnlyConfigurationSlot
+        }
+
+        let currentMessage = FB01SysExMessage.currentConfigurationDump(
+            systemChannel: systemChannel,
+            packet: try FB01SysExPacket(payload: payload.bytes)
+        )
+        let storeCommand = FB01SysExMessage.command(.storeCurrentConfiguration(
+            systemChannel: systemChannel,
+            number: slot
+        ))
+        return try [currentMessage.bytes, storeCommand.bytes]
     }
 
     func sendVoiceToInstrument(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
@@ -1815,15 +1979,15 @@ final class DocumentModel: ObservableObject {
         return "Voice \(summary.number) - \(name)\(edited ? " (LOCAL EDIT)" : "")"
     }
 
-    private func configurationSlotMenuTitle(slot: Int) -> String {
+    func configurationSlotMenuTitle(slot: Int) -> String {
         let userNumber = slot + 1
         guard let source = sources.first(where: { $0.storedConfigurationNumber == slot }),
               let configuration = source.editableConfigurationPayload else {
-            return "Configuration \(userNumber)"
+            return "Configuration \(userNumber) - unknown current contents"
         }
         let name = configuration.name.isEmpty ? "Untitled" : configuration.name
-        let edited = source.isEdited ? " (LOCAL EDIT)" : ""
-        return "Configuration \(userNumber) - \(name)\(edited)"
+        let state = source.isEdited ? "LOCAL EDIT" : source.origin.displayName
+        return "Configuration \(userNumber) - \(name) (\(state))"
     }
 
     private func voiceDisplayName(_ voice: FB01VoiceData) -> String {
@@ -1901,6 +2065,18 @@ final class DocumentModel: ObservableObject {
         return nil
     }
 
+    private func storedConfigurationPayload(from messages: [[UInt8]], slot: Int) throws -> FB01ConfigurationData? {
+        for bytes in messages {
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            for message in artifact.messages {
+                if case let .configurationDump(_, number, packet) = message, number == slot {
+                    return try FB01ConfigurationData(bytes: packet.payload)
+                }
+            }
+        }
+        return nil
+    }
+
     private func sendMIDI(
         _ messages: [[UInt8]],
         delayBetweenMessages: TimeInterval = 0.2,
@@ -1961,6 +2137,13 @@ enum LibrarySourceOrigin: String, Equatable {
 
 enum FB01AppError: Error {
     case noConfigurationSource
+    case readOnlyConfigurationSlot
+}
+
+struct ConfigurationStoreOptions {
+    var slot: Int
+    var backupURL: URL?
+    var confirmAfterStore: Bool
 }
 
 struct LibrarySource: Identifiable, Equatable {

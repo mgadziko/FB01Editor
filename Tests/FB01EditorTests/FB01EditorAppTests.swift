@@ -122,6 +122,51 @@ import Testing
     #expect(try FB01SysExMessage(bytes: messages[1]) == .command(.requestCurrentConfiguration(systemChannel: 3)))
 }
 
+@MainActor
+@Test func storeConfigurationMessagesSendCurrentThenStoreWritableSlot() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    let configuration = try #require(source.editableConfigurationPayload)
+
+    let messages = try model.storeConfigurationMessages(payload: configuration, systemChannel: 1, slot: 15)
+    #expect(messages.count == 2)
+
+    guard case let .currentConfigurationDump(systemChannel, packet) = try FB01SysExMessage(bytes: messages[0]) else {
+        Issue.record("Expected current configuration send dump")
+        return
+    }
+    #expect(systemChannel == 1)
+    #expect(packet.payload == configuration.bytes)
+    #expect(try FB01SysExMessage(bytes: messages[1]) == .command(.storeCurrentConfiguration(systemChannel: 1, number: 15)))
+}
+
+@MainActor
+@Test func storeConfigurationMessagesRejectReadOnlySlots() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    let configuration = try #require(source.editableConfigurationPayload)
+
+    #expect(throws: FB01AppError.self) {
+        _ = try model.storeConfigurationMessages(payload: configuration, systemChannel: 0, slot: 16)
+    }
+}
+
+@MainActor
+@Test func configurationSlotMenuTitleShowsKnownNamesAndUnknowns() throws {
+    let model = DocumentModel()
+    let source = try storedConfigurationSource(number: 2, name: "SLOT3", origin: .liveFetch)
+    model.sources = [source]
+
+    #expect(model.configurationSlotMenuTitle(slot: 2) == "Configuration 3 - SLOT3 (Fetched from FB-01)")
+    #expect(model.configurationSlotMenuTitle(slot: 7) == "Configuration 8 - unknown current contents")
+
+    var editedSource = source
+    let configuration = try #require(editedSource.editableConfigurationPayload)
+    editedSource.editedConfiguration = try configuration.settingName("EDIT3")
+    model.sources = [editedSource]
+    #expect(model.configurationSlotMenuTitle(slot: 2) == "Configuration 3 - EDIT3 (LOCAL EDIT)")
+}
+
 private func fixtureConfigurationSource(origin: LibrarySourceOrigin) throws -> LibrarySource {
     let fixtureURL = Bundle.module.url(
         forResource: "current-configuration-single",
@@ -132,6 +177,22 @@ private func fixtureConfigurationSource(origin: LibrarySourceOrigin) throws -> L
         title: "Current Configuration",
         subtitle: origin == .liveFetch ? "FB-01 Live Fetch" : "current-configuration-single.syx",
         artifact: try FB01Artifact.readSysEx(from: fixtureURL),
+        origin: origin
+    )
+}
+
+private func storedConfigurationSource(number: Int, name: String, origin: LibrarySourceOrigin) throws -> LibrarySource {
+    let current = try fixtureConfigurationSource(origin: origin)
+    let configuration = try #require(current.editableConfigurationPayload).settingName(name)
+    let artifact = FB01Artifact(message: .configurationDump(
+        systemChannel: 0,
+        number: number,
+        packet: try FB01SysExPacket(payload: configuration.bytes)
+    ))
+    return LibrarySource(
+        title: "Configuration \(number + 1)",
+        subtitle: "FB-01 Stored Configuration",
+        artifact: artifact,
         origin: origin
     )
 }
