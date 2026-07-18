@@ -805,6 +805,20 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func playVoiceTestNotes() {
+        let noteMessages: [[UInt8]] = [60, 64, 67].flatMap { note in
+            [
+                [0x90, UInt8(note), 100],
+                [0x80, UInt8(note), 0],
+            ]
+        }
+        sendMIDI(
+            noteMessages,
+            delayBetweenMessages: 0.35,
+            statusMessage: "Played test notes on \(selectedDestinationName)."
+        )
+    }
+
     private func load(urls: [URL]) {
         var loadedSources: [LibrarySource] = []
         var failures: [String] = []
@@ -1072,7 +1086,11 @@ final class DocumentModel: ObservableObject {
         return stack
     }
 
-    private func sendMIDI(_ messages: [[UInt8]], statusMessage successMessage: String) {
+    private func sendMIDI(
+        _ messages: [[UInt8]],
+        delayBetweenMessages: TimeInterval = 0.2,
+        statusMessage successMessage: String
+    ) {
         guard !isBusy else { return }
 
         let destinationIndex = selectedDestinationIndex
@@ -1083,7 +1101,11 @@ final class DocumentModel: ObservableObject {
         Task {
             do {
                 try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendSysEx(messages, destinationIndex: destinationIndex)
+                    try FB01MIDI.sendSysEx(
+                        messages,
+                        destinationIndex: destinationIndex,
+                        delayBetweenMessages: delayBetweenMessages
+                    )
                 }.value
                 statusMessage = successMessage
                 errorMessage = nil
@@ -2261,6 +2283,12 @@ struct VoiceDetailView: View {
                     document.storeVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
                 } label: {
                     Label("Store", systemImage: "externaldrive.badge.plus")
+                }
+                .disabled(document.isBusy)
+                Button {
+                    document.playVoiceTestNotes()
+                } label: {
+                    Label("Play Test", systemImage: "speaker.wave.2")
                 }
                 .disabled(document.isBusy)
                 Button {
