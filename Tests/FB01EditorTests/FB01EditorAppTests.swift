@@ -51,6 +51,19 @@ import Testing
 }
 
 @MainActor
+@Test func editorDocumentWorkspaceAppliesInitialStatusMessages() throws {
+    let workspace = EditorDocumentWorkspace()
+    let voiceID = workspace.createVoiceDocument(statusMessage: "Created from selected library voice.")
+    let configurationID = workspace.createConfigurationDocument(statusMessage: "Created from selected library configuration.")
+
+    let voice = try #require(workspace.voiceDocument(id: voiceID))
+    let configuration = try #require(workspace.configurationDocument(id: configurationID))
+
+    #expect(voice.statusMessage == "Created from selected library voice.")
+    #expect(configuration.statusMessage == "Created from selected library configuration.")
+}
+
+@MainActor
 @Test func editorDocumentTitlesShowBusyAndUnsavedState() throws {
     var voiceData = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
     voiceData = try voiceData.settingName("TITLE")
@@ -90,6 +103,19 @@ import Testing
 }
 
 @MainActor
+@Test func selectedLibraryVoiceDocumentCreationIsDisabledWhileBusy() throws {
+    let model = DocumentModel()
+    let source = try fixtureVoiceBankSource()
+    model.sources = [source]
+    model.selectedSourceID = source.id
+
+    #expect(model.canOpenSelectedVoiceAsDocument)
+
+    model.isFetchingFromDevice = true
+    #expect(!model.canOpenSelectedVoiceAsDocument)
+}
+
+@MainActor
 @Test func selectedLibraryVoicePayloadIsNilWithoutVoiceSelection() throws {
     let model = DocumentModel()
     let source = try fixtureConfigurationSource(origin: .liveFetch)
@@ -110,6 +136,19 @@ import Testing
 
     #expect(payload.configuration.name == "single")
     #expect(payload.systemChannel == 0)
+}
+
+@MainActor
+@Test func selectedLibraryConfigurationDocumentCreationIsDisabledWhileBusy() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    model.sources = [source]
+    model.selectedSourceID = source.id
+
+    #expect(model.canOpenSelectedConfigurationAsDocument)
+
+    model.isFetchingConfigurations = true
+    #expect(!model.canOpenSelectedConfigurationAsDocument)
 }
 
 @MainActor

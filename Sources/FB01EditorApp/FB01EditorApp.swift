@@ -117,6 +117,8 @@ struct ActiveEditorDocumentActions {
     var reset: () -> Void
     var importFromDisk: () -> Void
     var importFromLibrary: (DocumentModel) -> Void
+    var canImportFromLibrary: (DocumentModel) -> Bool
+    var importFromLibraryTitle: String
     var fetchFromDevice: (DocumentModel) -> Void
     var storeToDevice: (DocumentModel) -> Void
     var isEdited: Bool
@@ -166,17 +168,25 @@ struct EditorDocumentCommands: View {
 
         Divider()
 
-        Button("Open Selected Voice as Document") {
+        Button("New Voice Document from Selected Library Voice") {
             if let payload = document.selectedVoiceDocumentPayload() {
-                let id = workspace.createVoiceDocument(voice: payload.voice, systemChannel: payload.systemChannel)
+                let id = workspace.createVoiceDocument(
+                    voice: payload.voice,
+                    systemChannel: payload.systemChannel,
+                    statusMessage: "Created from selected library voice."
+                )
                 openWindow(id: "voice-document", value: id)
             }
         }
         .disabled(!document.canOpenSelectedVoiceAsDocument)
 
-        Button("Open Selected Configuration as Document") {
+        Button("New Configuration Document from Selected Library Configuration") {
             if let payload = document.selectedConfigurationDocumentPayload() {
-                let id = workspace.createConfigurationDocument(configuration: payload.configuration, systemChannel: payload.systemChannel)
+                let id = workspace.createConfigurationDocument(
+                    configuration: payload.configuration,
+                    systemChannel: payload.systemChannel,
+                    statusMessage: "Created from selected library configuration."
+                )
                 openWindow(id: "configuration-document", value: id)
             }
         }
@@ -225,10 +235,10 @@ struct EditorDocumentCommands: View {
         }
         .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true)
 
-        Button("Import Selected Library Item Into Current Document") {
+        Button(activeDocumentActions?.importFromLibraryTitle ?? "Import Selected Library Item Into Current Document") {
             activeDocumentActions?.importFromLibrary(document)
         }
-        .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true)
+        .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true || activeDocumentActions?.canImportFromLibrary(document) != true)
 
         Button("Fetch Into Current Document...") {
             activeDocumentActions?.fetchFromDevice(document)
@@ -276,14 +286,16 @@ final class EditorDocumentWorkspace: ObservableObject {
     @Published private(set) var voiceDocuments: [UUID: VoiceDocumentModel] = [:]
     @Published private(set) var configurationDocuments: [UUID: ConfigurationDocumentModel] = [:]
 
-    func createVoiceDocument(voice: FB01VoiceData = EditorDocumentTemplates.voice(), systemChannel: Int = 0) -> UUID {
+    func createVoiceDocument(voice: FB01VoiceData = EditorDocumentTemplates.voice(), systemChannel: Int = 0, statusMessage: String? = nil) -> UUID {
         let document = VoiceDocumentModel(voice: voice, systemChannel: systemChannel)
+        document.statusMessage = statusMessage
         voiceDocuments[document.id] = document
         return document.id
     }
 
-    func createConfigurationDocument(configuration: FB01ConfigurationData = EditorDocumentTemplates.configuration(), systemChannel: Int = 0) -> UUID {
+    func createConfigurationDocument(configuration: FB01ConfigurationData = EditorDocumentTemplates.configuration(), systemChannel: Int = 0, statusMessage: String? = nil) -> UUID {
         let document = ConfigurationDocumentModel(configuration: configuration, systemChannel: systemChannel)
+        document.statusMessage = statusMessage
         configurationDocuments[document.id] = document
         return document.id
     }
@@ -1693,11 +1705,11 @@ final class DocumentModel: ObservableObject {
     }
 
     var canOpenSelectedVoiceAsDocument: Bool {
-        selectedVoiceContext != nil
+        selectedVoiceContext != nil && !isBusy
     }
 
     var canOpenSelectedConfigurationAsDocument: Bool {
-        selectedSource?.editableConfigurationPayload != nil
+        selectedSource?.editableConfigurationPayload != nil && !isBusy
     }
 
     var canResetSelectedVoice: Bool {
@@ -5208,6 +5220,8 @@ struct VoiceDocumentWindow: View {
             reset: { document.reset() },
             importFromDisk: { document.importFromDisk() },
             importFromLibrary: { device in document.importFromLibrary(device: device) },
+            canImportFromLibrary: { device in device.selectedVoiceDocumentPayload() != nil },
+            importFromLibraryTitle: "Import Selected Library Voice Into Current Document",
             fetchFromDevice: { device in document.fetchFromDevice(device: device) },
             storeToDevice: { device in document.storeToDevice(device: device) },
             isEdited: document.isEdited,
@@ -5360,6 +5374,8 @@ struct ConfigurationDocumentWindow: View {
             reset: { document.reset() },
             importFromDisk: { document.importFromDisk() },
             importFromLibrary: { device in document.importFromLibrary(device: device) },
+            canImportFromLibrary: { device in device.selectedConfigurationDocumentPayload() != nil },
+            importFromLibraryTitle: "Import Selected Library Configuration Into Current Document",
             fetchFromDevice: { device in document.fetchFromDevice(device: device) },
             storeToDevice: { device in document.storeToDevice(device: device) },
             isEdited: document.isEdited,
