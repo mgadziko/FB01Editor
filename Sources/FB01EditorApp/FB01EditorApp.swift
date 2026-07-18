@@ -4922,11 +4922,16 @@ struct OperatorEnvelopeView: View {
     var operatorData: FB01VoiceOperatorData
     var updateOperator: (FB01VoiceOperatorData) -> Void
     @State private var activeHandle: EnvelopeHandle?
+    @State private var draftOperatorData: FB01VoiceOperatorData?
+
+    private var displayedOperatorData: FB01VoiceOperatorData {
+        draftOperatorData ?? operatorData
+    }
 
     var body: some View {
         GeometryReader { proxy in
             let size = proxy.size
-            let geometry = envelopeGeometry(size: size)
+            let geometry = envelopeGeometry(size: size, operatorData: displayedOperatorData)
 
             Canvas { context, _ in
                 let rect = geometry.rect
@@ -4972,6 +4977,10 @@ struct OperatorEnvelopeView: View {
                         applyDrag(location: value.location, handle: handle, geometry: geometry)
                     }
                     .onEnded { _ in
+                        if let draftOperatorData {
+                            updateOperator(draftOperatorData)
+                        }
+                        draftOperatorData = nil
                         activeHandle = nil
                     }
             )
@@ -4989,7 +4998,7 @@ struct OperatorEnvelopeView: View {
         return rect.width * (0.12 + (1 - normalized) * 0.22)
     }
 
-    private func envelopeGeometry(size: CGSize) -> EnvelopeGeometry {
+    private func envelopeGeometry(size: CGSize, operatorData: FB01VoiceOperatorData) -> EnvelopeGeometry {
         let inset: CGFloat = 8
         let rect = CGRect(
             x: inset,
@@ -5016,32 +5025,37 @@ struct OperatorEnvelopeView: View {
         let rect = geometry.rect
         let clampedX = min(max(location.x, rect.minX), rect.maxX)
         let clampedY = min(max(location.y, rect.minY), rect.maxY)
-        let relativeX = (clampedX - rect.minX) / max(rect.width, 1)
         let relativeY = (clampedY - rect.minY) / max(rect.height, 1)
 
         do {
             let updated: FB01VoiceOperatorData
+            let source = displayedOperatorData
             switch handle {
             case .attack:
-                updated = try operatorData.settingAttackRate(rate(from: relativeX, range: 0...31))
+                let segment = (clampedX - rect.minX) / max(rect.width, 1)
+                updated = try source.settingAttackRate(rate(fromSegmentFraction: segment, maxRate: 31))
             case .decay1:
-                updated = try operatorData.settingDecay1Rate(rate(from: relativeX, range: 0...15))
+                let segment = (clampedX - geometry.attack.x) / max(rect.width, 1)
+                updated = try source.settingDecay1Rate(rate(fromSegmentFraction: segment, maxRate: 15))
             case .sustain:
-                updated = try operatorData
-                    .settingDecay2Rate(rate(from: relativeX, range: 0...31))
+                let segment = (clampedX - geometry.decay1.x) / max(rect.width, 1)
+                updated = try source
+                    .settingDecay2Rate(rate(fromSegmentFraction: segment, maxRate: 31))
                     .settingSustainLevel(level(from: relativeY))
             case .release:
-                updated = try operatorData.settingReleaseRate(rate(from: 1 - relativeX, range: 0...15))
+                let segment = (rect.maxX - clampedX) / max(rect.width, 1)
+                updated = try source.settingReleaseRate(rate(fromSegmentFraction: segment, maxRate: 15))
             }
-            updateOperator(updated)
+            draftOperatorData = updated
         } catch {
             return
         }
     }
 
-    private func rate(from value: CGFloat, range: ClosedRange<Int>) -> Int {
-        let clamped = min(max(value, 0), 1)
-        return min(max(Int((clamped * CGFloat(range.upperBound)).rounded()), range.lowerBound), range.upperBound)
+    private func rate(fromSegmentFraction value: CGFloat, maxRate: Int) -> Int {
+        let clamped = min(max(value, 0.02), 0.5)
+        let normalized = 1 - ((clamped - 0.12) / 0.22)
+        return min(max(Int((normalized * CGFloat(maxRate)).rounded()), 0), maxRate)
     }
 
     private func level(from value: CGFloat) -> Int {
