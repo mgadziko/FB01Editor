@@ -2155,16 +2155,18 @@ final class DocumentModel: ObservableObject {
     }
 
     private func labelledPopup(label: String, popup: NSPopUpButton) -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.spacing = 8
-        stack.alignment = .centerY
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 30))
 
         let text = NSTextField(labelWithString: label)
-        text.frame = NSRect(x: 0, y: 0, width: 82, height: 18)
-        stack.addArrangedSubview(text)
-        stack.addArrangedSubview(popup)
-        return stack
+        text.frame = NSRect(x: 0, y: 6, width: 92, height: 18)
+        text.alignment = .right
+
+        popup.frame = NSRect(x: 104, y: 2, width: 326, height: 26)
+        popup.autoresizingMask = [.width]
+
+        container.addSubview(text)
+        container.addSubview(popup)
+        return container
     }
 
     private func makeWarningLabel(_ string: String) -> NSTextField {
@@ -2196,7 +2198,7 @@ final class DocumentModel: ObservableObject {
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 326, height: 26), pullsDown: false)
         for summary in candidates {
             popup.addItem(withTitle: localVoiceSlotTitle(sourceID: sourceID, summary: summary))
             popup.lastItem?.representedObject = summary.number
@@ -2204,6 +2206,8 @@ final class DocumentModel: ObservableObject {
 
         if let currentIndex = candidates.firstIndex(where: { $0.number > currentNumber }) {
             popup.selectItem(at: currentIndex)
+        } else {
+            popup.selectItem(at: 0)
         }
 
         alert.accessoryView = labelledPopup(label: "Target slot:", popup: popup)
