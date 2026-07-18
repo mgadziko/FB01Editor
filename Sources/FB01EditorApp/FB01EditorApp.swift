@@ -832,18 +832,8 @@ final class DocumentModel: ObservableObject {
         }
     }
 
-    func playVoiceTestNotes() {
-        let noteMessages: [[UInt8]] = [60, 64, 67].flatMap { note in
-            [
-                [0x90, UInt8(note), 100],
-                [0x80, UInt8(note), 0],
-            ]
-        }
-        sendMIDI(
-            noteMessages,
-            delayBetweenMessages: 0.35,
-            statusMessage: "Played test notes on \(selectedDestinationName)."
-        )
+    func playVoiceTestNotes(voice: FB01VoiceData, systemChannel: Int) {
+        playVoiceTestNotes(voice: voice, systemChannel: systemChannel, instrument: 0)
     }
 
     private func load(urls: [URL]) {
@@ -1140,6 +1130,43 @@ final class DocumentModel: ObservableObject {
             } catch {
                 statusMessage = nil
                 errorMessage = "Voice verify failed: \(error)"
+            }
+
+            isFetchingFromDevice = false
+        }
+    }
+
+    private func playVoiceTestNotes(voice: FB01VoiceData, systemChannel: Int, instrument: Int) {
+        guard !isBusy else { return }
+
+        let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
+        isFetchingFromDevice = true
+        statusMessage = "Sending voice and playing test notes..."
+        errorMessage = nil
+
+        Task {
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument)
+                    let noteMessages: [[UInt8]] = [60, 64, 67].flatMap { note in
+                        [
+                            [0x90, UInt8(note), 100],
+                            [0x80, UInt8(note), 0],
+                        ]
+                    }
+                    try FB01MIDI.sendSysEx(
+                        [try artifact.sysexBytes] + noteMessages,
+                        destinationIndex: destinationIndex,
+                        delayBetweenMessages: 0.35
+                    )
+                }.value
+
+                statusMessage = "Played \(voice.name.isEmpty ? "selected voice" : voice.name) on \(destinationName)."
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Play test failed: \(error)"
             }
 
             isFetchingFromDevice = false
@@ -2365,7 +2392,7 @@ struct VoiceDetailView: View {
                 }
                 .disabled(document.isBusy)
                 Button {
-                    document.playVoiceTestNotes()
+                    document.playVoiceTestNotes(voice: editableVoice, systemChannel: systemChannel)
                 } label: {
                     Label("Play Test", systemImage: "speaker.wave.2")
                 }
