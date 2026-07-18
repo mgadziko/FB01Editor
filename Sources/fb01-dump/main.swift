@@ -59,6 +59,13 @@ struct RequestOptions {
     var bank = 0
 }
 
+struct SystemOptions {
+    var destinationQuery: String?
+    var systemChannel = 0
+    var protect: FB01MemoryProtect?
+    var masterOutputLevel: Int?
+}
+
 enum DumpRequestKind {
     case unitID
     case currentConfiguration
@@ -338,6 +345,48 @@ func parseRequestOptions(_ arguments: ArraySlice<String>) throws -> RequestOptio
     return options
 }
 
+func parseSystemOptions(_ arguments: ArraySlice<String>) throws -> SystemOptions {
+    var options = SystemOptions()
+    var index = arguments.startIndex
+
+    while index < arguments.endIndex {
+        let argument = arguments[index]
+        switch argument {
+        case "--destination", "-d":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.destinationQuery = arguments[valueIndex]
+            index = arguments.index(after: valueIndex)
+        case "--system-channel":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.systemChannel = Int(arguments[valueIndex]) ?? options.systemChannel
+            index = arguments.index(after: valueIndex)
+        case "--protect":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            switch arguments[valueIndex].lowercased() {
+            case "on", "1":
+                options.protect = .on
+            case "off", "0":
+                options.protect = .off
+            default:
+                throw FB01DumpError.unknownArgument(arguments[valueIndex])
+            }
+            index = arguments.index(after: valueIndex)
+        case "--master-output":
+            let valueIndex = arguments.index(after: index)
+            guard valueIndex < arguments.endIndex else { throw FB01DumpError.missingValue(argument) }
+            options.masterOutputLevel = Int(arguments[valueIndex])
+            index = arguments.index(after: valueIndex)
+        default:
+            throw FB01DumpError.unknownArgument(argument)
+        }
+    }
+
+    return options
+}
+
 func classify(_ bytes: [UInt8]) -> String {
     do {
         let artifact = try FB01Artifact(sysexBytes: bytes)
@@ -493,6 +542,44 @@ func requestDump(kind: DumpRequestKind, options: RequestOptions) throws {
     }
 }
 
+func sendSystemCommands(options: SystemOptions) throws {
+    let destinations = availableDestinations()
+    let destination = try selectedDestination(matching: options.destinationQuery, in: destinations)
+    var messages: [[UInt8]] = []
+
+    if let protect = options.protect {
+        messages.append(try FB01Command.setMemoryProtect(systemChannel: options.systemChannel, protect).bytes)
+    }
+
+    if let masterOutputLevel = options.masterOutputLevel {
+        let bounded = min(max(masterOutputLevel, 0), 127)
+        messages.append(try FB01Command.setMasterOutputLevel(systemChannel: options.systemChannel, level: UInt8(bounded)).bytes)
+    }
+
+    guard !messages.isEmpty else {
+        throw FB01DumpError.unknownArgument("system command requires --protect or --master-output")
+    }
+
+    var client = MIDIClientRef()
+    try check(MIDIClientCreateWithBlock("FB01DumpSystem" as CFString, &client) { notification in
+        let messageID = notification.pointee.messageID.rawValue
+        fputs("CoreMIDI notification: \(messageID)\n", stderr)
+    }, "MIDIClientCreateWithBlock")
+    defer { MIDIClientDispose(client) }
+
+    var outputPort = MIDIPortRef()
+    try check(MIDIOutputPortCreate(client, "FB01DumpSystemOutput" as CFString, &outputPort), "MIDIOutputPortCreate")
+    defer { MIDIPortDispose(outputPort) }
+
+    print("Sending system command(s) to [\(destination.index)] \(destination.displayName)")
+    for (index, message) in messages.enumerated() {
+        try send(bytes: message, to: destination, outputPort: outputPort)
+        if index < messages.index(before: messages.endIndex) {
+            Thread.sleep(forTimeInterval: 0.35)
+        }
+    }
+}
+
 func printUsage() {
     print("""
     fb01-dump list
@@ -501,8 +588,9 @@ func printUsage() {
     fb01-dump request voice-ram1 [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
     fb01-dump request current-configuration [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
     fb01-dump request unit-id [--system-channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.syx>] [--timeout <seconds>]
+    fb01-dump system [--system-channel <0-15>] [--destination <index-or-name>] [--protect on|off] [--master-output <0-127>]
 
-    FB-01 SysEx helper. `listen` is receive-only. `request` sends only documented dump requests and does not store or write data to the device.
+    FB-01 SysEx helper. `listen` is receive-only. `request` sends only documented dump requests and does not store or write data to the device. `system` sends documented non-store system parameter changes.
     """)
 }
 
@@ -537,6 +625,8 @@ do {
         default:
             throw FB01DumpError.unknownArgument(requestArguments.first ?? "")
         }
+    case "system":
+        try sendSystemCommands(options: try parseSystemOptions(arguments.dropFirst()))
     case "--help", "-h", "help":
         printUsage()
     default:

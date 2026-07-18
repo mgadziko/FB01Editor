@@ -262,6 +262,7 @@ final class DocumentModel: ObservableObject {
     @Published var selectedDestinationIndex = 0
     @Published var selectedVoiceNumbers: [LibrarySource.ID: Int] = [:]
     @Published var sidebarSelection: SidebarSelection = .system
+    @Published var systemChannel = 0
     @Published var systemMemoryProtectEnabled = false
     @Published var systemMasterOutputLevel = 127
 
@@ -272,12 +273,15 @@ final class DocumentModel: ObservableObject {
         static let destinationUniqueID = "FB01Editor.selectedMIDIDestinationUniqueID"
         static let lastLoadDirectory = "FB01Editor.lastLoadDirectory"
         static let lastSaveDirectory = "FB01Editor.lastSaveDirectory"
+        static let systemChannel = "FB01Editor.systemChannel"
     }
 
     init() {
         ensureDefaultFileDirectory()
         selectedSourceIndex = UserDefaults.standard.integer(forKey: DefaultsKey.sourceIndex)
         selectedDestinationIndex = UserDefaults.standard.integer(forKey: DefaultsKey.destinationIndex)
+        let savedSystemChannel = UserDefaults.standard.integer(forKey: DefaultsKey.systemChannel)
+        systemChannel = (0...15).contains(savedSystemChannel) ? savedSystemChannel : 0
         refreshMIDIEndpoints()
     }
 
@@ -408,15 +412,16 @@ final class DocumentModel: ObservableObject {
         sidebarSelection = .system
     }
 
+    func setSystemChannel(_ channel: Int) {
+        systemChannel = min(max(channel, 0), 15)
+        UserDefaults.standard.set(systemChannel, forKey: DefaultsKey.systemChannel)
+    }
+
     func setMemoryProtect(_ enabled: Bool) {
         systemMemoryProtectEnabled = enabled
         do {
-            let command = FB01SysExMessage.command(.setMemoryProtect(
-                systemChannel: 0,
-                enabled ? .on : .off
-            ))
             sendMIDI(
-                [try command.bytes],
+                [try systemMemoryProtectMessageBytes(enabled: enabled)],
                 delayBetweenMessages: 0,
                 statusMessage: "Set FB-01 Protect \(enabled ? "ON" : "OFF") on \(selectedDestinationName)."
             )
@@ -430,12 +435,8 @@ final class DocumentModel: ObservableObject {
         let bounded = min(max(level, 0), 127)
         systemMasterOutputLevel = bounded
         do {
-            let command = FB01SysExMessage.command(.setMasterOutputLevel(
-                systemChannel: 0,
-                level: UInt8(bounded)
-            ))
             sendMIDI(
-                [try command.bytes],
+                [try systemMasterOutputMessageBytes(level: bounded)],
                 delayBetweenMessages: 0,
                 statusMessage: "Set FB-01 master output level to \(bounded) on \(selectedDestinationName)."
             )
@@ -443,6 +444,23 @@ final class DocumentModel: ObservableObject {
             errorMessage = "Set master output failed: \(error)"
             statusMessage = nil
         }
+    }
+
+    func systemMemoryProtectMessageBytes(enabled: Bool) throws -> [UInt8] {
+        let command = FB01SysExMessage.command(.setMemoryProtect(
+            systemChannel: systemChannel,
+            enabled ? .on : .off
+        ))
+        return try command.bytes
+    }
+
+    func systemMasterOutputMessageBytes(level: Int) throws -> [UInt8] {
+        let bounded = min(max(level, 0), 127)
+        let command = FB01SysExMessage.command(.setMasterOutputLevel(
+            systemChannel: systemChannel,
+            level: UInt8(bounded)
+        ))
+        return try command.bytes
     }
 
     func openSysEx() {
@@ -2722,12 +2740,29 @@ struct SystemSettingsView: View {
             VStack(alignment: .leading, spacing: 18) {
                 SummaryPanel(rows: [
                     KeyValueRow("Destination", document.selectedDestinationName),
-                    KeyValueRow("System Channel", "1"),
+                    KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
                     KeyValueRow("Protect", document.systemMemoryProtectEnabled ? "On" : "Off"),
                     KeyValueRow("Master Output", "\(document.systemMasterOutputLevel)"),
                 ])
 
                 HStack(alignment: .top, spacing: 14) {
+                    GroupBox {
+                        Picker("Channel", selection: Binding(
+                            get: { document.systemChannel },
+                            set: { document.setSystemChannel($0) }
+                        )) {
+                            ForEach(0..<16, id: \.self) { channel in
+                                Text("\(channel + 1)").tag(channel)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 170)
+                        .padding(.top, 4)
+                    } label: {
+                        SectionTitle("System Channel")
+                    }
+                    .frame(width: 220, alignment: .topLeading)
+
                     GroupBox {
                         VStack(alignment: .leading, spacing: 12) {
                             Toggle("Memory Protect", isOn: Binding(

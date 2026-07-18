@@ -172,6 +172,30 @@ import Testing
 }
 
 @MainActor
+@Test func systemChannelSelectionClampsToFB01Range() {
+    let model = DocumentModel()
+
+    model.setSystemChannel(12)
+    #expect(model.systemChannel == 12)
+
+    model.setSystemChannel(-1)
+    #expect(model.systemChannel == 0)
+
+    model.setSystemChannel(99)
+    #expect(model.systemChannel == 15)
+}
+
+@MainActor
+@Test func systemControlMessagesUseSelectedSystemChannel() throws {
+    let model = DocumentModel()
+    model.setSystemChannel(4)
+
+    #expect(try model.systemMemoryProtectMessageBytes(enabled: false) == [0xF0, 0x43, 0x75, 0x04, 0x10, 0x21, 0x00, 0xF7])
+    #expect(try model.systemMemoryProtectMessageBytes(enabled: true) == [0xF0, 0x43, 0x75, 0x04, 0x10, 0x21, 0x01, 0xF7])
+    #expect(try model.systemMasterOutputMessageBytes(level: 200) == [0xF0, 0x43, 0x75, 0x04, 0x10, 0x24, 0x7F, 0xF7])
+}
+
+@MainActor
 @Test func configurationSlotMenuTitleShowsKnownNamesAndUnknowns() throws {
     let model = DocumentModel()
     let source = try storedConfigurationSource(number: 2, name: "SLOT3", origin: .liveFetch)
