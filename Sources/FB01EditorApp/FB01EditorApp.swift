@@ -673,6 +673,54 @@ private func showEditorError(title: String, message: String) {
 }
 
 @MainActor
+private final class EditorProgressPanel {
+    private let panel: NSPanel
+    private let progress: NSProgressIndicator
+
+    init(title: String, message: String) {
+        panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 430, height: 150),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = title
+        panel.isReleasedWhenClosed = false
+        panel.center()
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 150))
+        panel.contentView = content
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .boldSystemFont(ofSize: 15)
+        titleLabel.frame = NSRect(x: 24, y: 104, width: 382, height: 22)
+        content.addSubview(titleLabel)
+
+        let messageLabel = NSTextField(wrappingLabelWithString: message)
+        messageLabel.textColor = .secondaryLabelColor
+        messageLabel.font = .systemFont(ofSize: 13)
+        messageLabel.frame = NSRect(x: 24, y: 66, width: 382, height: 36)
+        content.addSubview(messageLabel)
+
+        progress = NSProgressIndicator(frame: NSRect(x: 24, y: 34, width: 382, height: 14))
+        progress.style = .bar
+        progress.isIndeterminate = true
+        content.addSubview(progress)
+    }
+
+    func show() {
+        progress.startAnimation(nil)
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func dismiss() {
+        progress.stopAnimation(nil)
+        panel.orderOut(nil)
+    }
+}
+
+@MainActor
 private func labelledEditorPopup(label: String, popup: NSPopUpButton) -> NSView {
     let container = NSStackView()
     container.orientation = .horizontal
@@ -882,6 +930,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         isBusy = true
         statusMessage = "Reading Bank 1 and Bank 2 voice names from FB-01..."
         errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Reading Voice Names",
+            message: "Reading Bank 1 and Bank 2 from the FB-01 so the Fetch dialog can show current RAM voice names."
+        )
+        progressPanel.show()
 
         Task {
             let nameLookup = await Task.detached(priority: .userInitiated) {
@@ -891,6 +944,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     systemChannel: systemChannel
                 )
             }.value
+            progressPanel.dismiss()
 
             guard let source = Self.chooseFetchSource(
                 title: "Fetch Voice from Device into Current Document",
@@ -1118,6 +1172,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let sourcePopup = NSPopUpButton(frame: .zero, pullsDown: false)
         sourcePopup.addItem(withTitle: "Current Instrument Voice")
         sourcePopup.addItem(withTitle: "Stored Voice Slot")
+        sourcePopup.selectItem(at: 1)
 
         let instrumentPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         for instrument in 1...8 {
@@ -1476,6 +1531,11 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         isBusy = true
         statusMessage = "Reading configuration names from FB-01..."
         errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Reading Configuration Names",
+            message: "Reading writable configuration names from the FB-01 so the Fetch dialog can show current slot names."
+        )
+        progressPanel.show()
 
         Task {
             let nameLookup = await Task.detached(priority: .userInitiated) {
@@ -1485,6 +1545,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                     systemChannel: systemChannel
                 )
             }.value
+            progressPanel.dismiss()
 
             guard let options = Self.chooseFetchOptions(
                 title: "Fetch Configuration from Device into Current Document",
