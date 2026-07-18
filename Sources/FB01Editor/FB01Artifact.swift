@@ -71,6 +71,8 @@ public struct FB01Artifact: Equatable, Sendable {
             return .configurationSet
         case .unitIDDump:
             return .unitID
+        case .deviceStatus:
+            return .rawSysEx
         case .command, .raw:
             return .rawSysEx
         }

@@ -169,6 +169,17 @@ public struct FB01VoiceData: Equatable, Sendable {
         }
     }
 
+    public func replacingOperator(_ operatorData: FB01VoiceOperatorData) throws -> FB01VoiceData {
+        guard (0..<Self.operatorCount).contains(operatorData.index) else {
+            throw FB01SysExError.valueOutOfRange(name: "operator", value: operatorData.index, range: 0...(Self.operatorCount - 1))
+        }
+
+        var copy = bytes
+        let offset = 0x10 + operatorData.index * Self.operatorBlockByteCount
+        copy.replaceSubrange(offset..<(offset + Self.operatorBlockByteCount), with: operatorData.bytes)
+        return try FB01VoiceData(bytes: copy)
+    }
+
     private func settingByte(at offset: Int, value: Int, name: String, range: ClosedRange<Int>) throws -> FB01VoiceData {
         var copy = bytes
         copy[offset] = try FB01.validate(value, name: name, range: range)
@@ -212,6 +223,61 @@ public struct FB01VoiceOperatorData: Equatable, Sendable {
     public var decay2Rate: Int { Int(bytes[0x06] & 0x1F) }
     public var sustainLevel: Int { Int((bytes[0x07] >> 4) & 0x0F) }
     public var releaseRate: Int { Int(bytes[0x07] & 0x0F) }
+
+    public func settingTotalLevel(_ value: Int) throws -> FB01VoiceOperatorData {
+        let level = try FB01.validate(value, name: "totalLevel", range: 0...127)
+        var copy = bytes
+        copy[0x00] = (copy[0x00] & 0x80) | level
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingMultiple(_ value: Int) throws -> FB01VoiceOperatorData {
+        let multiple = try FB01.validate(value, name: "multiple", range: 0...15)
+        var copy = bytes
+        copy[0x03] = (copy[0x03] & 0xF0) | multiple
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingAttackRate(_ value: Int) throws -> FB01VoiceOperatorData {
+        let rate = try FB01.validate(value, name: "attackRate", range: 0...31)
+        var copy = bytes
+        copy[0x04] = (copy[0x04] & 0xE0) | rate
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingCarrier(_ value: Bool) throws -> FB01VoiceOperatorData {
+        var copy = bytes
+        copy[0x05] = value ? (copy[0x05] | 0x80) : (copy[0x05] & 0x7F)
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingDecay1Rate(_ value: Int) throws -> FB01VoiceOperatorData {
+        let rate = try FB01.validate(value, name: "decay1Rate", range: 0...15)
+        var copy = bytes
+        copy[0x05] = (copy[0x05] & 0xF0) | rate
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingDecay2Rate(_ value: Int) throws -> FB01VoiceOperatorData {
+        let rate = try FB01.validate(value, name: "decay2Rate", range: 0...31)
+        var copy = bytes
+        copy[0x06] = (copy[0x06] & 0xE0) | rate
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingSustainLevel(_ value: Int) throws -> FB01VoiceOperatorData {
+        let level = try FB01.validate(value, name: "sustainLevel", range: 0...15)
+        var copy = bytes
+        copy[0x07] = (copy[0x07] & 0x0F) | (level << 4)
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
+
+    public func settingReleaseRate(_ value: Int) throws -> FB01VoiceOperatorData {
+        let rate = try FB01.validate(value, name: "releaseRate", range: 0...15)
+        var copy = bytes
+        copy[0x07] = (copy[0x07] & 0xF0) | rate
+        return FB01VoiceOperatorData(index: index, bytes: copy)
+    }
 }
 
 public struct FB01VoiceBankData: Equatable, Sendable {

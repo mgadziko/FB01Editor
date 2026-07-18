@@ -749,15 +749,15 @@ final class DocumentModel: ObservableObject {
         )
     }
 
-    func sendAndVerifyVoiceToInstrument(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
+    func sendAndConfirmVoiceToInstrument(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
         guard let source = sources.first(where: { $0.id == sourceID }) else {
             return
         }
 
         let alert = NSAlert()
-        alert.messageText = "Send and Verify Voice?"
-        alert.informativeText = "This sends \(voice.name.isEmpty ? "the selected voice" : voice.name) from \(source.title) to a current instrument edit buffer, requests that instrument voice back from the FB-01, and compares the returned bytes. It does not store the voice in a bank slot."
-        alert.addButton(withTitle: "Send and Verify")
+        alert.messageText = "Send and Confirm Voice?"
+        alert.informativeText = "This sends \(voice.name.isEmpty ? "the selected voice" : voice.name) from \(source.title) to a current instrument edit buffer and waits for the FB-01 status response. It does not store the voice in a bank slot."
+        alert.addButton(withTitle: "Send and Confirm")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
@@ -773,7 +773,7 @@ final class DocumentModel: ObservableObject {
         }
 
         let instrument = popup.indexOfSelectedItem
-        sendAndVerifyVoicePayload(voice, systemChannel: systemChannel, instrument: instrument)
+        sendAndConfirmVoicePayload(voice, systemChannel: systemChannel, instrument: instrument)
     }
 
     func storeVoiceToDeviceSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
@@ -830,6 +830,51 @@ final class DocumentModel: ObservableObject {
             errorMessage = "Store voice failed: \(error)"
             statusMessage = nil
         }
+    }
+
+    func storeAndConfirmVoiceToDeviceSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
+        guard let source = sources.first(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Store and Confirm Voice"
+        alert.informativeText = "This sends \(voice.name.isEmpty ? "the selected voice" : voice.name) from \(source.title) to a current instrument edit buffer, stores that instrument voice to a selected FB-01 voice slot, and waits for the FB-01 status response."
+        alert.addButton(withTitle: "Store and Confirm")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let instrumentPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
+        for instrument in 1...8 {
+            instrumentPopup.addItem(withTitle: "Instrument \(instrument)")
+        }
+        instrumentPopup.selectItem(at: min(max(number - 1, 0), 7))
+
+        let voicePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
+        for voiceNumber in 1...96 {
+            voicePopup.addItem(withTitle: "Voice \(voiceNumber)")
+        }
+        voicePopup.selectItem(at: min(max(number - 1, 0), 95))
+
+        stack.addArrangedSubview(labelledPopup(label: "Edit buffer:", popup: instrumentPopup))
+        stack.addArrangedSubview(labelledPopup(label: "Store slot:", popup: voicePopup))
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        storeAndConfirmVoicePayload(
+            voice,
+            systemChannel: systemChannel,
+            instrument: instrumentPopup.indexOfSelectedItem,
+            voiceSlot: voicePopup.indexOfSelectedItem
+        )
     }
 
     func playVoiceTestNotes(voice: FB01VoiceData, systemChannel: Int) {
@@ -1090,46 +1135,84 @@ final class DocumentModel: ObservableObject {
         }
     }
 
-    private func sendAndVerifyVoicePayload(_ voice: FB01VoiceData, systemChannel: Int, instrument: Int) {
+    private func sendAndConfirmVoicePayload(_ voice: FB01VoiceData, systemChannel: Int, instrument: Int) {
         guard !isBusy else { return }
 
         let sourceIndex = selectedSourceIndex
         let destinationIndex = selectedDestinationIndex
         let destinationName = selectedDestinationName
         isFetchingFromDevice = true
-        statusMessage = "Sending and verifying voice..."
+        statusMessage = "Sending voice and waiting for FB-01 status..."
         errorMessage = nil
 
         Task {
             do {
-                let verified = try await Task.detached(priority: .userInitiated) {
+                let status = try await Task.detached(priority: .userInitiated) {
                     let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument)
-                    try FB01MIDI.sendSysEx([try artifact.sysexBytes], destinationIndex: destinationIndex)
-                    try await Task.sleep(nanoseconds: 350_000_000)
-                    let returnedBytes = try FB01MIDI.request(
-                        .instrumentVoice(instrument + 1),
+                    let request = try FB01MIDIRequestKind.instrumentVoice(instrument + 1).bytes(systemChannel: systemChannel)
+                    return try FB01MIDI.sendAndReceive(
+                        [try artifact.sysexBytes, request],
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
-                        systemChannel: systemChannel,
-                        timeout: 8
+                        timeout: 8,
+                        maxMessages: 1,
+                        delayBetweenMessages: 0.35
                     )
-                    let returnedArtifact = try FB01Artifact(sysexBytes: returnedBytes)
-                    guard case let .instrumentVoiceDump(_, _, packet) = returnedArtifact.messages.first else {
-                        return false
-                    }
-                    return try FB01.nibbleDecode(packet.payload) == voice.bytes
                 }.value
 
-                if verified {
-                    statusMessage = "Verified voice in instrument \(instrument + 1) on \(destinationName)."
-                    errorMessage = nil
+                if let code = try deviceStatusCode(from: status) {
+                    statusMessage = "FB-01 confirmed voice in instrument \(instrument + 1) on \(destinationName) (status \(String(format: "0x%02X", code)))."
                 } else {
-                    statusMessage = nil
-                    errorMessage = "Voice verify failed: FB-01 returned different voice data."
+                    statusMessage = "Sent voice to instrument \(instrument + 1); FB-01 returned an unrecognized response."
                 }
+                errorMessage = nil
             } catch {
                 statusMessage = nil
-                errorMessage = "Voice verify failed: \(error)"
+                errorMessage = "Voice confirm failed: \(error)"
+            }
+
+            isFetchingFromDevice = false
+        }
+    }
+
+    private func storeAndConfirmVoicePayload(_ voice: FB01VoiceData, systemChannel: Int, instrument: Int, voiceSlot: Int) {
+        guard !isBusy else { return }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
+        isFetchingFromDevice = true
+        statusMessage = "Storing voice and waiting for FB-01 status..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let status = try await Task.detached(priority: .userInitiated) {
+                    let voiceMessage = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument).messages[0]
+                    let storeCommand = FB01SysExMessage.command(.storeCurrentInstrumentVoice(
+                        systemChannel: systemChannel,
+                        instrument: instrument,
+                        voiceNumber: voiceSlot
+                    ))
+                    return try FB01MIDI.sendAndReceive(
+                        [try voiceMessage.bytes, try storeCommand.bytes],
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        timeout: 8,
+                        maxMessages: 1,
+                        delayBetweenMessages: 0.35
+                    )
+                }.value
+
+                if let code = try deviceStatusCode(from: status) {
+                    statusMessage = "FB-01 confirmed store to voice \(voiceSlot + 1) on \(destinationName) (status \(String(format: "0x%02X", code)))."
+                } else {
+                    statusMessage = "Stored voice \(voiceSlot + 1); FB-01 returned an unrecognized response."
+                }
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store confirm failed: \(error)"
             }
 
             isFetchingFromDevice = false
@@ -1184,6 +1267,18 @@ final class DocumentModel: ObservableObject {
         stack.addArrangedSubview(text)
         stack.addArrangedSubview(popup)
         return stack
+    }
+
+    private func deviceStatusCode(from messages: [[UInt8]]) throws -> UInt8? {
+        for bytes in messages {
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            for message in artifact.messages {
+                if case .deviceStatus(let code) = message {
+                    return code
+                }
+            }
+        }
+        return nil
     }
 
     private func sendMIDI(
@@ -2380,15 +2475,21 @@ struct VoiceDetailView: View {
                 }
                 .disabled(document.isBusy)
                 Button {
-                    document.sendAndVerifyVoiceToInstrument(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
+                    document.sendAndConfirmVoiceToInstrument(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
                 } label: {
-                    Label("Send & Verify", systemImage: "checkmark.seal")
+                    Label("Send & Confirm", systemImage: "checkmark.seal")
                 }
                 .disabled(document.isBusy)
                 Button {
                     document.storeVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
                 } label: {
                     Label("Store", systemImage: "externaldrive.badge.plus")
+                }
+                .disabled(document.isBusy)
+                Button {
+                    document.storeAndConfirmVoiceToDeviceSlot(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
+                } label: {
+                    Label("Store & Confirm", systemImage: "externaldrive.badge.checkmark")
                 }
                 .disabled(document.isBusy)
                 Button {
@@ -2477,7 +2578,10 @@ struct VoiceDetailView: View {
                 }
             )
 
-            OperatorTable(operators: editableVoice.operators)
+            OperatorEditor(
+                operators: editableVoice.operators,
+                updateOperator: updateOperator
+            )
 
             if let editError {
                 Text(editError)
@@ -2577,6 +2681,10 @@ struct VoiceDetailView: View {
         updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
     }
 
+    private func updateOperator(_ operatorData: FB01VoiceOperatorData) {
+        updateVoice { try $0.replacingOperator(operatorData) }
+    }
+
     private func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
         do {
             let editedVoice = try edit(editableVoice)
@@ -2636,116 +2744,125 @@ struct VoiceEditorControls: View {
     var operatorEnabled: [Binding<Bool>]
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-            GridRow {
-                label("Name")
-                TextField("Name", text: $name)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 180)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            GroupBox("Identity") {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                    GridRow {
+                        label("Name")
+                        TextField("Name", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 180)
+                    }
 
-            GridRow {
-                label("Algorithm")
-                Stepper(value: $algorithm, in: 1...8) {
-                    Text("\(algorithm)")
-                        .monospacedDigit()
-                }
-            }
+                    GridRow {
+                        label("Algorithm")
+                        Stepper(value: $algorithm, in: 1...8) {
+                            Text("\(algorithm)")
+                                .monospacedDigit()
+                        }
+                    }
 
-            GridRow {
-                label("Feedback")
-                Stepper(value: $feedback, in: 0...7) {
-                    Text("\(feedback)")
-                        .monospacedDigit()
-                }
-            }
+                    GridRow {
+                        label("Feedback")
+                        Stepper(value: $feedback, in: 0...7) {
+                            Text("\(feedback)")
+                                .monospacedDigit()
+                        }
+                    }
 
-            GridRow {
-                label("LFO Speed")
-                Stepper(value: $lfoSpeed, in: 0...255) {
-                    Text("\(lfoSpeed)")
-                        .monospacedDigit()
-                }
-            }
-
-            GridRow {
-                label("Waveform")
-                Picker("", selection: $lfoWaveform) {
-                    Text("Saw").tag(0)
-                    Text("Square").tag(1)
-                    Text("Triangle").tag(2)
-                    Text("Random").tag(3)
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 260)
-            }
-
-            GridRow {
-                label("LFO Sync")
-                Toggle("", isOn: $lfoSyncEnabled)
-                    .labelsHidden()
-            }
-
-            GridRow {
-                label("AMD")
-                Stepper(value: $amplitudeModulationDepth, in: 0...127) {
-                    Text("\(amplitudeModulationDepth)")
-                        .monospacedDigit()
-                }
-            }
-
-            GridRow {
-                label("PMD")
-                Stepper(value: $pitchModulationDepth, in: 0...127) {
-                    Text("\(pitchModulationDepth)")
-                        .monospacedDigit()
-                }
-            }
-
-            GridRow {
-                label("AMS")
-                Stepper(value: $amplitudeModulationSensitivity, in: 0...3) {
-                    Text("\(amplitudeModulationSensitivity)")
-                        .monospacedDigit()
-                }
-            }
-
-            GridRow {
-                label("PMS")
-                Stepper(value: $pitchModulationSensitivity, in: 0...7) {
-                    Text("\(pitchModulationSensitivity)")
-                        .monospacedDigit()
-                }
-            }
-
-            GridRow {
-                label("Transpose")
-                Stepper(value: $transpose, in: -128...127) {
-                    Text("\(transpose)")
-                        .monospacedDigit()
-                }
-            }
-
-            GridRow {
-                label("Output")
-                HStack(spacing: 12) {
-                    Toggle("Left", isOn: $leftOutputEnabled)
-                    Toggle("Right", isOn: $rightOutputEnabled)
-                }
-            }
-
-            GridRow {
-                label("Operators")
-                HStack(spacing: 12) {
-                    ForEach(Array(operatorEnabled.enumerated()), id: \.offset) { index, binding in
-                        Toggle("\(index + 1)", isOn: binding)
+                    GridRow {
+                        label("Transpose")
+                        Stepper(value: $transpose, in: -128...127) {
+                            Text("\(transpose)")
+                                .monospacedDigit()
+                        }
                     }
                 }
+                .padding(.top, 4)
+            }
+
+            GroupBox("LFO And Modulation") {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                    GridRow {
+                        label("LFO Speed")
+                        Stepper(value: $lfoSpeed, in: 0...255) {
+                            Text("\(lfoSpeed)")
+                                .monospacedDigit()
+                        }
+                    }
+
+                    GridRow {
+                        label("Waveform")
+                        Picker("", selection: $lfoWaveform) {
+                            Text("Saw").tag(0)
+                            Text("Square").tag(1)
+                            Text("Triangle").tag(2)
+                            Text("Random").tag(3)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 260)
+                    }
+
+                    GridRow {
+                        label("LFO Sync")
+                        Toggle("", isOn: $lfoSyncEnabled)
+                            .labelsHidden()
+                    }
+
+                    GridRow {
+                        label("Depth")
+                        HStack(spacing: 16) {
+                            Stepper(value: $amplitudeModulationDepth, in: 0...127) {
+                                Text("AMD \(amplitudeModulationDepth)")
+                                    .monospacedDigit()
+                            }
+                            Stepper(value: $pitchModulationDepth, in: 0...127) {
+                                Text("PMD \(pitchModulationDepth)")
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+
+                    GridRow {
+                        label("Sensitivity")
+                        HStack(spacing: 16) {
+                            Stepper(value: $amplitudeModulationSensitivity, in: 0...3) {
+                                Text("AMS \(amplitudeModulationSensitivity)")
+                                    .monospacedDigit()
+                            }
+                            Stepper(value: $pitchModulationSensitivity, in: 0...7) {
+                                Text("PMS \(pitchModulationSensitivity)")
+                                    .monospacedDigit()
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
+
+            GroupBox("Output And Operators") {
+                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                    GridRow {
+                        label("Output")
+                        HStack(spacing: 12) {
+                            Toggle("Left", isOn: $leftOutputEnabled)
+                            Toggle("Right", isOn: $rightOutputEnabled)
+                        }
+                    }
+
+                    GridRow {
+                        label("Operators")
+                        HStack(spacing: 12) {
+                            ForEach(Array(operatorEnabled.enumerated()), id: \.offset) { index, binding in
+                                Toggle("\(index + 1)", isOn: binding)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 4)
             }
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func label(_ text: String) -> some View {
@@ -2807,6 +2924,98 @@ struct OperatorTable: View {
     private func cell(_ title: String) -> some View {
         Text(title)
             .lineLimit(1)
+    }
+}
+
+struct OperatorEditor: View {
+    var operators: [FB01VoiceOperatorData]
+    var updateOperator: (FB01VoiceOperatorData) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Operators")
+                .font(.headline)
+
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
+                GridRow {
+                    header("#")
+                    header("TL")
+                    header("Mul")
+                    header("AR")
+                    header("D1R")
+                    header("D2R")
+                    header("SL")
+                    header("RR")
+                    header("Carrier")
+                }
+
+                Divider()
+                    .gridCellColumns(9)
+
+                ForEach(operators, id: \.index) { op in
+                    OperatorEditorRow(operatorData: op, updateOperator: updateOperator)
+                }
+            }
+            .font(.system(.body, design: .monospaced))
+        }
+    }
+
+    private func header(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+    }
+}
+
+struct OperatorEditorRow: View {
+    var operatorData: FB01VoiceOperatorData
+    var updateOperator: (FB01VoiceOperatorData) -> Void
+
+    var body: some View {
+        GridRow {
+            Text("\(operatorData.index + 1)")
+            smallStepper(value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
+            smallStepper(value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
+            smallStepper(value: operatorData.attackRate, range: 0...31) { try operatorData.settingAttackRate($0) }
+            smallStepper(value: operatorData.decay1Rate, range: 0...15) { try operatorData.settingDecay1Rate($0) }
+            smallStepper(value: operatorData.decay2Rate, range: 0...31) { try operatorData.settingDecay2Rate($0) }
+            smallStepper(value: operatorData.sustainLevel, range: 0...15) { try operatorData.settingSustainLevel($0) }
+            smallStepper(value: operatorData.releaseRate, range: 0...15) { try operatorData.settingReleaseRate($0) }
+            Toggle("", isOn: carrierBinding)
+                .labelsHidden()
+        }
+    }
+
+    private var carrierBinding: Binding<Bool> {
+        Binding(
+            get: { operatorData.carrier },
+            set: { value in
+                if let updated = try? operatorData.settingCarrier(value) {
+                    updateOperator(updated)
+                }
+            }
+        )
+    }
+
+    private func smallStepper(
+        value: Int,
+        range: ClosedRange<Int>,
+        update: @escaping (Int) throws -> FB01VoiceOperatorData
+    ) -> some View {
+        Stepper(value: Binding(
+            get: { value },
+            set: { newValue in
+                if let updated = try? update(newValue) {
+                    updateOperator(updated)
+                }
+            }
+        ), in: range) {
+            Text("\(value)")
+                .frame(minWidth: 28, alignment: .trailing)
+                .monospacedDigit()
+        }
+        .frame(width: 78)
     }
 }
 
@@ -2952,6 +3161,7 @@ private extension FB01SysExMessage {
         case .allConfigurationsDump: "All Configurations Dump"
         case .voiceBankDump, .voiceRAMDumpData, .voiceBankDumpData: "Voice Bank Dump"
         case .unitIDDump: "Unit ID Dump"
+        case .deviceStatus: "Device Status"
         case .raw: "Raw SysEx"
         }
     }

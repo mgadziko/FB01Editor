@@ -186,6 +186,58 @@ public enum FB01MIDI {
         }
     }
 
+    public static func sendAndReceive(
+        _ messages: [[UInt8]],
+        sourceIndex: Int,
+        destinationIndex: Int,
+        timeout: TimeInterval = 8,
+        maxMessages: Int = 1,
+        delayBetweenMessages: TimeInterval = 0.2
+    ) throws -> [[UInt8]] {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+
+        let source = try sourceEndpoint(at: sourceIndex)
+        let destination = try destinationEndpoint(at: destinationIndex)
+        let state = FB01SysExCaptureState()
+        let client = try clientStore.client()
+
+        var inputPort = MIDIPortRef()
+        try check(MIDIInputPortCreateWithBlock(client, "FB01EditorMIDISendReceiveInput" as CFString, &inputPort) { packetList, _ in
+            state.append(packetList: packetList)
+        }, "MIDIInputPortCreateWithBlock")
+        defer { MIDIPortDispose(inputPort) }
+
+        var outputPort = MIDIPortRef()
+        try check(MIDIOutputPortCreate(client, "FB01EditorMIDISendReceiveOutput" as CFString, &outputPort), "MIDIOutputPortCreate")
+        defer { MIDIPortDispose(outputPort) }
+
+        try check(MIDIPortConnectSource(inputPort, source, nil), "MIDIPortConnectSource")
+
+        for (index, bytes) in messages.enumerated() {
+            try send(bytes: bytes, to: destination, outputPort: outputPort)
+            if index < messages.index(before: messages.endIndex), delayBetweenMessages > 0 {
+                Thread.sleep(forTimeInterval: delayBetweenMessages)
+            }
+        }
+
+        let start = Date()
+        while Date().timeIntervalSince(start) < timeout {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            let received = state.snapshot()
+            if received.count >= maxMessages {
+                return Array(received.prefix(maxMessages))
+            }
+        }
+
+        let received = state.snapshot()
+        if !received.isEmpty {
+            return Array(received.prefix(maxMessages))
+        }
+
+        throw FB01MIDIError.timedOut("MIDI response")
+    }
+
     private static func requestBatch(
         _ kinds: [FB01MIDIRequestKind],
         sourceIndex: Int,

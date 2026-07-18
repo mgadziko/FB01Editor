@@ -18,6 +18,15 @@ import Testing
     #expect(try message.bytes == bytes)
 }
 
+@Test func parsesDeviceStatusResponse() throws {
+    let bytes: [UInt8] = [0xF0, 0x43, 0x60, 0x04, 0xF7]
+    let message = try FB01SysExMessage(bytes: bytes)
+
+    #expect(message == .deviceStatus(code: 0x04))
+    #expect(try message.bytes == bytes)
+    #expect(try FB01Artifact(sysexBytes: bytes).kind == .rawSysEx)
+}
+
 @Test func parsesSingleInstrumentVoiceDump() throws {
     let rawVoice = Array(0..<64).map(UInt8.init)
     let packet = try FB01SysExPacket(payload: FB01.nibbleEncode(rawVoice))
@@ -420,6 +429,17 @@ import Testing
         .settingLeftOutputEnabled(true)
         .settingRightOutputEnabled(false)
         .settingOperatorEnabled(index: 0, enabled: false)
+        .replacingOperator(
+            try brass.operators[1]
+                .settingTotalLevel(77)
+                .settingMultiple(12)
+                .settingAttackRate(24)
+                .settingDecay1Rate(9)
+                .settingDecay2Rate(18)
+                .settingSustainLevel(10)
+                .settingReleaseRate(7)
+                .settingCarrier(true)
+        )
 
     #expect(edited.name == "EDITED!")
     #expect(edited.algorithm == 2)
@@ -435,6 +455,14 @@ import Testing
     #expect(edited.leftOutputEnabled)
     #expect(!edited.rightOutputEnabled)
     #expect(!edited.operatorEnabled[0])
+    #expect(edited.operators[1].totalLevel == 77)
+    #expect(edited.operators[1].multiple == 12)
+    #expect(edited.operators[1].attackRate == 24)
+    #expect(edited.operators[1].decay1Rate == 9)
+    #expect(edited.operators[1].decay2Rate == 18)
+    #expect(edited.operators[1].sustainLevel == 10)
+    #expect(edited.operators[1].releaseRate == 7)
+    #expect(edited.operators[1].carrier)
 
     let exported = try edited.instrumentVoiceArtifact(systemChannel: 0, instrument: 0)
 
@@ -551,7 +579,7 @@ import Testing
     #expect(reparsedVoiceBank.voices[4].voice == voiceBank.voices[4].voice)
 }
 
-@Test func preservesInvalidBankByte7ResponseAsRawSysEx() throws {
+@Test func parsesInvalidBankByte7ResponseAsDeviceStatus() throws {
     let fixtureURL = Bundle.module.url(
         forResource: "invalid-bank-byte-7-response",
         withExtension: "syx",
@@ -563,11 +591,11 @@ import Testing
     #expect(artifact.kind == .rawSysEx)
     #expect(artifact.messages.count == 1)
 
-    guard case let .raw(bytes) = artifact.messages[0] else {
-        Issue.record("Expected raw SysEx response")
+    guard case let .deviceStatus(code) = artifact.messages[0] else {
+        Issue.record("Expected device status response")
         return
     }
 
-    #expect(bytes == [0xF0, 0x43, 0x60, 0x04, 0xF7])
-    #expect(try artifact.sysexBytes == bytes)
+    #expect(code == 0x04)
+    #expect(try artifact.sysexBytes == [0xF0, 0x43, 0x60, 0x04, 0xF7])
 }

@@ -60,6 +60,7 @@ public enum FB01SysExMessage: Equatable, Sendable {
     case voiceRAMDumpData(systemChannel: Int, byteCount: Int, data: [UInt8], checksum: UInt8)
     case voiceBankDumpData(systemChannel: Int, bank: Int, byteCount: Int, data: [UInt8], checksum: UInt8)
     case unitIDDump(systemChannel: Int, packet: FB01SysExPacket)
+    case deviceStatus(code: UInt8)
     case raw([UInt8])
 
     public init(bytes: [UInt8]) throws {
@@ -110,6 +111,8 @@ public enum FB01SysExMessage: Equatable, Sendable {
                 return envelope([FB01.fb01Substatus, UInt8(systemChannel), 0x00, 0x00, UInt8(bank), count.high, count.low] + data + [checksum])
             case let .unitIDDump(systemChannel, packet):
                 return try envelope([FB01.fb01Substatus, UInt8(systemChannel), 0x00, 0x04, 0x00] + packet.encodedBytes)
+            case .deviceStatus(let code):
+                return try envelope([0x60, FB01.validateSevenBit(code)])
             case .raw(let bytes):
                 return bytes
             }
@@ -194,6 +197,10 @@ public enum FB01SysExMessage: Equatable, Sendable {
     }
 
     private static func parseDump(body: [UInt8]) throws -> FB01SysExMessage? {
+        if body.count == 2, body[0] == 0x60 {
+            return .deviceStatus(code: try FB01.validateSevenBit(body[1]))
+        }
+
         if body.count >= 7, (0x00...0x0F).contains(body[0]), body[1] == 0x0C {
             let systemChannel = Int(body[0] & 0x0F)
             let count = try FB01.packetByteCount(high: body[2], low: body[3])
