@@ -2808,8 +2808,8 @@ struct VoiceEditorControls: View {
     var operatorEnabled: [Binding<Bool>]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            GroupBox("Identity") {
+        HStack(alignment: .top, spacing: 12) {
+            GroupBox {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                     GridRow {
                         label("Name")
@@ -2843,9 +2843,12 @@ struct VoiceEditorControls: View {
                     }
                 }
                 .padding(.top, 4)
+            } label: {
+                sectionTitle("Identity")
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
-            GroupBox("LFO And Modulation") {
+            GroupBox {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                     GridRow {
                         label("LFO Speed")
@@ -2903,9 +2906,12 @@ struct VoiceEditorControls: View {
                     }
                 }
                 .padding(.top, 4)
+            } label: {
+                sectionTitle("LFO and Modulation")
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
-            GroupBox("Output And Operators") {
+            GroupBox {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                     GridRow {
                         label("Output")
@@ -2925,7 +2931,10 @@ struct VoiceEditorControls: View {
                     }
                 }
                 .padding(.top, 4)
+            } label: {
+                sectionTitle("Output and Operators")
             }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
 
@@ -2933,6 +2942,12 @@ struct VoiceEditorControls: View {
         Text(text)
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.headline)
+            .foregroundStyle(.blue)
     }
 }
 
@@ -2949,6 +2964,7 @@ struct OperatorEditor: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Operators")
                 .font(.headline)
+                .foregroundStyle(.blue)
 
             HStack(alignment: .top, spacing: 14) {
                 VStack(spacing: 8) {
@@ -2964,14 +2980,6 @@ struct OperatorEditor: View {
                 .frame(width: 150)
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Picker("Operator", selection: $selectedOperatorIndex) {
-                        ForEach(operators, id: \.index) { op in
-                            Text("Operator \(op.index + 1)").tag(op.index)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-
                     if let selectedOperator {
                         OperatorInspector(
                             operatorData: selectedOperator,
@@ -3147,12 +3155,16 @@ struct OperatorControlGroup<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        GroupBox(title) {
+        GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 content
             }
             .padding(.top, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(.blue)
         }
     }
 }
