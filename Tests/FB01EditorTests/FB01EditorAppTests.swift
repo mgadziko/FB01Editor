@@ -51,6 +51,31 @@ import Testing
 }
 
 @MainActor
+@Test func editorDocumentTitlesShowBusyAndUnsavedState() throws {
+    var voiceData = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
+    voiceData = try voiceData.settingName("TITLE")
+    let voice = VoiceDocumentModel(voice: voiceData, systemChannel: 0)
+    #expect(voice.title == "TITLE")
+
+    voice.updateVoice { try $0.settingName("EDIT") }
+    #expect(voice.title == "EDIT *")
+
+    voice.isBusy = true
+    #expect(voice.title == "EDIT (Working)")
+
+    var configurationData = try FB01ConfigurationData(bytes: Array(repeating: 0x00, count: FB01ConfigurationData.byteCount))
+    configurationData = try configurationData.settingName("CONFIG")
+    let configuration = ConfigurationDocumentModel(configuration: configurationData, systemChannel: 0)
+    #expect(configuration.title == "CONFIG")
+
+    configuration.updateConfiguration { try $0.settingName("CHANGED") }
+    #expect(configuration.title == "CHANGED *")
+
+    configuration.isBusy = true
+    #expect(configuration.title == "CHANGED (Working)")
+}
+
+@MainActor
 @Test func selectedLibraryVoicePayloadUsesCurrentVoiceSelection() throws {
     let model = DocumentModel()
     let source = try fixtureVoiceBankSource()
@@ -65,6 +90,16 @@ import Testing
 }
 
 @MainActor
+@Test func selectedLibraryVoicePayloadIsNilWithoutVoiceSelection() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    model.sources = [source]
+    model.selectedSourceID = source.id
+
+    #expect(model.selectedVoiceDocumentPayload() == nil)
+}
+
+@MainActor
 @Test func selectedLibraryConfigurationPayloadUsesEditableConfiguration() throws {
     let model = DocumentModel()
     let source = try fixtureConfigurationSource(origin: .liveFetch)
@@ -75,6 +110,16 @@ import Testing
 
     #expect(payload.configuration.name == "single")
     #expect(payload.systemChannel == 0)
+}
+
+@MainActor
+@Test func selectedLibraryConfigurationPayloadIsNilForVoiceBankSelection() throws {
+    let model = DocumentModel()
+    let source = try fixtureVoiceBankSource()
+    model.sources = [source]
+    model.selectedSourceID = source.id
+
+    #expect(model.selectedConfigurationDocumentPayload() == nil)
 }
 
 @MainActor

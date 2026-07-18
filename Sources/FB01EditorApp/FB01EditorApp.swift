@@ -140,6 +140,17 @@ struct EditorDocumentCommands: View {
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
 
+    private var canSaveFocusedDocumentOrLibrary: Bool {
+        if let activeDocumentActions {
+            return !activeDocumentActions.isBusy
+        }
+        return document.hasDocument && !document.isBusy
+    }
+
+    private var canSaveFocusedDocumentOrLibraryAs: Bool {
+        canSaveFocusedDocumentOrLibrary
+    }
+
     var body: some View {
         Button("New Voice Document") {
             let id = workspace.createVoiceDocument()
@@ -239,7 +250,7 @@ struct EditorDocumentCommands: View {
             }
         }
         .keyboardShortcut("s", modifiers: .command)
-        .disabled(activeDocumentActions?.isBusy == true || (activeDocumentActions == nil && (!document.hasDocument || document.isBusy)))
+        .disabled(!canSaveFocusedDocumentOrLibrary)
 
         Button(activeDocumentActions == nil ? "Save SysEx As..." : "Save As...") {
             if let activeDocumentActions {
@@ -249,7 +260,7 @@ struct EditorDocumentCommands: View {
             }
         }
         .keyboardShortcut("s", modifiers: [.command, .shift])
-        .disabled(activeDocumentActions?.isBusy == true || (activeDocumentActions == nil && (!document.hasDocument || document.isBusy)))
+        .disabled(!canSaveFocusedDocumentOrLibraryAs)
 
         Button("Revert Document") {
             activeDocumentActions?.reset()
@@ -291,22 +302,6 @@ final class EditorDocumentWorkspace: ObservableObject {
         }
         configurationDocuments[loaded.id] = loaded
         return loaded.id
-    }
-
-    func fetchVoiceDocument(device: DocumentModel) -> UUID? {
-        guard let fetched = VoiceDocumentModel.fetchFromDevice(device: device) else {
-            return nil
-        }
-        voiceDocuments[fetched.id] = fetched
-        return fetched.id
-    }
-
-    func fetchConfigurationDocument(device: DocumentModel) -> UUID? {
-        guard let fetched = ConfigurationDocumentModel.fetchFromDevice(device: device) else {
-            return nil
-        }
-        configurationDocuments[fetched.id] = fetched
-        return fetched.id
     }
 
     func voiceDocument(id: UUID) -> VoiceDocumentModel? {
@@ -616,22 +611,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    static func fetchFromDevice(device: DocumentModel) -> VoiceDocumentModel? {
-        guard let source = chooseFetchSource(title: "Fetch Voice from FB-01", actionTitle: "Fetch") else {
-            return nil
-        }
-
-        do {
-            let (voice, systemChannel, title) = try fetchVoice(source: source, device: device)
-            let model = VoiceDocumentModel(voice: voice, systemChannel: systemChannel)
-            model.statusMessage = "Fetched \(title) from \(device.selectedSourceName)."
-            return model
-        } catch {
-            showEditorError(title: "Fetch Voice Failed", message: "\(error)")
-            return nil
-        }
-    }
-
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
@@ -670,7 +649,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let destinationIndex = device.selectedDestinationIndex
         let systemChannel = device.systemChannel
         isBusy = true
-        statusMessage = "Fetching voice..."
+        statusMessage = "Fetching voice from FB-01; waiting for device response..."
         errorMessage = nil
 
         Task {
@@ -855,15 +834,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return nil
         }
         return candidates[popup.indexOfSelectedItem]
-    }
-
-    private static func fetchVoice(source: VoiceDocumentFetchSource, device: DocumentModel) throws -> (voice: FB01VoiceData, systemChannel: Int, title: String) {
-        try fetchVoice(
-            source: source,
-            sourceIndex: device.selectedSourceIndex,
-            destinationIndex: device.selectedDestinationIndex,
-            systemChannel: device.systemChannel
-        )
     }
 
     nonisolated private static func fetchVoice(source: VoiceDocumentFetchSource, sourceIndex: Int, destinationIndex: Int, systemChannel: Int) throws -> (voice: FB01VoiceData, systemChannel: Int, title: String) {
@@ -1107,33 +1077,6 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    static func fetchFromDevice(device: DocumentModel) -> ConfigurationDocumentModel? {
-        guard let options = chooseFetchOptions(title: "Fetch Configuration from FB-01", actionTitle: "Fetch") else {
-            return nil
-        }
-
-        do {
-            let kind: FB01MIDIRequestKind = options.isCurrent ? .currentConfiguration : .configuration(options.slot + 1)
-            let bytes = try FB01MIDI.request(
-                kind,
-                sourceIndex: device.selectedSourceIndex,
-                destinationIndex: device.selectedDestinationIndex,
-                systemChannel: device.systemChannel,
-                timeout: 8
-            )
-            let artifact = try FB01Artifact(sysexBytes: bytes)
-            let (configuration, systemChannel) = try extractConfiguration(from: artifact)
-            let model = ConfigurationDocumentModel(configuration: configuration, systemChannel: systemChannel)
-            model.statusMessage = options.isCurrent
-                ? "Fetched current configuration from \(device.selectedSourceName)."
-                : "Fetched configuration \(options.slot + 1) from \(device.selectedSourceName)."
-            return model
-        } catch {
-            showEditorError(title: "Fetch Configuration Failed", message: "\(error)")
-            return nil
-        }
-    }
-
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
@@ -1172,7 +1115,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         let destinationIndex = device.selectedDestinationIndex
         let systemChannel = device.systemChannel
         isBusy = true
-        statusMessage = "Fetching configuration..."
+        statusMessage = "Fetching configuration from FB-01; waiting for device response..."
         errorMessage = nil
 
         Task {
@@ -1465,12 +1408,12 @@ struct FB01EditorApplication: App {
                 EditorDocumentCommands(document: document, workspace: documentWorkspace)
             }
             CommandGroup(after: .newItem) {
-                Button("Open SysEx into Library...") {
+                Button("Load SysEx into Library...") {
                     document.openSysEx()
                 }
                 .keyboardShortcut("o", modifiers: .command)
 
-                Button("Save Library Configuration Set...") {
+                Button("Save Library SysEx...") {
                     document.saveConfigurationSet()
                 }
                 .disabled(!document.canSaveConfigurationSet)
