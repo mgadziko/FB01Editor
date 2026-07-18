@@ -5,12 +5,16 @@ import UniformTypeIdentifiers
 
 @main
 struct FB01EditorApplication: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var document = DocumentModel()
 
     var body: some Scene {
         WindowGroup("FB01 Editor") {
             ContentView(document: document)
                 .frame(minWidth: 840, minHeight: 540)
+                .onAppear {
+                    appDelegate.document = document
+                }
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
@@ -50,6 +54,15 @@ struct FB01EditorApplication: App {
                 .disabled(!document.canStoreSelectedConfiguration)
             }
         }
+    }
+}
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    weak var document: DocumentModel?
+
+    func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
+        document?.confirmApplicationTermination() ?? .terminateNow
     }
 }
 
@@ -219,6 +232,10 @@ final class DocumentModel: ObservableObject {
         selectedSource != nil && !isBusy
     }
 
+    var hasUnsavedEdits: Bool {
+        sources.contains { $0.isEdited }
+    }
+
     var isBusy: Bool {
         isFetchingFromDevice || isFetchingConfigurations
     }
@@ -364,7 +381,8 @@ final class DocumentModel: ObservableObject {
     }
 
     func saveSysEx() {
-        guard let selectedSource else { return }
+        guard let selectedSource,
+              let index = sources.firstIndex(where: { $0.id == selectedSource.id }) else { return }
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.sysex]
@@ -375,7 +393,11 @@ final class DocumentModel: ObservableObject {
         }
 
         do {
-            try selectedSource.artifactForSaving().writeSysEx(to: url)
+            let artifact = try selectedSource.artifactForSaving()
+            try artifact.writeSysEx(to: url)
+            sources[index].markSaved(as: artifact)
+            selectedSourceID = sources[index].id
+            statusMessage = "Saved \(sources[index].title)."
             errorMessage = nil
         } catch {
             errorMessage = "Save failed: \(error)"
@@ -407,10 +429,41 @@ final class DocumentModel: ObservableObject {
             }
             let artifact = FB01Artifact(kind: .configurationSet, messages: messages)
             try artifact.writeSysEx(to: url)
+            for source in configurationSources {
+                guard let index = sources.firstIndex(where: { $0.id == source.id }),
+                      sources[index].editedConfiguration != nil else {
+                    continue
+                }
+                sources[index].markSaved(as: try sources[index].artifactForSaving())
+            }
             statusMessage = "Saved \(configurationSources.count) configuration\(configurationSources.count == 1 ? "" : "s")."
             errorMessage = nil
         } catch {
             errorMessage = "Save configuration set failed: \(error)"
+        }
+    }
+
+    func confirmApplicationTermination() -> NSApplication.TerminateReply {
+        guard hasUnsavedEdits else {
+            return .terminateNow
+        }
+
+        let editedCount = sources.filter(\.isEdited).count
+        let alert = NSAlert()
+        alert.messageText = "Save Changes Before Quitting?"
+        alert.informativeText = "The source library contains local edits in \(editedCount) source\(editedCount == 1 ? "" : "s"). Save them as SysEx files before quitting?"
+        alert.addButton(withTitle: "Save...")
+        alert.addButton(withTitle: "Discard Changes")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return saveEditedSourcesForQuit() ? .terminateNow : .terminateCancel
+        case .alertSecondButtonReturn:
+            return .terminateNow
+        default:
+            return .terminateCancel
         }
     }
 
@@ -681,6 +734,84 @@ final class DocumentModel: ObservableObject {
         return sanitized.isEmpty ? "fb01-export" : sanitized
     }
 
+    private func saveEditedSourcesForQuit() -> Bool {
+        let editedIDs = sources.filter(\.isEdited).map(\.id)
+        guard !editedIDs.isEmpty else {
+            return true
+        }
+
+        if editedIDs.count == 1 {
+            guard let id = editedIDs.first,
+                  let index = sources.firstIndex(where: { $0.id == id }) else {
+                return true
+            }
+
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.sysex]
+            panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).syx"
+            panel.message = "Save edited source before quitting."
+
+            guard panel.runModal() == .OK, let url = panel.url else {
+                return false
+            }
+
+            return saveEditedSource(at: index, to: url)
+        }
+
+        let panel = NSOpenPanel()
+        panel.message = "Choose a folder for the edited SysEx sources."
+        panel.prompt = "Save"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let directory = panel.url else {
+            return false
+        }
+
+        var usedNames = Set<String>()
+        for id in editedIDs {
+            guard let index = sources.firstIndex(where: { $0.id == id }) else {
+                continue
+            }
+
+            let fileName = uniqueFileName(for: sources[index].title, usedNames: &usedNames)
+            guard saveEditedSource(at: index, to: directory.appendingPathComponent(fileName)) else {
+                return false
+            }
+        }
+
+        return true
+    }
+
+    private func saveEditedSource(at index: Int, to url: URL) -> Bool {
+        do {
+            let artifact = try sources[index].artifactForSaving()
+            try artifact.writeSysEx(to: url)
+            sources[index].markSaved(as: artifact)
+            statusMessage = "Saved \(sources[index].title)."
+            errorMessage = nil
+            return true
+        } catch {
+            errorMessage = "Save failed: \(error)"
+            statusMessage = nil
+            return false
+        }
+    }
+
+    private func uniqueFileName(for title: String, usedNames: inout Set<String>) -> String {
+        let base = safeFileName(title)
+        var candidate = "\(base).syx"
+        var suffix = 2
+        while usedNames.contains(candidate) {
+            candidate = "\(base)-\(suffix).syx"
+            suffix += 1
+        }
+        usedNames.insert(candidate)
+        return candidate
+    }
+
     private func applyFetchedSources(_ fetchedSources: [LibrarySource], insertionMode: SourceInsertionMode) {
         switch insertionMode {
         case .replace:
@@ -898,6 +1029,12 @@ struct LibrarySource: Identifiable, Equatable {
         default:
             return artifact
         }
+    }
+
+    mutating func markSaved(as savedArtifact: FB01Artifact) {
+        artifact = savedArtifact
+        editedVoices.removeAll()
+        editedConfiguration = nil
     }
 
     static func sources(from artifact: FB01Artifact, fileName: String) -> [LibrarySource] {
