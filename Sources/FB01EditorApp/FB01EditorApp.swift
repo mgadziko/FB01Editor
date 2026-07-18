@@ -406,7 +406,30 @@ private struct VoiceDocumentStoreOptions: Sendable {
 
 private enum VoiceDocumentFetchSource: Sendable {
     case instrument(Int)
-    case storedSlot(bank: Int, voiceNumber: Int)
+    case storedSlot(location: VoiceDocumentFetchLocation, voiceNumber: Int)
+}
+
+private enum VoiceDocumentFetchLocation: Sendable {
+    case bank(Int)
+    case voiceRAM1
+
+    var title: String {
+        switch self {
+        case .bank(let bank):
+            "Bank \(bank)"
+        case .voiceRAM1:
+            "Voice RAM 1"
+        }
+    }
+
+    var requestKind: FB01MIDIRequestKind {
+        switch self {
+        case .bank(let bank):
+            .voiceBank(bank)
+        case .voiceRAM1:
+            .voiceRAM1
+        }
+    }
 }
 
 private struct ConfigurationFetchOptions: Sendable {
@@ -505,17 +528,27 @@ private func showEditorError(title: String, message: String) {
 
 @MainActor
 private func labelledEditorPopup(label: String, popup: NSPopUpButton) -> NSView {
-    let container = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 30))
+    let container = NSStackView()
+    container.orientation = .horizontal
+    container.alignment = .centerY
+    container.spacing = 12
+    container.translatesAutoresizingMaskIntoConstraints = false
 
     let text = NSTextField(labelWithString: label)
-    text.frame = NSRect(x: 0, y: 6, width: 96, height: 18)
     text.alignment = .right
+    text.translatesAutoresizingMaskIntoConstraints = false
 
-    popup.frame = NSRect(x: 108, y: 2, width: 300, height: 26)
-    popup.autoresizingMask = [.width]
+    popup.controlSize = .regular
+    popup.translatesAutoresizingMaskIntoConstraints = false
 
-    container.addSubview(text)
-    container.addSubview(popup)
+    container.addArrangedSubview(text)
+    container.addArrangedSubview(popup)
+    NSLayoutConstraint.activate([
+        container.widthAnchor.constraint(equalToConstant: 520),
+        container.heightAnchor.constraint(greaterThanOrEqualToConstant: 32),
+        text.widthAnchor.constraint(equalToConstant: 120),
+        popup.widthAnchor.constraint(equalToConstant: 360),
+    ])
     return container
 }
 
@@ -861,32 +894,33 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             let artifact = try FB01Artifact(sysexBytes: bytes)
             let payload = try extractVoice(from: artifact)
             return (payload.voice, payload.systemChannel, "instrument \(instrument + 1) voice")
-        case let .storedSlot(bank, voiceNumber):
+        case let .storedSlot(location, voiceNumber):
             let bytes = try FB01MIDI.request(
-                .voiceBank(bank + 1),
+                location.requestKind,
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
                 systemChannel: systemChannel,
                 timeout: 15
             )
-            guard let voice = try storedVoice(from: bytes, bank: bank, voiceNumber: voiceNumber) else {
+            guard let voice = try storedVoice(from: bytes, location: location, voiceNumber: voiceNumber) else {
                 throw FB01AppError.noVoiceSource
             }
-            return (voice, systemChannel, "Bank \(bank + 1) Voice \(voiceNumber + 1)")
+            return (voice, systemChannel, "\(location.title) Voice \(voiceNumber + 1)")
         }
     }
 
     private static func chooseFetchSource(title: String, actionTitle: String) -> VoiceDocumentFetchSource? {
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = "Choose a current instrument voice, or fetch one stored voice by reading Bank 1 or Bank 2 and extracting the selected slot."
+        alert.informativeText = "Choose a current instrument voice, or fetch one stored voice by reading Banks 1-7 or Voice RAM 1 and extracting the selected slot."
         alert.addButton(withTitle: actionTitle)
         alert.addButton(withTitle: "Cancel")
 
         let stack = NSStackView()
         stack.orientation = .vertical
-        stack.spacing = 8
+        stack.spacing = 10
         stack.alignment = .leading
+        stack.translatesAutoresizingMaskIntoConstraints = false
 
         let sourcePopup = NSPopUpButton(frame: .zero, pullsDown: false)
         sourcePopup.addItem(withTitle: "Current Instrument Voice")
@@ -898,8 +932,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        bankPopup.addItem(withTitle: "Bank 1")
-        bankPopup.addItem(withTitle: "Bank 2")
+        let fetchLocations: [VoiceDocumentFetchLocation] = (1...7).map { .bank($0) } + [.voiceRAM1]
+        for location in fetchLocations {
+            bankPopup.addItem(withTitle: location.title)
+        }
 
         let voicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
         for voice in 1...FB01VoiceBankData.voiceCount {
@@ -912,6 +948,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         stack.addArrangedSubview(labelledEditorPopup(label: "Voice:", popup: voicePopup))
         stack.addArrangedSubview(makeWarningLabel("Stored voice fetch reads the whole selected bank internally, then opens only the chosen voice document."))
         alert.accessoryView = stack
+        NSLayoutConstraint.activate([
+            stack.widthAnchor.constraint(equalToConstant: 540),
+        ])
 
         guard alert.runModal() == .alertFirstButtonReturn else {
             return nil
@@ -920,7 +959,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         if sourcePopup.indexOfSelectedItem == 0 {
             return .instrument(instrumentPopup.indexOfSelectedItem)
         }
-        return .storedSlot(bank: bankPopup.indexOfSelectedItem, voiceNumber: voicePopup.indexOfSelectedItem)
+        return .storedSlot(location: fetchLocations[bankPopup.indexOfSelectedItem], voiceNumber: voicePopup.indexOfSelectedItem)
     }
 
     private static func chooseStoreOptions(defaultVoiceName: String) -> VoiceDocumentStoreOptions? {
@@ -991,6 +1030,23 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             if case let .voiceBankDumpData(_, fetchedBank, _, data, _) = message, fetchedBank == bank {
                 let bankData = try FB01VoiceBankData(bank: fetchedBank, data: data)
                 return bankData.voices.first { $0.number == voiceNumber + 1 }?.voice
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func storedVoice(from bytes: [UInt8], location: VoiceDocumentFetchLocation, voiceNumber: Int) throws -> FB01VoiceData? {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            switch (location, message) {
+            case let (.bank(bank), .voiceBankDumpData(_, fetchedBank, _, data, _)) where fetchedBank == bank - 1:
+                let bankData = try FB01VoiceBankData(bank: fetchedBank, data: data)
+                return bankData.voices.first { $0.number == voiceNumber + 1 }?.voice
+            case let (.voiceRAM1, .voiceRAMDumpData(_, _, data, _)):
+                let bankData = try FB01VoiceBankData(bank: 0, data: data)
+                return bankData.voices.first { $0.number == voiceNumber + 1 }?.voice
+            default:
+                break
             }
         }
         return nil
