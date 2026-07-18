@@ -185,9 +185,12 @@ final class DocumentModel: ObservableObject {
         static let sourceUniqueID = "FB01Editor.selectedMIDISourceUniqueID"
         static let destinationIndex = "FB01Editor.selectedMIDIDestinationIndex"
         static let destinationUniqueID = "FB01Editor.selectedMIDIDestinationUniqueID"
+        static let lastLoadDirectory = "FB01Editor.lastLoadDirectory"
+        static let lastSaveDirectory = "FB01Editor.lastSaveDirectory"
     }
 
     init() {
+        ensureDefaultFileDirectory()
         selectedSourceIndex = UserDefaults.standard.integer(forKey: DefaultsKey.sourceIndex)
         selectedDestinationIndex = UserDefaults.standard.integer(forKey: DefaultsKey.destinationIndex)
         refreshMIDIEndpoints()
@@ -284,11 +287,13 @@ final class DocumentModel: ObservableObject {
         panel.allowedContentTypes = [.sysex, .data]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
+        panel.directoryURL = preferredLoadDirectoryURL()
 
         guard panel.runModal() == .OK else {
             return
         }
 
+        rememberLoadDirectory(for: panel.urls)
         load(urls: panel.urls)
     }
 
@@ -386,6 +391,7 @@ final class DocumentModel: ObservableObject {
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.sysex]
+        panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeFileName(selectedSource.title)).syx"
 
         guard panel.runModal() == .OK, let url = panel.url else {
@@ -397,6 +403,7 @@ final class DocumentModel: ObservableObject {
             try artifact.writeSysEx(to: url)
             sources[index].markSaved(as: artifact)
             selectedSourceID = sources[index].id
+            rememberSaveDirectory(for: url)
             statusMessage = "Saved \(sources[index].title)."
             errorMessage = nil
         } catch {
@@ -415,6 +422,7 @@ final class DocumentModel: ObservableObject {
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.sysex]
+        panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = configurationSources.count == 20
             ? "fb01-configurations-1-20.syx"
             : "fb01-configurations.syx"
@@ -436,6 +444,7 @@ final class DocumentModel: ObservableObject {
                 }
                 sources[index].markSaved(as: try sources[index].artifactForSaving())
             }
+            rememberSaveDirectory(for: url)
             statusMessage = "Saved \(configurationSources.count) configuration\(configurationSources.count == 1 ? "" : "s")."
             errorMessage = nil
         } catch {
@@ -604,6 +613,19 @@ final class DocumentModel: ObservableObject {
         errorMessage = nil
     }
 
+    func preferredSaveDirectoryURL() -> URL {
+        preferredDirectory(defaultsKey: DefaultsKey.lastSaveDirectory)
+    }
+
+    func rememberSaveDirectory(for url: URL) {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            rememberDirectory(url, defaultsKey: DefaultsKey.lastSaveDirectory)
+        } else {
+            rememberDirectory(url.deletingLastPathComponent(), defaultsKey: DefaultsKey.lastSaveDirectory)
+        }
+    }
+
     func sendSelectedConfigurationToCurrentEditBuffer() {
         guard let selectedSource,
               let payload = selectedSource.editableConfigurationPayload else {
@@ -734,6 +756,57 @@ final class DocumentModel: ObservableObject {
         return sanitized.isEmpty ? "fb01-export" : sanitized
     }
 
+    private func preferredLoadDirectoryURL() -> URL {
+        preferredDirectory(defaultsKey: DefaultsKey.lastLoadDirectory)
+    }
+
+    private func rememberLoadDirectory(for urls: [URL]) {
+        guard let firstURL = urls.first else {
+            return
+        }
+        rememberDirectory(firstURL.deletingLastPathComponent(), defaultsKey: DefaultsKey.lastLoadDirectory)
+    }
+
+    private func preferredDirectory(defaultsKey: String) -> URL {
+        ensureDefaultFileDirectory()
+
+        if let path = UserDefaults.standard.string(forKey: defaultsKey) {
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            if directoryExists(at: url) {
+                return url
+            }
+        }
+
+        return defaultFileDirectoryURL
+    }
+
+    private func rememberDirectory(_ url: URL, defaultsKey: String) {
+        let directoryURL = url.standardizedFileURL
+        guard directoryExists(at: directoryURL) else {
+            return
+        }
+        UserDefaults.standard.set(directoryURL.path, forKey: defaultsKey)
+    }
+
+    private func ensureDefaultFileDirectory() {
+        try? FileManager.default.createDirectory(
+            at: defaultFileDirectoryURL,
+            withIntermediateDirectories: true
+        )
+    }
+
+    private func directoryExists(at url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    private var defaultFileDirectoryURL: URL {
+        FileManager.default
+            .homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("FB01 Editor", isDirectory: true)
+    }
+
     private func saveEditedSourcesForQuit() -> Bool {
         let editedIDs = sources.filter(\.isEdited).map(\.id)
         guard !editedIDs.isEmpty else {
@@ -748,6 +821,7 @@ final class DocumentModel: ObservableObject {
 
             let panel = NSSavePanel()
             panel.allowedContentTypes = [.sysex]
+            panel.directoryURL = preferredSaveDirectoryURL()
             panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).syx"
             panel.message = "Save edited source before quitting."
 
@@ -765,6 +839,7 @@ final class DocumentModel: ObservableObject {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
+        panel.directoryURL = preferredSaveDirectoryURL()
 
         guard panel.runModal() == .OK, let directory = panel.url else {
             return false
@@ -782,6 +857,7 @@ final class DocumentModel: ObservableObject {
             }
         }
 
+        rememberSaveDirectory(for: directory)
         return true
     }
 
@@ -790,6 +866,7 @@ final class DocumentModel: ObservableObject {
             let artifact = try sources[index].artifactForSaving()
             try artifact.writeSysEx(to: url)
             sources[index].markSaved(as: artifact)
+            rememberSaveDirectory(for: url)
             statusMessage = "Saved \(sources[index].title)."
             errorMessage = nil
             return true
@@ -2102,6 +2179,7 @@ struct VoiceDetailView: View {
     private func exportVoice() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.sysex]
+        panel.directoryURL = document.preferredSaveDirectoryURL()
         panel.nameFieldStringValue = "voice-\(summary.number)-\(safeFileName(editableVoice.name)).syx"
 
         guard panel.runModal() == .OK, let url = panel.url else {
@@ -2111,6 +2189,7 @@ struct VoiceDetailView: View {
         do {
             let artifact = try editableVoice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
             try artifact.writeSysEx(to: url)
+            document.rememberSaveDirectory(for: url)
             exportError = nil
         } catch {
             exportError = "Export failed: \(error)"
