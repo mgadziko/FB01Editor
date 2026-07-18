@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>FB01 Editor Penguin</title>
+  <g fill="none" fill-rule="evenodd">
+    <ellipse cx="512" cy="514" rx="256" ry="392" fill="#EAF0F6" stroke="#24B8FF" stroke-width="28"/>
+    <path d="M364 262 C318 390 316 625 384 760" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" opacity="0.72"/>
+    <ellipse cx="512" cy="612" rx="172" ry="280" fill="#07101F"/>
+    <circle cx="414" cy="366" r="44" fill="#07101F" stroke="#24B8FF" stroke-width="8"/>
+    <circle cx="610" cy="366" r="44" fill="#07101F" stroke="#24B8FF" stroke-width="8"/>
+    <path d="M454 430 L570 430 L512 512 Z" fill="#FFB72E"/>
+    <path d="M444 892 C470 858 554 858 580 892 C544 904 480 904 444 892 Z" fill="#24B8FF"/>
+    <path d="M360 878 C414 846 478 854 510 888 C462 910 392 910 360 878 Z" fill="#24B8FF"/>
+    <path d="M664 878 C610 846 546 854 514 888 C562 910 632 910 664 878 Z" fill="#24B8FF"/>
+  </g>
+</svg>
