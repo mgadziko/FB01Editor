@@ -266,6 +266,8 @@ final class DocumentModel: ObservableObject {
     @Published var systemMemoryProtectEnabled = false
     @Published var systemMasterOutputLevel = 127
     @Published var keyboardVelocity = 100
+    @Published var keyboardChannel = 0
+    @Published var keyboardStartNote = 36
 
     private var preparedKeyboardVoiceSignature: String?
 
@@ -277,6 +279,9 @@ final class DocumentModel: ObservableObject {
         static let lastLoadDirectory = "FB01Editor.lastLoadDirectory"
         static let lastSaveDirectory = "FB01Editor.lastSaveDirectory"
         static let systemChannel = "FB01Editor.systemChannel"
+        static let keyboardChannel = "FB01Editor.keyboardChannel"
+        static let keyboardVelocity = "FB01Editor.keyboardVelocity"
+        static let keyboardStartNote = "FB01Editor.keyboardStartNote"
     }
 
     init() {
@@ -285,6 +290,12 @@ final class DocumentModel: ObservableObject {
         selectedDestinationIndex = UserDefaults.standard.integer(forKey: DefaultsKey.destinationIndex)
         let savedSystemChannel = UserDefaults.standard.integer(forKey: DefaultsKey.systemChannel)
         systemChannel = (0...15).contains(savedSystemChannel) ? savedSystemChannel : 0
+        let savedKeyboardChannel = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardChannel)
+        keyboardChannel = (0...15).contains(savedKeyboardChannel) ? savedKeyboardChannel : 0
+        let savedKeyboardVelocity = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardVelocity)
+        keyboardVelocity = (1...127).contains(savedKeyboardVelocity) ? savedKeyboardVelocity : 100
+        let savedKeyboardStartNote = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardStartNote)
+        keyboardStartNote = (0...67).contains(savedKeyboardStartNote) ? savedKeyboardStartNote : 36
         refreshMIDIEndpoints()
     }
 
@@ -422,6 +433,21 @@ final class DocumentModel: ObservableObject {
     func setSystemChannel(_ channel: Int) {
         systemChannel = min(max(channel, 0), 15)
         UserDefaults.standard.set(systemChannel, forKey: DefaultsKey.systemChannel)
+    }
+
+    func setKeyboardChannel(_ channel: Int) {
+        keyboardChannel = min(max(channel, 0), 15)
+        UserDefaults.standard.set(keyboardChannel, forKey: DefaultsKey.keyboardChannel)
+    }
+
+    func setKeyboardVelocity(_ velocity: Int) {
+        keyboardVelocity = min(max(velocity, 1), 127)
+        UserDefaults.standard.set(keyboardVelocity, forKey: DefaultsKey.keyboardVelocity)
+    }
+
+    func setKeyboardStartNote(_ note: Int) {
+        keyboardStartNote = min(max(note, 0), 67)
+        UserDefaults.standard.set(keyboardStartNote, forKey: DefaultsKey.keyboardStartNote)
     }
 
     func setMemoryProtect(_ enabled: Bool) {
@@ -1927,10 +1953,25 @@ final class DocumentModel: ObservableObject {
                     )
                 }.value
 
-                if let code = try deviceStatusCode(from: status) {
-                    statusMessage = "FB-01 confirmed store to voice \(voiceSlot + 1) on \(destinationName) (status \(String(format: "0x%02X", code)))."
+                let requestKind = try voiceRAMBankRequestKind(forVoiceSlot: voiceSlot)
+                let readback = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.request(
+                        requestKind,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        timeout: 15
+                    )
+                }.value
+
+                let readbackVoice = try storedVoicePayload(from: [readback], voiceSlot: voiceSlot)
+                let statusSuffix = try deviceStatusCode(from: status).map { " (status \(String(format: "0x%02X", $0)))" } ?? ""
+                if readbackVoice?.bytes == voice.bytes {
+                    statusMessage = "FB-01 confirmed store to voice \(voiceSlot + 1) on \(destinationName)\(statusSuffix); readback matches."
+                } else if readbackVoice != nil {
+                    statusMessage = "Stored voice \(voiceSlot + 1) on \(destinationName)\(statusSuffix), but readback did not match exactly."
                 } else {
-                    statusMessage = "Stored voice \(voiceSlot + 1); FB-01 returned an unrecognized response."
+                    statusMessage = "Stored voice \(voiceSlot + 1) on \(destinationName)\(statusSuffix), but readback did not contain that slot."
                 }
                 errorMessage = nil
             } catch {
@@ -1943,6 +1984,7 @@ final class DocumentModel: ObservableObject {
     }
 
     func storeVoiceMessages(voice: FB01VoiceData, systemChannel: Int, instrument: Int, voiceSlot: Int) throws -> [[UInt8]] {
+        _ = try voiceRAMBankRequestKind(forVoiceSlot: voiceSlot)
         let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(
             systemChannel: systemChannel,
             .off
@@ -1956,9 +1998,47 @@ final class DocumentModel: ObservableObject {
         return try [protectOffCommand.bytes, voiceMessage.bytes, storeCommand.bytes]
     }
 
+    func voiceRAMBankRequestKind(forVoiceSlot voiceSlot: Int) throws -> FB01MIDIRequestKind {
+        guard (0..<FB01VoiceBankData.voiceCount * 2).contains(voiceSlot) else {
+            throw FB01SysExError.valueOutOfRange(
+                name: "voiceSlot",
+                value: voiceSlot,
+                range: 0...(FB01VoiceBankData.voiceCount * 2 - 1)
+            )
+        }
+        return .voiceBank(voiceSlot / FB01VoiceBankData.voiceCount + 1)
+    }
+
+    func storedVoicePayload(from messages: [[UInt8]], voiceSlot: Int) throws -> FB01VoiceData? {
+        let requestKind = try voiceRAMBankRequestKind(forVoiceSlot: voiceSlot)
+        guard case let .voiceBank(expectedBankNumber) = requestKind else {
+            return nil
+        }
+
+        let expectedBank = expectedBankNumber - 1
+        let expectedNumber = voiceSlot % FB01VoiceBankData.voiceCount + 1
+        for bytes in messages {
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            for message in artifact.messages {
+                switch message {
+                case let .voiceBankDumpData(_, bank, _, data, _) where bank == expectedBank:
+                    let bankData = try FB01VoiceBankData(bank: bank, data: data)
+                    return bankData.voices.first { $0.number == expectedNumber }?.voice
+                case let .voiceRAMDumpData(_, _, data, _) where expectedBank == 0:
+                    let bankData = try FB01VoiceBankData(bank: 0, data: data)
+                    return bankData.voices.first { $0.number == expectedNumber }?.voice
+                default:
+                    break
+                }
+            }
+        }
+        return nil
+    }
+
     func sendKeyboardNote(_ note: Int, isOn: Bool) {
         let boundedNote = min(max(note, 0), 127)
         let destinationIndex = selectedDestinationIndex
+        let channel = UInt8(min(max(keyboardChannel, 0), 15))
         let velocity = UInt8(min(max(keyboardVelocity, 1), 127))
 
         do {
@@ -1967,7 +2047,7 @@ final class DocumentModel: ObservableObject {
                 messages.append(contentsOf: try keyboardPreparationMessages())
             }
             messages.append([
-                isOn ? 0x90 : 0x80,
+                (isOn ? 0x90 : 0x80) | channel,
                 UInt8(boundedNote),
                 isOn ? velocity : 0,
             ])
@@ -2570,7 +2650,7 @@ struct ContentView: View {
             Divider()
 
             LiveKeyboardView(document: document)
-                .frame(height: 72)
+                .frame(height: 96)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
 
@@ -2694,16 +2774,45 @@ struct LiveKeyboardView: View {
     @ObservedObject var document: DocumentModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 7) {
                 SectionTitle("Live Keyboard")
-                Spacer()
                 Text(document.hasKeyboardVoiceContext ? "Current voice" : "MIDI notes only")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Stepper(value: Binding(
+                        get: { document.keyboardChannel + 1 },
+                        set: { document.setKeyboardChannel($0 - 1) }
+                    ), in: 1...16) {
+                        Text("Ch \(document.keyboardChannel + 1)")
+                            .monospacedDigit()
+                    }
+
+                    Stepper(value: Binding(
+                        get: { document.keyboardVelocity },
+                        set: { document.setKeyboardVelocity($0) }
+                    ), in: 1...127) {
+                        Text("Vel \(document.keyboardVelocity)")
+                            .monospacedDigit()
+                    }
+
+                    Stepper(value: Binding(
+                        get: { document.keyboardStartNote / 12 },
+                        set: { document.setKeyboardStartNote($0 * 12) }
+                    ), in: 0...5) {
+                        Text("Oct \(document.keyboardStartNote / 12)")
+                            .monospacedDigit()
+                    }
+                }
+                .font(.caption)
             }
+            .frame(width: 260, alignment: .leading)
 
             PianoKeyboardRepresentable(
+                startNote: document.keyboardStartNote,
+                octaveCount: 5,
                 noteOn: { document.sendKeyboardNote($0, isOn: true) },
                 noteOff: { document.sendKeyboardNote($0, isOn: false) }
             )
@@ -2713,6 +2822,8 @@ struct LiveKeyboardView: View {
 }
 
 struct PianoKeyboardRepresentable: NSViewRepresentable {
+    var startNote: Int
+    var octaveCount: Int
     var noteOn: (Int) -> Void
     var noteOff: (Int) -> Void
 
@@ -2722,6 +2833,8 @@ struct PianoKeyboardRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PianoKeyboardNSView {
         let view = PianoKeyboardNSView()
+        view.startNote = startNote
+        view.octaveCount = octaveCount
         view.noteOn = context.coordinator.noteOn
         view.noteOff = context.coordinator.noteOff
         return view
@@ -2730,6 +2843,8 @@ struct PianoKeyboardRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: PianoKeyboardNSView, context: Context) {
         context.coordinator.noteOn = noteOn
         context.coordinator.noteOff = noteOff
+        nsView.startNote = startNote
+        nsView.octaveCount = octaveCount
         nsView.noteOn = context.coordinator.noteOn
         nsView.noteOff = context.coordinator.noteOff
     }
@@ -2748,9 +2863,20 @@ struct PianoKeyboardRepresentable: NSViewRepresentable {
 final class PianoKeyboardNSView: NSView {
     var noteOn: (Int) -> Void = { _ in }
     var noteOff: (Int) -> Void = { _ in }
-
-    private let startNote = 36
-    private let octaveCount = 5
+    var startNote = 36 {
+        didSet {
+            startNote = min(max(startNote, 0), 127)
+            stopActiveNote()
+            needsDisplay = true
+        }
+    }
+    var octaveCount = 5 {
+        didSet {
+            octaveCount = min(max(octaveCount, 1), 8)
+            stopActiveNote()
+            needsDisplay = true
+        }
+    }
     private var activeNote: Int?
     private var tracking: NSTrackingArea?
 
@@ -4632,7 +4758,10 @@ struct OperatorInspector: View {
             }
 
             OperatorControlGroup(title: "Envelope") {
-                OperatorEnvelopeView(operatorData: operatorData)
+                OperatorEnvelopeView(
+                    operatorData: operatorData,
+                    updateOperator: updateOperator
+                )
                     .frame(height: 96)
                 operatorStepper("Attack Rate", value: operatorData.attackRate, range: 0...31) { try operatorData.settingAttackRate($0) }
                 operatorStepper("Velocity to Attack", value: operatorData.velocitySensitivityForAttackRate, range: 0...7) { try operatorData.settingVelocitySensitivityForAttackRate($0) }
@@ -4744,71 +4873,173 @@ struct OperatorInspector: View {
 
 struct OperatorEnvelopeView: View {
     var operatorData: FB01VoiceOperatorData
+    var updateOperator: (FB01VoiceOperatorData) -> Void
+    @State private var activeHandle: EnvelopeHandle?
 
     var body: some View {
-        Canvas { context, size in
-            let inset: CGFloat = 8
-            let rect = CGRect(
-                x: inset,
-                y: inset,
-                width: max(size.width - inset * 2, 1),
-                height: max(size.height - inset * 2, 1)
-            )
-            let sustainY = rect.maxY - rect.height * CGFloat(operatorData.sustainLevel) / 15
-            let attackWidth = segmentWidth(rate: operatorData.attackRate, maxRate: 31, rect: rect)
-            let decay1Width = segmentWidth(rate: operatorData.decay1Rate, maxRate: 15, rect: rect)
-            let decay2Width = segmentWidth(rate: operatorData.decay2Rate, maxRate: 31, rect: rect)
-            let releaseWidth = segmentWidth(rate: operatorData.releaseRate, maxRate: 15, rect: rect)
-            let scale = rect.width / max(attackWidth + decay1Width + decay2Width + releaseWidth, 1)
+        GeometryReader { proxy in
+            let size = proxy.size
+            let geometry = envelopeGeometry(size: size)
 
-            let start = CGPoint(x: rect.minX, y: rect.maxY)
-            let attack = CGPoint(x: rect.minX + attackWidth * scale, y: rect.minY)
-            let decay1 = CGPoint(x: attack.x + decay1Width * scale, y: rect.minY + rect.height * 0.18)
-            let sustain = CGPoint(x: decay1.x + decay2Width * scale, y: sustainY)
-            let release = CGPoint(x: rect.maxX, y: rect.maxY)
+            Canvas { context, _ in
+                let rect = geometry.rect
 
-            var grid = Path()
-            grid.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            grid.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            grid.move(to: CGPoint(x: rect.minX, y: rect.midY))
-            grid.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
-            grid.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-            grid.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            context.stroke(grid, with: .color(.secondary.opacity(0.18)), lineWidth: 1)
+                var grid = Path()
+                grid.move(to: CGPoint(x: rect.minX, y: rect.minY))
+                grid.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+                grid.move(to: CGPoint(x: rect.minX, y: rect.midY))
+                grid.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
+                grid.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+                grid.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+                context.stroke(grid, with: .color(.secondary.opacity(0.18)), lineWidth: 1)
 
-            var fill = Path()
-            fill.move(to: start)
-            fill.addLine(to: attack)
-            fill.addLine(to: decay1)
-            fill.addLine(to: sustain)
-            fill.addLine(to: release)
-            fill.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-            fill.closeSubpath()
-            context.fill(fill, with: .color(.accentColor.opacity(0.12)))
+                var fill = Path()
+                fill.move(to: geometry.start)
+                fill.addLine(to: geometry.attack)
+                fill.addLine(to: geometry.decay1)
+                fill.addLine(to: geometry.sustain)
+                fill.addLine(to: geometry.release)
+                fill.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+                fill.closeSubpath()
+                context.fill(fill, with: .color(.accentColor.opacity(0.12)))
 
-            var line = Path()
-            line.move(to: start)
-            line.addLine(to: attack)
-            line.addLine(to: decay1)
-            line.addLine(to: sustain)
-            line.addLine(to: release)
-            context.stroke(line, with: .color(.accentColor), lineWidth: 2)
+                var line = Path()
+                line.move(to: geometry.start)
+                line.addLine(to: geometry.attack)
+                line.addLine(to: geometry.decay1)
+                line.addLine(to: geometry.sustain)
+                line.addLine(to: geometry.release)
+                context.stroke(line, with: .color(.accentColor), lineWidth: 2)
 
-            for point in [attack, decay1, sustain, release] {
-                let marker = CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7)
-                context.fill(Path(ellipseIn: marker), with: .color(.primary))
+                for handle in EnvelopeHandle.allCases {
+                    let point = geometry.point(for: handle)
+                    let marker = CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)
+                    context.fill(Path(ellipseIn: marker), with: .color(handle == activeHandle ? .accentColor : .primary))
+                }
             }
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let handle = activeHandle ?? geometry.closestHandle(to: value.location)
+                        activeHandle = handle
+                        applyDrag(location: value.location, handle: handle, geometry: geometry)
+                    }
+                    .onEnded { _ in
+                        activeHandle = nil
+                    }
+            )
         }
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
         .overlay(
             RoundedRectangle(cornerRadius: 6)
                 .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
         )
+        .help("Drag envelope points to edit attack, decay, sustain, and release.")
     }
 
     private func segmentWidth(rate: Int, maxRate: Int, rect: CGRect) -> CGFloat {
         let normalized = CGFloat(min(max(rate, 0), maxRate)) / CGFloat(maxRate)
         return rect.width * (0.12 + (1 - normalized) * 0.22)
+    }
+
+    private func envelopeGeometry(size: CGSize) -> EnvelopeGeometry {
+        let inset: CGFloat = 8
+        let rect = CGRect(
+            x: inset,
+            y: inset,
+            width: max(size.width - inset * 2, 1),
+            height: max(size.height - inset * 2, 1)
+        )
+        let sustainY = rect.maxY - rect.height * CGFloat(operatorData.sustainLevel) / 15
+        let attackWidth = segmentWidth(rate: operatorData.attackRate, maxRate: 31, rect: rect)
+        let decay1Width = segmentWidth(rate: operatorData.decay1Rate, maxRate: 15, rect: rect)
+        let decay2Width = segmentWidth(rate: operatorData.decay2Rate, maxRate: 31, rect: rect)
+        let releaseWidth = segmentWidth(rate: operatorData.releaseRate, maxRate: 15, rect: rect)
+        let scale = rect.width / max(attackWidth + decay1Width + decay2Width + releaseWidth, 1)
+
+        let start = CGPoint(x: rect.minX, y: rect.maxY)
+        let attack = CGPoint(x: rect.minX + attackWidth * scale, y: rect.minY)
+        let decay1 = CGPoint(x: attack.x + decay1Width * scale, y: rect.minY + rect.height * 0.18)
+        let sustain = CGPoint(x: decay1.x + decay2Width * scale, y: sustainY)
+        let release = CGPoint(x: rect.maxX, y: rect.maxY)
+        return EnvelopeGeometry(rect: rect, start: start, attack: attack, decay1: decay1, sustain: sustain, release: release)
+    }
+
+    private func applyDrag(location: CGPoint, handle: EnvelopeHandle, geometry: EnvelopeGeometry) {
+        let rect = geometry.rect
+        let clampedX = min(max(location.x, rect.minX), rect.maxX)
+        let clampedY = min(max(location.y, rect.minY), rect.maxY)
+        let relativeX = (clampedX - rect.minX) / max(rect.width, 1)
+        let relativeY = (clampedY - rect.minY) / max(rect.height, 1)
+
+        do {
+            let updated: FB01VoiceOperatorData
+            switch handle {
+            case .attack:
+                updated = try operatorData.settingAttackRate(rate(from: relativeX, range: 0...31))
+            case .decay1:
+                updated = try operatorData.settingDecay1Rate(rate(from: relativeX, range: 0...15))
+            case .sustain:
+                updated = try operatorData
+                    .settingDecay2Rate(rate(from: relativeX, range: 0...31))
+                    .settingSustainLevel(level(from: relativeY))
+            case .release:
+                updated = try operatorData.settingReleaseRate(rate(from: 1 - relativeX, range: 0...15))
+            }
+            updateOperator(updated)
+        } catch {
+            return
+        }
+    }
+
+    private func rate(from value: CGFloat, range: ClosedRange<Int>) -> Int {
+        let clamped = min(max(value, 0), 1)
+        return min(max(Int((clamped * CGFloat(range.upperBound)).rounded()), range.lowerBound), range.upperBound)
+    }
+
+    private func level(from value: CGFloat) -> Int {
+        min(max(Int(((1 - min(max(value, 0), 1)) * 15).rounded()), 0), 15)
+    }
+}
+
+private enum EnvelopeHandle: CaseIterable {
+    case attack
+    case decay1
+    case sustain
+    case release
+}
+
+private struct EnvelopeGeometry {
+    var rect: CGRect
+    var start: CGPoint
+    var attack: CGPoint
+    var decay1: CGPoint
+    var sustain: CGPoint
+    var release: CGPoint
+
+    func point(for handle: EnvelopeHandle) -> CGPoint {
+        switch handle {
+        case .attack:
+            attack
+        case .decay1:
+            decay1
+        case .sustain:
+            sustain
+        case .release:
+            release
+        }
+    }
+
+    func closestHandle(to point: CGPoint) -> EnvelopeHandle {
+        EnvelopeHandle.allCases.min { lhs, rhs in
+            distanceSquared(from: point, to: self.point(for: lhs)) < distanceSquared(from: point, to: self.point(for: rhs))
+        } ?? .sustain
+    }
+
+    private func distanceSquared(from a: CGPoint, to b: CGPoint) -> CGFloat {
+        let dx = a.x - b.x
+        let dy = a.y - b.y
+        return dx * dx + dy * dy
     }
 }
 

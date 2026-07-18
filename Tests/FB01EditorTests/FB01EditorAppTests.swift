@@ -172,6 +172,39 @@ import Testing
 }
 
 @MainActor
+@Test func voiceStoreReadbackMapsSlotsToRAMBanks() throws {
+    let model = DocumentModel()
+
+    #expect(try model.voiceRAMBankRequestKind(forVoiceSlot: 0) == .voiceBank(1))
+    #expect(try model.voiceRAMBankRequestKind(forVoiceSlot: 47) == .voiceBank(1))
+    #expect(try model.voiceRAMBankRequestKind(forVoiceSlot: 48) == .voiceBank(2))
+    #expect(try model.voiceRAMBankRequestKind(forVoiceSlot: 95) == .voiceBank(2))
+
+    #expect(throws: FB01SysExError.self) {
+        _ = try model.voiceRAMBankRequestKind(forVoiceSlot: 96)
+    }
+}
+
+@MainActor
+@Test func storedVoicePayloadExtractsVoiceFromFetchedBank() throws {
+    let model = DocumentModel()
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-1",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+    let bytes = try artifact.sysexBytes
+
+    let firstVoice = try #require(try model.storedVoicePayload(from: [bytes], voiceSlot: 0))
+    let secondVoice = try #require(try model.storedVoicePayload(from: [bytes], voiceSlot: 1))
+
+    #expect(firstVoice.name == "Brass")
+    #expect(secondVoice.name == "Horn")
+    #expect(try model.storedVoicePayload(from: [bytes], voiceSlot: 48) == nil)
+}
+
+@MainActor
 @Test func systemChannelSelectionClampsToFB01Range() {
     let model = DocumentModel()
 
