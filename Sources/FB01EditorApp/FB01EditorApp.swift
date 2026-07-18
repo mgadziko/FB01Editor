@@ -412,9 +412,18 @@ private struct VoiceDocumentStoreOptions: Sendable {
 private enum VoiceDocumentFetchSource: Sendable {
     case instrument(Int)
     case storedSlot(location: VoiceDocumentFetchLocation, voiceNumber: Int)
+
+    func title(nameLookup: VoiceDocumentFetchNameLookup = .empty) -> String {
+        switch self {
+        case .instrument(let instrument):
+            return "instrument \(instrument + 1) voice"
+        case let .storedSlot(location, voiceNumber):
+            return nameLookup.sourceTitle(location: location, voiceNumber: voiceNumber + 1)
+        }
+    }
 }
 
-private enum VoiceDocumentFetchLocation: Sendable {
+enum VoiceDocumentFetchLocation: Sendable {
     case bank(Int)
     case voiceRAM1
 
@@ -434,6 +443,138 @@ private enum VoiceDocumentFetchLocation: Sendable {
         case .voiceRAM1:
             .voiceRAM1
         }
+    }
+
+    var menuTitle: String {
+        switch self {
+        case .bank(1):
+            "Bank 1 RAM"
+        case .bank(2):
+            "Bank 2 RAM"
+        case .bank(let bank):
+            "Bank \(bank) ROM\(bank - 2)"
+        case .voiceRAM1:
+            "Voice RAM 1"
+        }
+    }
+}
+
+struct FB01FactoryVoiceNames {
+    static let namesByBank: [Int: [String]] = [
+        3: [
+            "Brass", "Horn", "Trumpet", "LoStrg", "Strings", "Piano", "NewEP", "EGrand",
+            "Jazz Gt", "EBass", "WodBass", "EOrgan1", "EOrgan2", "POrgan1", "POrgan2", "Flute",
+            "Picolo", "Oboe", "Clarine", "Glocken", "Vibes", "Xylophn", "Koto", "Zither",
+            "Clav", "Harpsic", "Bells", "Harp", "SmadSyn", "Harmoni", "SteelDr", "Timpani",
+            "LoStrg2", "Horn Lo", "Whistle", "zingPlp", "Metal", "Heavy", "FunkSyn", "Voices",
+            "Marimba", "EBass2", "SnareDr", "RD Cymb", "Tom Tom", "Mars to", "Storm", "Windbel",
+        ],
+        4: [
+            "UpPiano", "SPiano", "Piano2", "Piano3", "Piano4", "Piano5", "PhGrand", "Grand",
+            "DpGrand", "LPiano1", "LPiano2", "EGrand2", "Honkey1", "Honkey2", "Pfbell", "PFvibe",
+            "NewEP2", "NewEP3", "NewEP4", "NewEP5", "EPiano1", "EPiano2", "EPiano3", "EPiano4",
+            "EPiano5", "HighTin", "HardTin", "PercPf", "WoodPf", "EPStrng", "EPBrass", "Clav2",
+            "Clav3", "Clav4", "FuzzClv", "MuteClv", "MuteCl2", "SynClv1", "SynClv2", "SynClv3",
+            "SynClv4", "Harpsi2", "Harpsi3", "Harpsi4", "Harpsi5", "Circut", "Celeste", "Squeeze",
+        ],
+        5: [
+            "Horn2", "Horn3", "Horns", "Flugelh", "Trombon", "Trump2", "Brass2", "Brass3",
+            "HardBr1", "HardBr2", "HardBr3", "HardBr4", "HardBr5", "PercBr1", "PercBr2", "String1",
+            "String2", "String3", "String4", "SoloVio", "RichSt1", "RichSt2", "RichSt3", "RichSt4",
+            "Cello1", "Cello2", "LoStrg3", "LoStrg4", "LoStrg5", "Orchestr", "5th Str", "Pizzic1",
+            "Pizzic2", "Flute2", "Flute3", "Flute4", "Pan Flt", "SlowFlt", "5th Flt", "Oboe2",
+            "Bassoon", "Reed", "Harmon2", "Harmon3", "Harmon4", "MonoSax", "Sax 1", "Sax 2",
+        ],
+        6: [
+            "FnkSyn2", "FnkSyn3", "SynOrgn", "SynFeed", "SynHarm", "SynClar", "SynLead", "HuffTak",
+            "SoHeavy", "Hollow", "Schmooh", "MonoSyn", "Cheeky", "SynBell", "SynPluk", "EBass3",
+            "Rubbass", "SolBass", "PlukBas", "PortBas", "Fretles", "FrplBs", "MonoBas", "SynBas1",
+            "SynBas2", "SynBas3", "SynBas4", "SynBas5", "SynBas6", "SynBas7", "Marimb2", "Marimb3",
+            "Xylophn2", "Vibe2", "Vibe3", "Glockn2", "TubeBe1", "TubeBe2", "Bells 2", "TempleG",
+            "SteelDr", "ElectDr", "HandDr", "SynTimp", "clock", "Heifer", "SnareD2", "SnareD3",
+        ],
+        7: [
+            "JOrgan1", "JOrgan2", "COrgan1", "COrgan2", "EOrgan3", "EOrgan4", "EOrgan5", "EOrgan6",
+            "EOrgan7", "EOrgan8", "SmlPipe", "MidPipe", "BigPipe", "StPipe", "Organ", "Guitar",
+            "Folk Gt", "PluckGt", "BriteGt", "Fuzz Gt", "Zither2", "Lute", "Banjo", "SftHarp",
+            "Harp2", "Harp3", "SftKoto", "HitKoto", "Sitar1", "Sitar2", "HuffSyn", "Fantasy",
+            "Synvoic", "M.Voice", "VSAR", "Racing", "Water", "WildWar", "Ghostie", "Wave",
+            "Space 1", "SpChime", "SpTalk", "Winds", "Smash", "Alarm", "Helicop", "SineWav",
+        ],
+    ]
+
+    static func name(bank: Int, voiceNumber: Int) -> String? {
+        guard let names = namesByBank[bank],
+              (1...names.count).contains(voiceNumber) else {
+            return nil
+        }
+        return names[voiceNumber - 1]
+    }
+}
+
+struct VoiceDocumentFetchNameLookup: Sendable {
+    static let empty = VoiceDocumentFetchNameLookup(ramBankNames: [:])
+
+    var ramBankNames: [Int: [String]]
+
+    func name(location: VoiceDocumentFetchLocation, voiceNumber: Int) -> String? {
+        switch location {
+        case .bank(let bank) where bank <= 2:
+            guard let names = ramBankNames[bank],
+                  (1...names.count).contains(voiceNumber) else {
+                return nil
+            }
+            return names[voiceNumber - 1]
+        case .bank(let bank):
+            return FB01FactoryVoiceNames.name(bank: bank, voiceNumber: voiceNumber)
+        case .voiceRAM1:
+            return nil
+        }
+    }
+
+    func voiceMenuTitle(location: VoiceDocumentFetchLocation, voiceNumber: Int) -> String {
+        guard let name = name(location: location, voiceNumber: voiceNumber), !name.isEmpty else {
+            return "Voice \(voiceNumber)"
+        }
+        return String(format: "%02d %@", voiceNumber, name)
+    }
+
+    func sourceTitle(location: VoiceDocumentFetchLocation, voiceNumber: Int) -> String {
+        guard let name = name(location: location, voiceNumber: voiceNumber), !name.isEmpty else {
+            return "\(location.title) Voice \(voiceNumber)"
+        }
+        return "\(location.title) Voice \(voiceNumber): \(name)"
+    }
+}
+
+struct FB01FactoryConfigurationNames {
+    static let namesBySlot: [Int: String] = [
+        17: "single",
+        18: "mono 8",
+        19: "dual",
+        20: "split",
+    ]
+
+    static func name(slot: Int) -> String? {
+        namesBySlot[slot]
+    }
+}
+
+struct ConfigurationFetchNameLookup: Sendable {
+    static let empty = ConfigurationFetchNameLookup(storedNames: [:])
+
+    var storedNames: [Int: String]
+
+    func name(slot: Int) -> String? {
+        storedNames[slot] ?? FB01FactoryConfigurationNames.name(slot: slot)
+    }
+
+    func menuTitle(slot: Int) -> String {
+        let readOnly = slot >= 17 ? " Read Only" : ""
+        guard let name = name(slot: slot), !name.isEmpty else {
+            return "Configuration \(slot)\(readOnly)"
+        }
+        return "Configuration \(slot) - \(name)\(readOnly)"
     }
 }
 
@@ -574,6 +715,7 @@ private final class VoiceFetchDialogController: NSObject {
     weak var instrumentPopup: NSPopUpButton?
     weak var bankPopup: NSPopUpButton?
     weak var voicePopup: NSPopUpButton?
+    var updateVoiceChoices: (() -> Void)?
 
     @objc func accept() {
         result = .OK
@@ -590,6 +732,7 @@ private final class VoiceFetchDialogController: NSObject {
         instrumentPopup?.isEnabled = !isStoredVoiceFetch
         bankPopup?.isEnabled = isStoredVoiceFetch
         voicePopup?.isEnabled = isStoredVoiceFetch
+        updateVoiceChoices?()
     }
 }
 
@@ -732,18 +875,34 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func fetchFromDevice(device: DocumentModel) {
         guard !isBusy else { return }
-        guard let source = Self.chooseFetchSource(title: "Fetch Voice from Device into Current Document", actionTitle: "Fetch") else {
-            return
-        }
-
         let sourceIndex = device.selectedSourceIndex
         let destinationIndex = device.selectedDestinationIndex
         let systemChannel = device.systemChannel
+
         isBusy = true
-        statusMessage = "Fetching voice from FB-01; waiting for device response..."
+        statusMessage = "Reading Bank 1 and Bank 2 voice names from FB-01..."
         errorMessage = nil
 
         Task {
+            let nameLookup = await Task.detached(priority: .userInitiated) {
+                Self.fetchRAMVoiceNames(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                )
+            }.value
+
+            guard let source = Self.chooseFetchSource(
+                title: "Fetch Voice from Device into Current Document",
+                actionTitle: "Fetch",
+                nameLookup: nameLookup
+            ) else {
+                statusMessage = nil
+                isBusy = false
+                return
+            }
+
+            statusMessage = "Fetching voice from FB-01; waiting for device response..."
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try Self.fetchVoice(source: source, sourceIndex: sourceIndex, destinationIndex: destinationIndex, systemChannel: systemChannel)
@@ -751,7 +910,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 voice = result.voice
                 self.systemChannel = result.systemChannel
                 fileURL = nil
-                statusMessage = "Fetched \(result.title) into this document."
+                statusMessage = "Fetched \(source.title(nameLookup: nameLookup)) into this document."
                 errorMessage = nil
             } catch {
                 errorMessage = "Fetch failed: \(error)"
@@ -955,7 +1114,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    private static func chooseFetchSource(title: String, actionTitle: String) -> VoiceDocumentFetchSource? {
+    private static func chooseFetchSource(title: String, actionTitle: String, nameLookup: VoiceDocumentFetchNameLookup = .empty) -> VoiceDocumentFetchSource? {
         let sourcePopup = NSPopUpButton(frame: .zero, pullsDown: false)
         sourcePopup.addItem(withTitle: "Current Instrument Voice")
         sourcePopup.addItem(withTitle: "Stored Voice Slot")
@@ -968,19 +1127,26 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         let fetchLocations: [VoiceDocumentFetchLocation] = (1...7).map { .bank($0) } + [.voiceRAM1]
         for location in fetchLocations {
-            bankPopup.addItem(withTitle: location.title)
+            bankPopup.addItem(withTitle: location.menuTitle)
         }
 
         let voicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for voice in 1...FB01VoiceBankData.voiceCount {
-            voicePopup.addItem(withTitle: "Voice \(voice)")
-        }
 
         let controller = VoiceFetchDialogController()
         controller.sourcePopup = sourcePopup
         controller.instrumentPopup = instrumentPopup
         controller.bankPopup = bankPopup
         controller.voicePopup = voicePopup
+        controller.updateVoiceChoices = {
+            let selectedIndex = max(0, min(bankPopup.indexOfSelectedItem, fetchLocations.count - 1))
+            let location = fetchLocations[selectedIndex]
+            let selectedVoice = max(0, voicePopup.indexOfSelectedItem)
+            voicePopup.removeAllItems()
+            for voiceNumber in 1...FB01VoiceBankData.voiceCount {
+                voicePopup.addItem(withTitle: nameLookup.voiceMenuTitle(location: location, voiceNumber: voiceNumber))
+            }
+            voicePopup.selectItem(at: min(selectedVoice, FB01VoiceBankData.voiceCount - 1))
+        }
 
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 330),
@@ -1040,6 +1206,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         sourcePopup.target = controller
         sourcePopup.action = #selector(VoiceFetchDialogController.updateControls)
+        bankPopup.target = controller
+        bankPopup.action = #selector(VoiceFetchDialogController.updateControls)
         controller.updateControls()
 
         panel.makeKeyAndOrderFront(nil)
@@ -1142,6 +1310,37 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 return bankData.voices.first { $0.number == voiceNumber + 1 }?.voice
             default:
                 break
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func fetchRAMVoiceNames(sourceIndex: Int, destinationIndex: Int, systemChannel: Int) -> VoiceDocumentFetchNameLookup {
+        var namesByBank: [Int: [String]] = [:]
+        for bank in 1...2 {
+            guard let bytes = try? FB01MIDI.request(
+                .voiceBank(bank),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 5
+            ),
+                  let names = try? voiceNames(fromVoiceBankDump: bytes, expectedBank: bank) else {
+                continue
+            }
+            namesByBank[bank] = names
+        }
+        return VoiceDocumentFetchNameLookup(ramBankNames: namesByBank)
+    }
+
+    nonisolated private static func voiceNames(fromVoiceBankDump bytes: [UInt8], expectedBank: Int) throws -> [String]? {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            if case let .voiceBankDumpData(_, fetchedBank, _, data, _) = message, fetchedBank == expectedBank - 1 {
+                let bankData = try FB01VoiceBankData(bank: fetchedBank, data: data)
+                return bankData.voices.map { summary in
+                    summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
+                }
             }
         }
         return nil
@@ -1270,18 +1469,34 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     func fetchFromDevice(device: DocumentModel) {
         guard !isBusy else { return }
-        guard let options = Self.chooseFetchOptions(title: "Fetch Configuration from Device into Current Document", actionTitle: "Fetch") else {
-            return
-        }
-
         let sourceIndex = device.selectedSourceIndex
         let destinationIndex = device.selectedDestinationIndex
         let systemChannel = device.systemChannel
+
         isBusy = true
-        statusMessage = "Fetching configuration from FB-01; waiting for device response..."
+        statusMessage = "Reading configuration names from FB-01..."
         errorMessage = nil
 
         Task {
+            let nameLookup = await Task.detached(priority: .userInitiated) {
+                Self.fetchConfigurationNames(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                )
+            }.value
+
+            guard let options = Self.chooseFetchOptions(
+                title: "Fetch Configuration from Device into Current Document",
+                actionTitle: "Fetch",
+                nameLookup: nameLookup
+            ) else {
+                statusMessage = nil
+                isBusy = false
+                return
+            }
+
+            statusMessage = "Fetching configuration from FB-01; waiting for device response..."
             do {
                 let kind: FB01MIDIRequestKind = options.isCurrent ? .currentConfiguration : .configuration(options.slot + 1)
                 let result = try await Task.detached(priority: .userInitiated) { () -> (FB01ConfigurationData, Int) in
@@ -1300,7 +1515,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                 fileURL = nil
                 statusMessage = options.isCurrent
                     ? "Fetched current configuration into this document."
-                    : "Fetched configuration \(options.slot + 1) into this document."
+                    : "Fetched \(nameLookup.menuTitle(slot: options.slot + 1)) into this document."
                 errorMessage = nil
             } catch {
                 errorMessage = "Fetch failed: \(error)"
@@ -1439,12 +1654,12 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         return candidates[popup.indexOfSelectedItem]
     }
 
-    private static func chooseFetchOptions(title: String, actionTitle: String) -> ConfigurationFetchOptions? {
+    private static func chooseFetchOptions(title: String, actionTitle: String, nameLookup: ConfigurationFetchNameLookup = .empty) -> ConfigurationFetchOptions? {
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.addItem(withTitle: "Current Configuration")
         popup.lastItem?.representedObject = ConfigurationFetchOptions(isCurrent: true, slot: 0)
         for slot in 0..<20 {
-            popup.addItem(withTitle: "Configuration \(slot + 1)\(slot >= 16 ? " Read Only" : "")")
+            popup.addItem(withTitle: nameLookup.menuTitle(slot: slot + 1))
             popup.lastItem?.representedObject = ConfigurationFetchOptions(isCurrent: false, slot: slot)
         }
 
@@ -1507,6 +1722,36 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
             return nil
         }
         return popup.selectedItem?.representedObject as? ConfigurationFetchOptions
+    }
+
+    nonisolated private static func fetchConfigurationNames(sourceIndex: Int, destinationIndex: Int, systemChannel: Int) -> ConfigurationFetchNameLookup {
+        var names: [Int: String] = [:]
+        for slot in 1...16 {
+            guard let bytes = try? FB01MIDI.request(
+                .configuration(slot),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 1.25
+            ),
+                  let name = try? configurationName(fromDump: bytes),
+                  !name.isEmpty else {
+                continue
+            }
+            names[slot] = name
+        }
+        return ConfigurationFetchNameLookup(storedNames: names)
+    }
+
+    nonisolated private static func configurationName(fromDump bytes: [UInt8]) throws -> String? {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            if case let .configurationDump(_, _, packet) = message {
+                let configuration = try FB01ConfigurationData(bytes: packet.payload)
+                return configuration.name.isEmpty ? "Untitled" : configuration.name
+            }
+        }
+        return nil
     }
 
     private static func chooseStoreOptions(defaultConfigurationName: String) -> ConfigurationDocumentStoreOptions? {

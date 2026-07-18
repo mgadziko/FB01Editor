@@ -88,6 +88,35 @@ import Testing
     #expect(configuration.title == "CHANGED (Working)")
 }
 
+@Test func factoryVoiceNameLookupUsesROMBankNames() {
+    #expect(FB01FactoryVoiceNames.namesByBank.keys.sorted() == [3, 4, 5, 6, 7])
+    #expect(FB01FactoryVoiceNames.namesByBank.values.allSatisfy { $0.count == FB01VoiceBankData.voiceCount })
+    #expect(FB01FactoryVoiceNames.name(bank: 3, voiceNumber: 1) == "Brass")
+    #expect(FB01FactoryVoiceNames.name(bank: 4, voiceNumber: 48) == "Squeeze")
+    #expect(FB01FactoryVoiceNames.name(bank: 7, voiceNumber: 40) == "Wave")
+    #expect(FB01FactoryVoiceNames.name(bank: 1, voiceNumber: 1) == nil)
+}
+
+@Test func voiceFetchLookupPrefersLiveRAMNamesAndUsesROMFallbacks() {
+    let lookup = VoiceDocumentFetchNameLookup(ramBankNames: [
+        1: ["RAMONE"] + Array(repeating: "Other", count: FB01VoiceBankData.voiceCount - 1),
+    ])
+
+    #expect(lookup.voiceMenuTitle(location: .bank(1), voiceNumber: 1) == "01 RAMONE")
+    #expect(lookup.voiceMenuTitle(location: .bank(3), voiceNumber: 1) == "01 Brass")
+    #expect(lookup.voiceMenuTitle(location: .voiceRAM1, voiceNumber: 1) == "Voice 1")
+}
+
+@Test func configurationFetchLookupUsesFactoryReadOnlyNames() {
+    let lookup = ConfigurationFetchNameLookup(storedNames: [1: "USER 1"])
+
+    #expect(lookup.menuTitle(slot: 1) == "Configuration 1 - USER 1")
+    #expect(lookup.menuTitle(slot: 17) == "Configuration 17 - single Read Only")
+    #expect(lookup.menuTitle(slot: 18) == "Configuration 18 - mono 8 Read Only")
+    #expect(lookup.menuTitle(slot: 20) == "Configuration 20 - split Read Only")
+    #expect(lookup.menuTitle(slot: 8) == "Configuration 8")
+}
+
 @MainActor
 @Test func selectedLibraryVoicePayloadUsesCurrentVoiceSelection() throws {
     let model = DocumentModel()
