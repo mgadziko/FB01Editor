@@ -115,6 +115,9 @@ struct ActiveEditorDocumentActions {
     var save: () -> Void
     var saveAs: () -> Void
     var reset: () -> Void
+    var importFromDisk: () -> Void
+    var fetchFromDevice: (DocumentModel) -> Void
+    var storeToDevice: (DocumentModel) -> Void
     var isEdited: Bool
 }
 
@@ -147,6 +150,53 @@ struct EditorDocumentCommands: View {
             openWindow(id: "configuration-document", value: id)
         }
         .keyboardShortcut("n", modifiers: [.command, .shift])
+
+        Divider()
+
+        Button("Load Voice Document...") {
+            if let id = workspace.loadVoiceDocument() {
+                openWindow(id: "voice-document", value: id)
+            }
+        }
+        .keyboardShortcut("o", modifiers: [.command, .option])
+
+        Button("Load Configuration Document...") {
+            if let id = workspace.loadConfigurationDocument() {
+                openWindow(id: "configuration-document", value: id)
+            }
+        }
+        .keyboardShortcut("o", modifiers: [.command, .option, .shift])
+
+        Button("Fetch Voice Document...") {
+            if let id = workspace.fetchVoiceDocument(device: document) {
+                openWindow(id: "voice-document", value: id)
+            }
+        }
+        .disabled(document.isBusy)
+
+        Button("Fetch Configuration Document...") {
+            if let id = workspace.fetchConfigurationDocument(device: document) {
+                openWindow(id: "configuration-document", value: id)
+            }
+        }
+        .disabled(document.isBusy)
+
+        Divider()
+
+        Button("Import Into Current Document...") {
+            activeDocumentActions?.importFromDisk()
+        }
+        .disabled(activeDocumentActions == nil)
+
+        Button("Fetch Into Current Document...") {
+            activeDocumentActions?.fetchFromDevice(document)
+        }
+        .disabled(activeDocumentActions == nil || document.isBusy)
+
+        Button("Store Current Document to FB-01...") {
+            activeDocumentActions?.storeToDevice(document)
+        }
+        .disabled(activeDocumentActions == nil || document.isBusy)
 
         Divider()
 
@@ -194,6 +244,38 @@ final class EditorDocumentWorkspace: ObservableObject {
         let document = ConfigurationDocumentModel(configuration: configuration, systemChannel: systemChannel)
         configurationDocuments[document.id] = document
         return document.id
+    }
+
+    func loadVoiceDocument() -> UUID? {
+        guard let loaded = VoiceDocumentModel.loadFromDisk() else {
+            return nil
+        }
+        voiceDocuments[loaded.id] = loaded
+        return loaded.id
+    }
+
+    func loadConfigurationDocument() -> UUID? {
+        guard let loaded = ConfigurationDocumentModel.loadFromDisk() else {
+            return nil
+        }
+        configurationDocuments[loaded.id] = loaded
+        return loaded.id
+    }
+
+    func fetchVoiceDocument(device: DocumentModel) -> UUID? {
+        guard let fetched = VoiceDocumentModel.fetchFromDevice(device: device) else {
+            return nil
+        }
+        voiceDocuments[fetched.id] = fetched
+        return fetched.id
+    }
+
+    func fetchConfigurationDocument(device: DocumentModel) -> UUID? {
+        guard let fetched = ConfigurationDocumentModel.fetchFromDevice(device: device) else {
+            return nil
+        }
+        configurationDocuments[fetched.id] = fetched
+        return fetched.id
     }
 
     func voiceDocument(id: UUID) -> VoiceDocumentModel? {
@@ -261,13 +343,43 @@ enum EditorDocumentTemplates {
 }
 
 private enum EditorFileDefaultsKey {
+    static let lastLoadDirectory = "FB01Editor.lastLoadDirectory"
     static let lastSaveDirectory = "FB01Editor.lastSaveDirectory"
 }
 
+private struct VoiceDocumentStoreOptions {
+    var instrument: Int
+    var bank: Int
+    var voiceNumber: Int
+    var confirmAfterStore: Bool
+
+    var voiceSlot: Int {
+        bank * FB01VoiceBankData.voiceCount + voiceNumber
+    }
+}
+
+private struct ConfigurationFetchOptions {
+    var isCurrent: Bool
+    var slot: Int
+}
+
+private struct ConfigurationDocumentStoreOptions {
+    var slot: Int
+    var confirmAfterStore: Bool
+}
+
+private func preferredEditorLoadDirectoryURL() -> URL {
+    preferredEditorDirectory(defaultsKey: EditorFileDefaultsKey.lastLoadDirectory)
+}
+
 private func preferredEditorSaveDirectoryURL() -> URL {
+    preferredEditorDirectory(defaultsKey: EditorFileDefaultsKey.lastSaveDirectory)
+}
+
+private func preferredEditorDirectory(defaultsKey: String) -> URL {
     ensureDefaultEditorFileDirectory()
 
-    if let path = UserDefaults.standard.string(forKey: EditorFileDefaultsKey.lastSaveDirectory) {
+    if let path = UserDefaults.standard.string(forKey: defaultsKey) {
         let url = URL(fileURLWithPath: path, isDirectory: true)
         if editorDirectoryExists(at: url) {
             return url
@@ -277,7 +389,15 @@ private func preferredEditorSaveDirectoryURL() -> URL {
     return defaultEditorFileDirectoryURL
 }
 
+private func rememberEditorLoadDirectory(for url: URL) {
+    rememberEditorDirectory(for: url, defaultsKey: EditorFileDefaultsKey.lastLoadDirectory)
+}
+
 private func rememberEditorSaveDirectory(for url: URL) {
+    rememberEditorDirectory(for: url, defaultsKey: EditorFileDefaultsKey.lastSaveDirectory)
+}
+
+private func rememberEditorDirectory(for url: URL, defaultsKey: String) {
     let directoryURL: URL
     var isDirectory: ObjCBool = false
     if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
@@ -289,7 +409,7 @@ private func rememberEditorSaveDirectory(for url: URL) {
     guard editorDirectoryExists(at: directoryURL) else {
         return
     }
-    UserDefaults.standard.set(directoryURL.path, forKey: EditorFileDefaultsKey.lastSaveDirectory)
+    UserDefaults.standard.set(directoryURL.path, forKey: defaultsKey)
 }
 
 private func ensureDefaultEditorFileDirectory() {
@@ -320,6 +440,42 @@ private func safeEditorFileName(_ name: String, fallback: String) -> String {
         .map { allowed.contains($0) ? Character($0) : "-" }
         .reduce("") { $0 + String($1) }
     return sanitized.isEmpty ? fallback : sanitized
+}
+
+@MainActor
+private func showEditorError(title: String, message: String) {
+    let alert = NSAlert()
+    alert.messageText = title
+    alert.informativeText = message
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "OK")
+    alert.runModal()
+}
+
+@MainActor
+private func labelledEditorPopup(label: String, popup: NSPopUpButton) -> NSView {
+    let container = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 30))
+
+    let text = NSTextField(labelWithString: label)
+    text.frame = NSRect(x: 0, y: 6, width: 96, height: 18)
+    text.alignment = .right
+
+    popup.frame = NSRect(x: 108, y: 2, width: 300, height: 26)
+    popup.autoresizingMask = [.width]
+
+    container.addSubview(text)
+    container.addSubview(popup)
+    return container
+}
+
+@MainActor
+private func makeWarningLabel(_ string: String) -> NSTextField {
+    let text = NSTextField(wrappingLabelWithString: string)
+    text.textColor = .secondaryLabelColor
+    text.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+    text.maximumNumberOfLines = 3
+    text.preferredMaxLayoutWidth = 330
+    return text
 }
 
 @MainActor
@@ -387,6 +543,162 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         save(to: url)
     }
 
+    static func loadFromDisk() -> VoiceDocumentModel? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.sysex, .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = preferredEditorLoadDirectoryURL()
+        panel.message = "Load a voice SysEx document into a new voice window."
+        panel.prompt = "Load Voice"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return nil
+        }
+
+        do {
+            let (voice, systemChannel) = try readVoice(from: url)
+            rememberEditorLoadDirectory(for: url)
+            return VoiceDocumentModel(voice: voice, systemChannel: systemChannel, fileURL: url)
+        } catch {
+            showEditorError(title: "Load Voice Failed", message: "\(error)")
+            return nil
+        }
+    }
+
+    static func fetchFromDevice(device: DocumentModel) -> VoiceDocumentModel? {
+        guard let instrument = chooseInstrument(title: "Fetch Voice from FB-01", actionTitle: "Fetch") else {
+            return nil
+        }
+
+        do {
+            let bytes = try FB01MIDI.request(
+                .instrumentVoice(instrument + 1),
+                sourceIndex: device.selectedSourceIndex,
+                destinationIndex: device.selectedDestinationIndex,
+                systemChannel: device.systemChannel,
+                timeout: 8
+            )
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            let (voice, systemChannel) = try extractVoice(from: artifact)
+            let model = VoiceDocumentModel(voice: voice, systemChannel: systemChannel)
+            model.statusMessage = "Fetched instrument \(instrument + 1) voice from \(device.selectedSourceName)."
+            return model
+        } catch {
+            showEditorError(title: "Fetch Voice Failed", message: "\(error)")
+            return nil
+        }
+    }
+
+    func importFromDisk() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.sysex, .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = preferredEditorLoadDirectoryURL()
+        panel.message = "Import a voice SysEx document into this window, replacing its current contents."
+        panel.prompt = "Import Voice"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            let (importedVoice, _) = try Self.readVoice(from: url)
+            voice = importedVoice
+            fileURL = url
+            rememberEditorLoadDirectory(for: url)
+            statusMessage = "Imported \(url.lastPathComponent)."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Import failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    func fetchFromDevice(device: DocumentModel) {
+        guard let instrument = Self.chooseInstrument(title: "Fetch Voice into Current Document", actionTitle: "Fetch") else {
+            return
+        }
+
+        do {
+            let bytes = try FB01MIDI.request(
+                .instrumentVoice(instrument + 1),
+                sourceIndex: device.selectedSourceIndex,
+                destinationIndex: device.selectedDestinationIndex,
+                systemChannel: device.systemChannel,
+                timeout: 8
+            )
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            let (fetchedVoice, _) = try Self.extractVoice(from: artifact)
+            voice = fetchedVoice
+            fileURL = nil
+            statusMessage = "Fetched instrument \(instrument + 1) voice into this document."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Fetch failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    func storeToDevice(device: DocumentModel) {
+        guard let options = Self.chooseStoreOptions(defaultVoiceName: voice.name) else {
+            return
+        }
+
+        let voiceToStore = voice
+        let destinationIndex = device.selectedDestinationIndex
+        let sourceIndex = device.selectedSourceIndex
+        let systemChannel = device.systemChannel
+        let destinationName = device.selectedDestinationName
+        statusMessage = "Storing voice to Bank \(options.bank + 1) Voice \(options.voiceNumber + 1)..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let messages = try Self.storeMessages(
+                    voice: voiceToStore,
+                    systemChannel: systemChannel,
+                    instrument: options.instrument,
+                    voiceSlot: options.voiceSlot
+                )
+                let status = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendAndReceive(
+                        messages,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        timeout: 8,
+                        maxMessages: 1,
+                        delayBetweenMessages: 0.35
+                    )
+                }.value
+
+                if options.confirmAfterStore {
+                    let readback = try await Task.detached(priority: .userInitiated) {
+                        try FB01MIDI.request(
+                            .voiceBank(options.bank + 1),
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 15
+                        )
+                    }.value
+                    let readbackVoice = try Self.storedVoice(from: readback, bank: options.bank, voiceNumber: options.voiceNumber)
+                    let statusSuffix = try deviceStatusCode(from: status).map { " (status \(String(format: "0x%02X", $0)))" } ?? ""
+                    statusMessage = readbackVoice?.bytes == voiceToStore.bytes
+                        ? "FB-01 confirmed store to Bank \(options.bank + 1) Voice \(options.voiceNumber + 1) on \(destinationName)\(statusSuffix)."
+                        : "Stored to Bank \(options.bank + 1) Voice \(options.voiceNumber + 1), but readback did not match exactly."
+                } else {
+                    statusMessage = "Stored voice to Bank \(options.bank + 1) Voice \(options.voiceNumber + 1) on \(destinationName)."
+                }
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store failed: \(error)"
+            }
+        }
+    }
+
     private func save(to url: URL) {
         do {
             let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
@@ -400,6 +712,111 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             errorMessage = "Save failed: \(error)"
             statusMessage = nil
         }
+    }
+
+    private static func readVoice(from url: URL) throws -> (voice: FB01VoiceData, systemChannel: Int) {
+        try extractVoice(from: FB01Artifact.readSysEx(from: url))
+    }
+
+    private static func extractVoice(from artifact: FB01Artifact) throws -> (voice: FB01VoiceData, systemChannel: Int) {
+        for message in artifact.messages {
+            if case let .instrumentVoiceDump(systemChannel, _, packet) = message {
+                return (try FB01VoiceData(bytes: FB01.nibbleDecode(packet.payload)), systemChannel)
+            }
+        }
+        throw FB01AppError.noVoiceSource
+    }
+
+    private static func chooseInstrument(title: String, actionTitle: String) -> Int? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "Choose the current FB-01 instrument voice to fetch. This does not fetch whole voice banks."
+        alert.addButton(withTitle: actionTitle)
+        alert.addButton(withTitle: "Cancel")
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 240, height: 26), pullsDown: false)
+        for instrument in 1...8 {
+            popup.addItem(withTitle: "Instrument \(instrument)")
+        }
+        alert.accessoryView = labelledEditorPopup(label: "Instrument:", popup: popup)
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+        return popup.indexOfSelectedItem
+    }
+
+    private static func chooseStoreOptions(defaultVoiceName: String) -> VoiceDocumentStoreOptions? {
+        let alert = NSAlert()
+        alert.messageText = "Store Voice to FB-01"
+        alert.informativeText = "This sets Protect OFF, sends \(defaultVoiceName.isEmpty ? "this voice" : defaultVoiceName) to an instrument edit buffer, then permanently overwrites a Bank 1 or Bank 2 voice slot."
+        alert.addButton(withTitle: "Store and Overwrite")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let instrumentPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for instrument in 1...8 {
+            instrumentPopup.addItem(withTitle: "Instrument \(instrument)")
+        }
+
+        let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        bankPopup.addItem(withTitle: "Bank 1")
+        bankPopup.addItem(withTitle: "Bank 2")
+
+        let voicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for voice in 1...FB01VoiceBankData.voiceCount {
+            voicePopup.addItem(withTitle: "Voice \(voice)")
+        }
+
+        let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored bank after writing and compare the destination voice", target: nil, action: nil)
+        confirmCheckbox.state = .on
+
+        stack.addArrangedSubview(labelledEditorPopup(label: "Edit buffer:", popup: instrumentPopup))
+        stack.addArrangedSubview(labelledEditorPopup(label: "Bank:", popup: bankPopup))
+        stack.addArrangedSubview(labelledEditorPopup(label: "Voice:", popup: voicePopup))
+        stack.addArrangedSubview(confirmCheckbox)
+        stack.addArrangedSubview(makeWarningLabel("Only Bank 1 and Bank 2 are writable. Other banks are intentionally unavailable here."))
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+
+        let bank = bankPopup.indexOfSelectedItem
+        let voiceNumber = voicePopup.indexOfSelectedItem
+        return VoiceDocumentStoreOptions(
+            instrument: instrumentPopup.indexOfSelectedItem,
+            bank: bank,
+            voiceNumber: voiceNumber,
+            confirmAfterStore: confirmCheckbox.state == .on
+        )
+    }
+
+    private static func storeMessages(voice: FB01VoiceData, systemChannel: Int, instrument: Int, voiceSlot: Int) throws -> [[UInt8]] {
+        let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off))
+        let voiceMessage = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument).messages[0]
+        let storeCommand = FB01SysExMessage.command(.storeCurrentInstrumentVoice(
+            systemChannel: systemChannel,
+            instrument: instrument,
+            voiceNumber: voiceSlot
+        ))
+        return try [protectOffCommand.bytes, voiceMessage.bytes, storeCommand.bytes]
+    }
+
+    private static func storedVoice(from bytes: [UInt8], bank: Int, voiceNumber: Int) throws -> FB01VoiceData? {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            if case let .voiceBankDumpData(_, fetchedBank, _, data, _) = message, fetchedBank == bank {
+                let bankData = try FB01VoiceBankData(bank: fetchedBank, data: data)
+                return bankData.voices.first { $0.number == voiceNumber + 1 }?.voice
+            }
+        }
+        return nil
     }
 }
 
@@ -468,6 +885,164 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         save(to: url)
     }
 
+    static func loadFromDisk() -> ConfigurationDocumentModel? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.sysex, .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = preferredEditorLoadDirectoryURL()
+        panel.message = "Load a configuration SysEx document into a new configuration window."
+        panel.prompt = "Load Configuration"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return nil
+        }
+
+        do {
+            let (configuration, systemChannel) = try readConfiguration(from: url)
+            rememberEditorLoadDirectory(for: url)
+            return ConfigurationDocumentModel(configuration: configuration, systemChannel: systemChannel, fileURL: url)
+        } catch {
+            showEditorError(title: "Load Configuration Failed", message: "\(error)")
+            return nil
+        }
+    }
+
+    static func fetchFromDevice(device: DocumentModel) -> ConfigurationDocumentModel? {
+        guard let options = chooseFetchOptions(title: "Fetch Configuration from FB-01", actionTitle: "Fetch") else {
+            return nil
+        }
+
+        do {
+            let kind: FB01MIDIRequestKind = options.isCurrent ? .currentConfiguration : .configuration(options.slot + 1)
+            let bytes = try FB01MIDI.request(
+                kind,
+                sourceIndex: device.selectedSourceIndex,
+                destinationIndex: device.selectedDestinationIndex,
+                systemChannel: device.systemChannel,
+                timeout: 8
+            )
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            let (configuration, systemChannel) = try extractConfiguration(from: artifact)
+            let model = ConfigurationDocumentModel(configuration: configuration, systemChannel: systemChannel)
+            model.statusMessage = options.isCurrent
+                ? "Fetched current configuration from \(device.selectedSourceName)."
+                : "Fetched configuration \(options.slot + 1) from \(device.selectedSourceName)."
+            return model
+        } catch {
+            showEditorError(title: "Fetch Configuration Failed", message: "\(error)")
+            return nil
+        }
+    }
+
+    func importFromDisk() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.sysex, .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = preferredEditorLoadDirectoryURL()
+        panel.message = "Import a configuration SysEx document into this window, replacing its current contents."
+        panel.prompt = "Import Configuration"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            let (importedConfiguration, _) = try Self.readConfiguration(from: url)
+            configuration = importedConfiguration
+            fileURL = url
+            rememberEditorLoadDirectory(for: url)
+            statusMessage = "Imported \(url.lastPathComponent)."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Import failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    func fetchFromDevice(device: DocumentModel) {
+        guard let options = Self.chooseFetchOptions(title: "Fetch Configuration into Current Document", actionTitle: "Fetch") else {
+            return
+        }
+
+        do {
+            let kind: FB01MIDIRequestKind = options.isCurrent ? .currentConfiguration : .configuration(options.slot + 1)
+            let bytes = try FB01MIDI.request(
+                kind,
+                sourceIndex: device.selectedSourceIndex,
+                destinationIndex: device.selectedDestinationIndex,
+                systemChannel: device.systemChannel,
+                timeout: 8
+            )
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            let (fetchedConfiguration, _) = try Self.extractConfiguration(from: artifact)
+            configuration = fetchedConfiguration
+            fileURL = nil
+            statusMessage = options.isCurrent
+                ? "Fetched current configuration into this document."
+                : "Fetched configuration \(options.slot + 1) into this document."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Fetch failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    func storeToDevice(device: DocumentModel) {
+        guard let options = Self.chooseStoreOptions(defaultConfigurationName: configuration.name) else {
+            return
+        }
+
+        let configurationToStore = configuration
+        let destinationIndex = device.selectedDestinationIndex
+        let sourceIndex = device.selectedSourceIndex
+        let systemChannel = device.systemChannel
+        let destinationName = device.selectedDestinationName
+        statusMessage = "Storing configuration to slot \(options.slot + 1)..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let messages = try Self.storeMessages(
+                    configuration: configurationToStore,
+                    systemChannel: systemChannel,
+                    slot: options.slot
+                )
+                try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendSysEx([messages[0]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+                    try await Task.sleep(for: .milliseconds(300))
+                    try FB01MIDI.sendSysEx([messages[1]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+                    try await Task.sleep(for: .milliseconds(1000))
+                    try FB01MIDI.sendSysEx([messages[2]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+                }.value
+
+                if options.confirmAfterStore {
+                    let readback = try await Task.detached(priority: .userInitiated) {
+                        try await Task.sleep(for: .milliseconds(800))
+                        return try FB01MIDI.request(
+                            .configuration(options.slot + 1),
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 8
+                        )
+                    }.value
+                    let readbackConfiguration = try Self.storedConfiguration(from: readback, slot: options.slot)
+                    statusMessage = readbackConfiguration?.bytes == configurationToStore.bytes
+                        ? "FB-01 confirmed store to configuration \(options.slot + 1) on \(destinationName)."
+                        : "Stored configuration \(options.slot + 1), but readback did not match exactly."
+                } else {
+                    statusMessage = "Stored configuration \(options.slot + 1) on \(destinationName)."
+                }
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store failed: \(error)"
+            }
+        }
+    }
+
     private func save(to url: URL) {
         do {
             let artifact = FB01Artifact(message: .currentConfigurationDump(
@@ -484,6 +1059,107 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
             errorMessage = "Save failed: \(error)"
             statusMessage = nil
         }
+    }
+
+    private static func readConfiguration(from url: URL) throws -> (configuration: FB01ConfigurationData, systemChannel: Int) {
+        try extractConfiguration(from: FB01Artifact.readSysEx(from: url))
+    }
+
+    private static func extractConfiguration(from artifact: FB01Artifact) throws -> (configuration: FB01ConfigurationData, systemChannel: Int) {
+        for message in artifact.messages {
+            switch message {
+            case let .currentConfigurationDump(systemChannel, packet):
+                return (try FB01ConfigurationData(bytes: packet.payload), systemChannel)
+            case let .configurationDump(systemChannel, _, packet):
+                return (try FB01ConfigurationData(bytes: packet.payload), systemChannel)
+            default:
+                break
+            }
+        }
+        throw FB01AppError.noConfigurationSource
+    }
+
+    private static func chooseFetchOptions(title: String, actionTitle: String) -> ConfigurationFetchOptions? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "Choose the current configuration edit buffer or one stored FB-01 configuration."
+        alert.addButton(withTitle: actionTitle)
+        alert.addButton(withTitle: "Cancel")
+
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.addItem(withTitle: "Current Configuration")
+        popup.lastItem?.representedObject = ConfigurationFetchOptions(isCurrent: true, slot: 0)
+        for slot in 0..<20 {
+            popup.addItem(withTitle: "Configuration \(slot + 1)\(slot >= 16 ? " Read Only" : "")")
+            popup.lastItem?.representedObject = ConfigurationFetchOptions(isCurrent: false, slot: slot)
+        }
+        alert.accessoryView = labelledEditorPopup(label: "Source:", popup: popup)
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+        return popup.selectedItem?.representedObject as? ConfigurationFetchOptions
+    }
+
+    private static func chooseStoreOptions(defaultConfigurationName: String) -> ConfigurationDocumentStoreOptions? {
+        let alert = NSAlert()
+        alert.messageText = "Store Configuration to FB-01"
+        alert.informativeText = "This sets Protect OFF, sends \(defaultConfigurationName.isEmpty ? "this configuration" : defaultConfigurationName) to the current configuration edit buffer, then permanently overwrites one writable configuration slot."
+        alert.addButton(withTitle: "Store and Overwrite")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let slotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for slot in 1...16 {
+            slotPopup.addItem(withTitle: "Configuration \(slot)")
+        }
+        let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored slot after writing and compare it to this document", target: nil, action: nil)
+        confirmCheckbox.state = .on
+
+        stack.addArrangedSubview(labelledEditorPopup(label: "Slot:", popup: slotPopup))
+        stack.addArrangedSubview(confirmCheckbox)
+        stack.addArrangedSubview(makeWarningLabel("Configurations 1-16 are writable. Configurations 17-20 are read only and are intentionally unavailable here."))
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+
+        return ConfigurationDocumentStoreOptions(
+            slot: slotPopup.indexOfSelectedItem,
+            confirmAfterStore: confirmCheckbox.state == .on
+        )
+    }
+
+    private static func storeMessages(configuration: FB01ConfigurationData, systemChannel: Int, slot: Int) throws -> [[UInt8]] {
+        guard (0...15).contains(slot) else {
+            throw FB01AppError.readOnlyConfigurationSlot
+        }
+        let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off))
+        let currentMessage = FB01SysExMessage.currentConfigurationDump(
+            systemChannel: systemChannel,
+            packet: try FB01SysExPacket(payload: configuration.bytes)
+        )
+        let storeCommand = FB01SysExMessage.command(.storeCurrentConfiguration(
+            systemChannel: systemChannel,
+            number: slot
+        ))
+        return try [protectOffCommand.bytes, currentMessage.bytes, storeCommand.bytes]
+    }
+
+    private static func storedConfiguration(from bytes: [UInt8], slot: Int) throws -> FB01ConfigurationData? {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            if case let .configurationDump(_, number, packet) = message, number == slot {
+                return try FB01ConfigurationData(bytes: packet.payload)
+            }
+        }
+        return nil
     }
 }
 
@@ -2841,18 +3517,6 @@ final class DocumentModel: ObservableObject {
         return nil
     }
 
-    private func deviceStatusCode(from messages: [[UInt8]]) throws -> UInt8? {
-        for bytes in messages {
-            let artifact = try FB01Artifact(sysexBytes: bytes)
-            for message in artifact.messages {
-                if case .deviceStatus(let code) = message {
-                    return code
-                }
-            }
-        }
-        return nil
-    }
-
     private func currentConfigurationPayload(from messages: [[UInt8]]) throws -> FB01ConfigurationData? {
         for bytes in messages {
             let artifact = try FB01Artifact(sysexBytes: bytes)
@@ -2936,8 +3600,21 @@ enum LibrarySourceOrigin: String, Equatable {
 }
 
 enum FB01AppError: Error {
+    case noVoiceSource
     case noConfigurationSource
     case readOnlyConfigurationSlot
+}
+
+private func deviceStatusCode(from messages: [[UInt8]]) throws -> UInt8? {
+    for bytes in messages {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            if case .deviceStatus(let code) = message {
+                return code
+            }
+        }
+    }
+    return nil
 }
 
 struct ConfigurationStoreOptions {
@@ -4085,6 +4762,9 @@ struct VoiceDocumentWindow: View {
             save: { document.save() },
             saveAs: { document.saveAs() },
             reset: { document.reset() },
+            importFromDisk: { document.importFromDisk() },
+            fetchFromDevice: { device in document.fetchFromDevice(device: device) },
+            storeToDevice: { device in document.storeToDevice(device: device) },
             isEdited: document.isEdited
         ))
     }
@@ -4187,6 +4867,9 @@ struct ConfigurationDocumentWindow: View {
             save: { document.save() },
             saveAs: { document.saveAs() },
             reset: { document.reset() },
+            importFromDisk: { document.importFromDisk() },
+            fetchFromDevice: { device in document.fetchFromDevice(device: device) },
+            storeToDevice: { device in document.storeToDevice(device: device) },
             isEdited: document.isEdited
         ))
     }
