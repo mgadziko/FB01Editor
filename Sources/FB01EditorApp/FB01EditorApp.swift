@@ -188,15 +188,21 @@ struct EditorDocumentCommands: View {
         .keyboardShortcut("o", modifiers: [.command, .option, .shift])
 
         Button("Fetch Voice Document...") {
-            if let id = workspace.fetchVoiceDocument(device: document) {
-                openWindow(id: "voice-document", value: id)
+            let id = workspace.createVoiceDocument()
+            openWindow(id: "voice-document", value: id)
+            Task { @MainActor in
+                await Task.yield()
+                workspace.voiceDocument(id: id)?.fetchFromDevice(device: document)
             }
         }
         .disabled(document.isBusy)
 
         Button("Fetch Configuration Document...") {
-            if let id = workspace.fetchConfigurationDocument(device: document) {
-                openWindow(id: "configuration-document", value: id)
+            let id = workspace.createConfigurationDocument()
+            openWindow(id: "configuration-document", value: id)
+            Task { @MainActor in
+                await Task.yield()
+                workspace.configurationDocument(id: id)?.fetchFromDevice(device: document)
             }
         }
         .disabled(document.isBusy)
@@ -233,7 +239,7 @@ struct EditorDocumentCommands: View {
             }
         }
         .keyboardShortcut("s", modifiers: .command)
-        .disabled(activeDocumentActions == nil && !document.hasDocument)
+        .disabled(activeDocumentActions?.isBusy == true || (activeDocumentActions == nil && (!document.hasDocument || document.isBusy)))
 
         Button(activeDocumentActions == nil ? "Save SysEx As..." : "Save As...") {
             if let activeDocumentActions {
@@ -243,7 +249,7 @@ struct EditorDocumentCommands: View {
             }
         }
         .keyboardShortcut("s", modifiers: [.command, .shift])
-        .disabled(activeDocumentActions == nil && !document.hasDocument)
+        .disabled(activeDocumentActions?.isBusy == true || (activeDocumentActions == nil && (!document.hasDocument || document.isBusy)))
 
         Button("Revert Document") {
             activeDocumentActions?.reset()
@@ -537,7 +543,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     var title: String {
         let name = voice.name.isEmpty ? "Untitled Voice" : voice.name
-        return isEdited ? "\(name) Edited" : name
+        if isBusy {
+            return "\(name) (Working)"
+        }
+        return isEdited ? "\(name) *" : name
     }
 
     var isEdited: Bool {
@@ -1026,7 +1035,10 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     var title: String {
         let name = configuration.name.isEmpty ? "Untitled Configuration" : configuration.name
-        return isEdited ? "\(name) Edited" : name
+        if isBusy {
+            return "\(name) (Working)"
+        }
+        return isEdited ? "\(name) *" : name
     }
 
     var isEdited: Bool {
@@ -4906,8 +4918,9 @@ struct MissingEditorDocumentView: View {
                 .foregroundStyle(.secondary)
             Text("Document Not Available")
                 .font(.headline)
-            Text("The editor document for this window is no longer open.")
+            Text("This editor document has already been closed. Use the File menu to load, fetch, or create another document.")
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
         .padding(24)
     }

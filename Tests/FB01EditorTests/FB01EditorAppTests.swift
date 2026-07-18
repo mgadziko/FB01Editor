@@ -35,6 +35,49 @@ import Testing
 }
 
 @MainActor
+@Test func editorDocumentWorkspaceRemovesClosedDocuments() {
+    let workspace = EditorDocumentWorkspace()
+    let voiceID = workspace.createVoiceDocument()
+    let configurationID = workspace.createConfigurationDocument()
+
+    #expect(workspace.voiceDocument(id: voiceID) != nil)
+    #expect(workspace.configurationDocument(id: configurationID) != nil)
+
+    workspace.closeVoiceDocument(id: voiceID)
+    workspace.closeConfigurationDocument(id: configurationID)
+
+    #expect(workspace.voiceDocument(id: voiceID) == nil)
+    #expect(workspace.configurationDocument(id: configurationID) == nil)
+}
+
+@MainActor
+@Test func selectedLibraryVoicePayloadUsesCurrentVoiceSelection() throws {
+    let model = DocumentModel()
+    let source = try fixtureVoiceBankSource()
+    model.sources = [source]
+    model.selectedSourceID = source.id
+    model.selectVoice(sourceID: source.id, number: 2)
+
+    let payload = try #require(model.selectedVoiceDocumentPayload())
+
+    #expect(payload.voice.name == "Horn")
+    #expect(payload.systemChannel == 0)
+}
+
+@MainActor
+@Test func selectedLibraryConfigurationPayloadUsesEditableConfiguration() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    model.sources = [source]
+    model.selectedSourceID = source.id
+
+    let payload = try #require(model.selectedConfigurationDocumentPayload())
+
+    #expect(payload.configuration.name == "single")
+    #expect(payload.systemChannel == 0)
+}
+
+@MainActor
 @Test func configurationDocumentDuplicateUsesCurrentPayloadAndStatus() throws {
     let model = DocumentModel()
     let source = try fixtureConfigurationSource(origin: .liveFetch)
@@ -286,6 +329,20 @@ private func fixtureConfigurationSource(origin: LibrarySourceOrigin) throws -> L
         subtitle: origin == .liveFetch ? "FB-01 Live Fetch" : "current-configuration-single.syx",
         artifact: try FB01Artifact.readSysEx(from: fixtureURL),
         origin: origin
+    )
+}
+
+private func fixtureVoiceBankSource() throws -> LibrarySource {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-1",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    return LibrarySource(
+        title: "Bank 1",
+        subtitle: "voice-bank-1.syx",
+        artifact: try FB01Artifact.readSysEx(from: fixtureURL),
+        origin: .loadedFromDisk
     )
 }
 
