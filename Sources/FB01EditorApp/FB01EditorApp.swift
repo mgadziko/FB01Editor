@@ -2939,80 +2939,142 @@ struct VoiceEditorControls: View {
 struct OperatorEditor: View {
     var operators: [FB01VoiceOperatorData]
     var updateOperator: (FB01VoiceOperatorData) -> Void
+    @State private var selectedOperatorIndex = 0
+
+    private var selectedOperator: FB01VoiceOperatorData? {
+        operators.first { $0.index == selectedOperatorIndex } ?? operators.first
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Operators")
                 .font(.headline)
 
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-                GridRow {
-                    header("#")
-                    header("Carrier")
-                    header("TL")
-                    header("Vel TL")
-                    header("KLS")
-                    header("KLS A")
-                    header("KLS B")
-                    header("TL Adj")
-                    header("Mul")
-                    header("DT1")
-                    header("KRS")
-                    header("AR")
-                    header("Vel AR")
-                    header("D1R")
-                    header("DT2")
-                    header("D2R")
-                    header("SL")
-                    header("RR")
+            HStack(alignment: .top, spacing: 14) {
+                VStack(spacing: 8) {
+                    ForEach(operators, id: \.index) { op in
+                        OperatorSelectorButton(
+                            operatorData: op,
+                            isSelected: op.index == selectedOperatorIndex
+                        ) {
+                            selectedOperatorIndex = op.index
+                        }
+                    }
                 }
+                .frame(width: 150)
 
-                Divider()
-                    .gridCellColumns(17)
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Operator", selection: $selectedOperatorIndex) {
+                        ForEach(operators, id: \.index) { op in
+                            Text("Operator \(op.index + 1)").tag(op.index)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
 
-                ForEach(operators, id: \.index) { op in
-                    OperatorEditorRow(operatorData: op, updateOperator: updateOperator)
+                    if let selectedOperator {
+                        OperatorInspector(
+                            operatorData: selectedOperator,
+                            updateOperator: updateOperator
+                        )
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .font(.system(.body, design: .monospaced))
         }
-    }
-
-    private func header(_ title: String) -> some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+        .onChange(of: operators) { _, newOperators in
+            guard !newOperators.contains(where: { $0.index == selectedOperatorIndex }) else {
+                return
+            }
+            selectedOperatorIndex = newOperators.first?.index ?? 0
+        }
     }
 }
 
-struct OperatorEditorRow: View {
+struct OperatorSelectorButton: View {
+    var operatorData: FB01VoiceOperatorData
+    var isSelected: Bool
+    var select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Text("Operator \(operatorData.index + 1)")
+                        .font(.body.weight(.semibold))
+                    Spacer()
+                    Text(operatorData.carrier ? "Carrier" : "Mod")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("TL \(operatorData.totalLevel), Mul \(operatorData.multiple)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.secondary.opacity(0.18))
+                        Capsule()
+                            .fill(Color.accentColor)
+                            .frame(width: proxy.size.width * CGFloat(operatorData.totalLevel) / 127)
+                    }
+                }
+                .frame(height: 5)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.22), lineWidth: isSelected ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct OperatorInspector: View {
     var operatorData: FB01VoiceOperatorData
     var updateOperator: (FB01VoiceOperatorData) -> Void
 
     var body: some View {
-        GridRow {
-            Text("\(operatorData.index + 1)")
-            Toggle("", isOn: carrierBinding)
-                .labelsHidden()
-            smallStepper(value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
-            smallStepper(value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
-            smallStepper(value: operatorData.keyboardLevelScalingDepth, range: 0...15) { try operatorData.settingKeyboardLevelScalingDepth($0) }
-            Toggle("", isOn: keyboardLevelScalingTypeBit0Binding)
-                .labelsHidden()
-            Toggle("", isOn: keyboardLevelScalingTypeBit1Binding)
-                .labelsHidden()
-            smallStepper(value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
-            smallStepper(value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
-            smallStepper(value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
-            smallStepper(value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
-            smallStepper(value: operatorData.attackRate, range: 0...31) { try operatorData.settingAttackRate($0) }
-            smallStepper(value: operatorData.velocitySensitivityForAttackRate, range: 0...7) { try operatorData.settingVelocitySensitivityForAttackRate($0) }
-            smallStepper(value: operatorData.decay1Rate, range: 0...15) { try operatorData.settingDecay1Rate($0) }
-            smallStepper(value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
-            smallStepper(value: operatorData.decay2Rate, range: 0...31) { try operatorData.settingDecay2Rate($0) }
-            smallStepper(value: operatorData.sustainLevel, range: 0...15) { try operatorData.settingSustainLevel($0) }
-            smallStepper(value: operatorData.releaseRate, range: 0...15) { try operatorData.settingReleaseRate($0) }
+        LazyVGrid(columns: [
+            GridItem(.flexible(minimum: 220), spacing: 12),
+            GridItem(.flexible(minimum: 220), spacing: 12),
+        ], alignment: .leading, spacing: 12) {
+            OperatorControlGroup(title: "Level") {
+                operatorToggle("Carrier", binding: carrierBinding)
+                operatorStepper("Total Level", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
+                operatorStepper("Velocity to TL", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
+                operatorStepper("TL Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
+            }
+
+            OperatorControlGroup(title: "Tuning") {
+                operatorStepper("Multiple", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
+                operatorStepper("Detune 1", value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
+                operatorStepper("Detune 2", value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
+            }
+
+            OperatorControlGroup(title: "Envelope") {
+                operatorStepper("Attack Rate", value: operatorData.attackRate, range: 0...31) { try operatorData.settingAttackRate($0) }
+                operatorStepper("Velocity to Attack", value: operatorData.velocitySensitivityForAttackRate, range: 0...7) { try operatorData.settingVelocitySensitivityForAttackRate($0) }
+                operatorStepper("Decay 1 Rate", value: operatorData.decay1Rate, range: 0...15) { try operatorData.settingDecay1Rate($0) }
+                operatorStepper("Decay 2 Rate", value: operatorData.decay2Rate, range: 0...31) { try operatorData.settingDecay2Rate($0) }
+                operatorStepper("Sustain Level", value: operatorData.sustainLevel, range: 0...15) { try operatorData.settingSustainLevel($0) }
+                operatorStepper("Release Rate", value: operatorData.releaseRate, range: 0...15) { try operatorData.settingReleaseRate($0) }
+            }
+
+            OperatorControlGroup(title: "Keyboard Scaling") {
+                operatorStepper("Level Scaling", value: operatorData.keyboardLevelScalingDepth, range: 0...15) { try operatorData.settingKeyboardLevelScalingDepth($0) }
+                operatorToggle("Level Type A", binding: keyboardLevelScalingTypeBit0Binding)
+                operatorToggle("Level Type B", binding: keyboardLevelScalingTypeBit1Binding)
+                operatorStepper("Rate Scaling", value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
+            }
         }
     }
 
@@ -3049,24 +3111,49 @@ struct OperatorEditorRow: View {
         )
     }
 
-    private func smallStepper(
+    private func operatorStepper(
+        _ label: String,
         value: Int,
         range: ClosedRange<Int>,
         update: @escaping (Int) throws -> FB01VoiceOperatorData
     ) -> some View {
-        Stepper(value: Binding(
-            get: { value },
-            set: { newValue in
-                if let updated = try? update(newValue) {
-                    updateOperator(updated)
+        HStack {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Stepper(value: Binding(
+                get: { value },
+                set: { newValue in
+                    if let updated = try? update(newValue) {
+                        updateOperator(updated)
+                    }
                 }
+            ), in: range) {
+                Text("\(value)")
+                    .frame(minWidth: 34, alignment: .trailing)
+                    .monospacedDigit()
             }
-        ), in: range) {
-            Text("\(value)")
-                .frame(minWidth: 28, alignment: .trailing)
-                .monospacedDigit()
         }
-        .frame(width: 78)
+    }
+
+    private func operatorToggle(_ label: String, binding: Binding<Bool>) -> some View {
+        Toggle(label, isOn: binding)
+            .toggleStyle(.checkbox)
+    }
+}
+
+struct OperatorControlGroup<Content: View>: View {
+    var title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        GroupBox(title) {
+            VStack(alignment: .leading, spacing: 8) {
+                content
+            }
+            .padding(.top, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
