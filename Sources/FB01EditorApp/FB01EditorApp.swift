@@ -1237,11 +1237,9 @@ final class DocumentModel: ObservableObject {
                 }.value
 
                 let response = try await Task.detached(priority: .userInitiated) { () -> [[UInt8]] in
-                    try FB01MIDI.sendSysEx(
-                        storeMessages,
-                        destinationIndex: destinationIndex,
-                        delayBetweenMessages: 0.35
-                    )
+                    try FB01MIDI.sendSysEx([storeMessages[0]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+                    try await Task.sleep(for: .milliseconds(1000))
+                    try FB01MIDI.sendSysEx([storeMessages[1]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
                     guard confirmAfterStore else {
                         return []
                     }
