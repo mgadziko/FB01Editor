@@ -181,6 +181,18 @@ public enum FB01SysExMessage: Equatable, Sendable {
             }
         }
 
+        if body.count == 5, body[2] == 0x10, body[3] == 0x21 {
+            let systemChannel = Int(body[1] & 0x0F)
+            switch body[4] {
+            case FB01MemoryProtect.off.rawValue:
+                return .setMemoryProtect(systemChannel: systemChannel, .off)
+            case FB01MemoryProtect.on.rawValue:
+                return .setMemoryProtect(systemChannel: systemChannel, .on)
+            default:
+                return nil
+            }
+        }
+
         if body.count == 5, (0x28...0x2F).contains(body[2]), body[3] == 0x00 {
             return .storeCurrentInstrumentVoice(
                 systemChannel: Int(body[1] & 0x0F),

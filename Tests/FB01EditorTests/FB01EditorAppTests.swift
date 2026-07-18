@@ -123,21 +123,22 @@ import Testing
 }
 
 @MainActor
-@Test func storeConfigurationMessagesSendCurrentThenStoreWritableSlot() throws {
+@Test func storeConfigurationMessagesTurnProtectOffThenSendCurrentThenStoreWritableSlot() throws {
     let model = DocumentModel()
     let source = try fixtureConfigurationSource(origin: .liveFetch)
     let configuration = try #require(source.editableConfigurationPayload)
 
     let messages = try model.storeConfigurationMessages(payload: configuration, systemChannel: 1, slot: 15)
-    #expect(messages.count == 2)
+    #expect(messages.count == 3)
+    #expect(try FB01SysExMessage(bytes: messages[0]) == .command(.setMemoryProtect(systemChannel: 1, .off)))
 
-    guard case let .currentConfigurationDump(systemChannel, packet) = try FB01SysExMessage(bytes: messages[0]) else {
+    guard case let .currentConfigurationDump(systemChannel, packet) = try FB01SysExMessage(bytes: messages[1]) else {
         Issue.record("Expected current configuration send dump")
         return
     }
     #expect(systemChannel == 1)
     #expect(packet.payload == configuration.bytes)
-    #expect(try FB01SysExMessage(bytes: messages[1]) == .command(.storeCurrentConfiguration(systemChannel: 1, number: 15)))
+    #expect(try FB01SysExMessage(bytes: messages[2]) == .command(.storeCurrentConfiguration(systemChannel: 1, number: 15)))
 }
 
 @MainActor

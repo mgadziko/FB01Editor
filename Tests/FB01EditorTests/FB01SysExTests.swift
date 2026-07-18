@@ -41,6 +41,8 @@ import Testing
 
 @Test func buildsStoreCommands() throws {
     #expect(try FB01Command.storeCurrentInstrumentVoice(systemChannel: 1, instrument: 7, voiceNumber: 95).bytes == [0xF0, 0x43, 0x75, 0x01, 0x2F, 0x00, 0x5F, 0xF7])
+    #expect(try FB01Command.setMemoryProtect(systemChannel: 1, .off).bytes == [0xF0, 0x43, 0x75, 0x01, 0x10, 0x21, 0x00, 0xF7])
+    #expect(try FB01Command.setMemoryProtect(systemChannel: 1, .on).bytes == [0xF0, 0x43, 0x75, 0x01, 0x10, 0x21, 0x01, 0xF7])
     #expect(try FB01Command.storeCurrentConfiguration(systemChannel: 1, number: 15).bytes == [0xF0, 0x43, 0x75, 0x01, 0x20, 0x40, 0x0F, 0xF7])
 }
 

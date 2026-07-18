@@ -123,6 +123,11 @@ public enum FB01ParameterValue: Equatable, Sendable {
     }
 }
 
+public enum FB01MemoryProtect: UInt8, Equatable, Sendable {
+    case off = 0
+    case on = 1
+}
+
 public enum FB01Command: Equatable, Sendable {
     case instrumentParameterChange(systemChannel: Int, instrument: Int, parameter: Int, value: FB01ParameterValue)
     case midiChannelParameterChange(midiChannel: Int, parameter: Int, value: FB01ParameterValue)
@@ -135,6 +140,7 @@ public enum FB01Command: Equatable, Sendable {
     case requestConfiguration(systemChannel: Int, number: Int)
     case requestAllConfigurations(systemChannel: Int)
     case requestUnitID(systemChannel: Int)
+    case setMemoryProtect(systemChannel: Int, FB01MemoryProtect)
     case storeCurrentConfiguration(systemChannel: Int, number: Int)
 
     public var bytes: [UInt8] {
@@ -197,6 +203,10 @@ public enum FB01Command: Equatable, Sendable {
             case let .requestUnitID(systemChannel):
                 let system = try FB01.validateSystemChannel(systemChannel)
                 return envelope([FB01.fb01Substatus, system, 0x20, 0x04, 0x00])
+
+            case let .setMemoryProtect(systemChannel, state):
+                let system = try FB01.validateSystemChannel(systemChannel)
+                return envelope([FB01.fb01Substatus, system, 0x10, 0x21, state.rawValue])
 
             case let .storeCurrentConfiguration(systemChannel, number):
                 let system = try FB01.validateSystemChannel(systemChannel)

@@ -1133,7 +1133,7 @@ final class DocumentModel: ObservableObject {
     private func chooseConfigurationStoreOptions(source selectedSource: LibrarySource, requiresConfirmation: Bool) -> ConfigurationStoreOptions? {
         let alert = NSAlert()
         alert.messageText = requiresConfirmation ? "Store and Confirm Configuration to FB-01 Slot" : "Store Configuration to FB-01 Slot"
-        alert.informativeText = "Choose a writable configuration slot. This permanently overwrites that slot on the FB-01 after first sending the selected configuration to the current edit buffer. Fetch and save a backup of the destination slot before continuing unless you are certain it can be replaced."
+        alert.informativeText = "Choose a writable configuration slot. This sends Protect OFF, then permanently overwrites that slot on the FB-01 after first sending the selected configuration to the current edit buffer. Fetch and save a backup of the destination slot before continuing unless you are certain it can be replaced."
         alert.addButton(withTitle: requiresConfirmation ? "Store, Overwrite, and Confirm" : "Store and Overwrite")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
@@ -1158,7 +1158,7 @@ final class DocumentModel: ObservableObject {
         stack.addArrangedSubview(labelledPopup(label: "Overwrite slot:", popup: popup))
         stack.addArrangedSubview(backupCheckbox)
         stack.addArrangedSubview(confirmCheckbox)
-        stack.addArrangedSubview(makeWarningLabel("Writable slots are 1-16. Configurations 17-20 are read only and are intentionally unavailable here."))
+        stack.addArrangedSubview(makeWarningLabel("Writable slots are 1-16. Configurations 17-20 are read only and are intentionally unavailable here. Protect is set OFF before writing."))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -1238,8 +1238,10 @@ final class DocumentModel: ObservableObject {
 
                 let response = try await Task.detached(priority: .userInitiated) { () -> [[UInt8]] in
                     try FB01MIDI.sendSysEx([storeMessages[0]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-                    try await Task.sleep(for: .milliseconds(1000))
+                    try await Task.sleep(for: .milliseconds(300))
                     try FB01MIDI.sendSysEx([storeMessages[1]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+                    try await Task.sleep(for: .milliseconds(1000))
+                    try FB01MIDI.sendSysEx([storeMessages[2]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
                     guard confirmAfterStore else {
                         return []
                     }
@@ -1281,6 +1283,10 @@ final class DocumentModel: ObservableObject {
             throw FB01AppError.readOnlyConfigurationSlot
         }
 
+        let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(
+            systemChannel: systemChannel,
+            .off
+        ))
         let currentMessage = FB01SysExMessage.currentConfigurationDump(
             systemChannel: systemChannel,
             packet: try FB01SysExPacket(payload: payload.bytes)
@@ -1289,7 +1295,7 @@ final class DocumentModel: ObservableObject {
             systemChannel: systemChannel,
             number: slot
         ))
-        return try [currentMessage.bytes, storeCommand.bytes]
+        return try [protectOffCommand.bytes, currentMessage.bytes, storeCommand.bytes]
     }
 
     func sendVoiceToInstrument(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
