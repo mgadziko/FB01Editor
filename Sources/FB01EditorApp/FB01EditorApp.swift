@@ -9,7 +9,7 @@ struct FB01EditorApplication: App {
     @StateObject private var document = DocumentModel()
 
     var body: some Scene {
-        WindowGroup("FB01 Editor") {
+        WindowGroup("Forest FB01 Editor") {
             ContentView(document: document)
                 .frame(minWidth: 840, minHeight: 540)
                 .onAppear {
@@ -18,7 +18,7 @@ struct FB01EditorApplication: App {
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About FB01 Editor") {
+                Button("About Forest FB01 Editor") {
                     AboutBoxController.shared.show()
                 }
             }
@@ -116,7 +116,7 @@ struct AboutBoxView: View {
                 AboutAppIcon()
                     .padding(.bottom, 22)
 
-                Text("FB01 Editor")
+                Text("Forest FB01 Editor")
                     .font(.headline.weight(.semibold))
                     .padding(.bottom, 4)
 
@@ -1001,7 +1001,7 @@ final class DocumentModel: ObservableObject {
         FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("FB01 Editor", isDirectory: true)
+            .appendingPathComponent("Forest FB01 Editor", isDirectory: true)
     }
 
     private func saveEditedSourcesForQuit() -> Bool {

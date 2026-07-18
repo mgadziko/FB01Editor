@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIGURATION="${CONFIGURATION:-release}"
-APP_NAME="FB01 Editor"
+APP_NAME="Forest FB01 Editor"
 EXECUTABLE_NAME="FB01EditorApp"
 BUNDLE_ID="com.gadzikowski.FB01Editor"
 ICON_FILE="AppIcon.icns"
