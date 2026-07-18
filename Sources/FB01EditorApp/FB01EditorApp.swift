@@ -270,6 +270,7 @@ final class DocumentModel: ObservableObject {
     @Published var keyboardStartNote = 36
 
     private var preparedKeyboardVoiceSignature: String?
+    private var keyboardPreparationTask: Task<Void, Never>?
 
     private enum DefaultsKey {
         static let sourceIndex = "FB01Editor.selectedMIDISourceIndex"
@@ -852,10 +853,13 @@ final class DocumentModel: ObservableObject {
         selectedSourceID = source.id
         sidebarSelection = .source
         preparedKeyboardVoiceSignature = nil
+        scheduleKeyboardVoicePreparation()
     }
 
     func selectVoice(sourceID: LibrarySource.ID, number: Int) {
         selectedVoiceNumbers[sourceID] = number
+        preparedKeyboardVoiceSignature = nil
+        scheduleKeyboardVoicePreparation()
     }
 
     func removeSelectedSource() {
@@ -945,6 +949,7 @@ final class DocumentModel: ObservableObject {
             sources[index].title = voice.name.isEmpty ? "Single Voice \(number)" : voice.name
         }
         preparedKeyboardVoiceSignature = nil
+        scheduleKeyboardVoicePreparation()
         selectedSourceID = sources[index].id
         statusMessage = "Edited \(sources[index].title) locally."
         errorMessage = nil
@@ -960,6 +965,7 @@ final class DocumentModel: ObservableObject {
             sources[index].title = sources[index].artifact.messages.first?.sourceTitle(index: 1) ?? sources[index].title
         }
         preparedKeyboardVoiceSignature = nil
+        scheduleKeyboardVoicePreparation()
         selectedSourceID = sources[index].id
         statusMessage = "Reset local edit."
         errorMessage = nil
@@ -988,6 +994,7 @@ final class DocumentModel: ObservableObject {
 
         sources[index].editedVoices.removeAll()
         preparedKeyboardVoiceSignature = nil
+        scheduleKeyboardVoicePreparation()
         selectedSourceID = sources[index].id
         statusMessage = "Reset \(count) local voice edit\(count == 1 ? "" : "s")."
         errorMessage = nil
@@ -2042,35 +2049,16 @@ final class DocumentModel: ObservableObject {
         let velocity = UInt8(min(max(keyboardVelocity, 1), 127))
 
         do {
-            var messages: [[UInt8]] = []
             if isOn {
-                messages.append(contentsOf: try keyboardPreparationMessages())
+                for message in try keyboardPreparationMessages() {
+                    try FB01MIDI.sendImmediate(message, destinationIndex: destinationIndex)
+                }
             }
-            messages.append([
+            try FB01MIDI.sendImmediate([
                 (isOn ? 0x90 : 0x80) | channel,
                 UInt8(boundedNote),
                 isOn ? velocity : 0,
-            ])
-            let midiMessages = messages
-            let midiDestinationIndex = destinationIndex
-
-            Task {
-                do {
-                    try await Task.detached(priority: .userInitiated) { [midiMessages, midiDestinationIndex] in
-                        try FB01MIDI.sendSysEx(
-                            midiMessages,
-                            destinationIndex: midiDestinationIndex,
-                            delayBetweenMessages: 0.05
-                        )
-                    }.value
-                    if isOn {
-                        statusMessage = "Playing MIDI note \(boundedNote)."
-                    }
-                } catch {
-                    errorMessage = "Keyboard note failed: \(error)"
-                    statusMessage = nil
-                }
-            }
+            ], destinationIndex: destinationIndex)
         } catch {
             errorMessage = "Keyboard note failed: \(error)"
             statusMessage = nil
@@ -2090,6 +2078,43 @@ final class DocumentModel: ObservableObject {
         let artifact = try context.voice.instrumentVoiceArtifact(systemChannel: context.systemChannel, instrument: 0)
         preparedKeyboardVoiceSignature = signature
         return [try artifact.sysexBytes]
+    }
+
+    private func scheduleKeyboardVoicePreparation(delayNanoseconds: UInt64 = 150_000_000) {
+        keyboardPreparationTask?.cancel()
+        guard let context = selectedVoiceContext else {
+            return
+        }
+
+        let signature = "\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)"
+        guard preparedKeyboardVoiceSignature != signature else {
+            return
+        }
+
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = context.systemChannel
+        let voice = context.voice
+        keyboardPreparationTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+                try Task.checkCancellation()
+                let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
+                try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendImmediate(try artifact.sysexBytes, destinationIndex: destinationIndex)
+                }.value
+                try Task.checkCancellation()
+                await MainActor.run {
+                    self?.preparedKeyboardVoiceSignature = signature
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run {
+                    self?.errorMessage = "Keyboard voice preparation failed: \(error)"
+                    self?.statusMessage = nil
+                }
+            }
+        }
     }
 
     private func playVoiceTestNotes(voice: FB01VoiceData, systemChannel: Int, instrument: Int) {

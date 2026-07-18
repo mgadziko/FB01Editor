@@ -85,6 +85,7 @@ public enum FB01MIDIRequestKind: Equatable, Sendable {
 public enum FB01MIDI {
     private static let requestLock = NSLock()
     private static let clientStore = FB01MIDIClientStore()
+    private static let immediateSender = FB01MIDIImmediateSender(clientStore: clientStore)
 
     public static func availableSources() -> [FB01MIDIEndpoint] {
         (0..<MIDIGetNumberOfSources()).map { index in
@@ -184,6 +185,10 @@ public enum FB01MIDI {
                 Thread.sleep(forTimeInterval: delayBetweenMessages)
             }
         }
+    }
+
+    public static func sendImmediate(_ bytes: [UInt8], destinationIndex: Int = 0) throws {
+        try immediateSender.send(bytes: bytes, destinationIndex: destinationIndex)
     }
 
     public static func sendAndReceive(
@@ -339,7 +344,7 @@ public enum FB01MIDI {
         return MIDIGetSource(index)
     }
 
-    private static func destinationEndpoint(at index: Int) throws -> MIDIEndpointRef {
+    fileprivate static func destinationEndpoint(at index: Int) throws -> MIDIEndpointRef {
         guard MIDIGetNumberOfDestinations() > 0 else { throw FB01MIDIError.noDestinations }
         guard index >= 0, index < MIDIGetNumberOfDestinations() else { throw FB01MIDIError.destinationNotFound(index) }
         return MIDIGetDestination(index)
@@ -367,7 +372,7 @@ public enum FB01MIDI {
         return value
     }
 
-    private static func send(bytes: [UInt8], to destination: MIDIEndpointRef, outputPort: MIDIPortRef) throws {
+    fileprivate static func send(bytes: [UInt8], to destination: MIDIEndpointRef, outputPort: MIDIPortRef) throws {
         try bytes.forEach { _ = try FB01.validateByte($0) }
 
         let packetListByteCount = MemoryLayout<MIDIPacketList>.size + bytes.count + 256
@@ -410,6 +415,43 @@ private final class FB01MIDIClientStore: @unchecked Sendable {
         try FB01MIDI.check(MIDIClientCreateWithBlock("FB01EditorMIDI" as CFString, &client) { _ in }, "MIDIClientCreateWithBlock")
         sharedClient = client
         return client
+    }
+}
+
+private final class FB01MIDIImmediateSender: @unchecked Sendable {
+    private let lock = NSLock()
+    private let clientStore: FB01MIDIClientStore
+    private var outputPort = MIDIPortRef()
+    private var hasOutputPort = false
+
+    init(clientStore: FB01MIDIClientStore) {
+        self.clientStore = clientStore
+    }
+
+    deinit {
+        if hasOutputPort {
+            MIDIPortDispose(outputPort)
+        }
+    }
+
+    func send(bytes: [UInt8], destinationIndex: Int) throws {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let destination = try FB01MIDI.destinationEndpoint(at: destinationIndex)
+        let outputPort = try reusableOutputPort()
+        try FB01MIDI.send(bytes: bytes, to: destination, outputPort: outputPort)
+    }
+
+    private func reusableOutputPort() throws -> MIDIPortRef {
+        if hasOutputPort {
+            return outputPort
+        }
+
+        let client = try clientStore.client()
+        try FB01MIDI.check(MIDIOutputPortCreate(client, "FB01EditorImmediateOutput" as CFString, &outputPort), "MIDIOutputPortCreate")
+        hasOutputPort = true
+        return outputPort
     }
 }
 
