@@ -783,8 +783,11 @@ final class DocumentModel: ObservableObject {
 
         let alert = NSAlert()
         alert.messageText = "Store Voice to FB-01 Slot"
-        alert.informativeText = "This sends \(voice.name.isEmpty ? "the selected voice" : voice.name) from \(source.title) to a current instrument edit buffer, then stores that instrument voice to a voice slot on the FB-01."
-        alert.addButton(withTitle: "Store")
+        alert.informativeText = storeVoicePromptText(
+            action: "This sends \(voiceDisplayName(voice)) from \(source.title) to a current instrument edit buffer, then permanently stores that instrument voice to a voice slot on the FB-01.",
+            voiceSlot: min(max(number - 1, 0), 95)
+        )
+        alert.addButton(withTitle: "Store and Overwrite")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
@@ -801,12 +804,12 @@ final class DocumentModel: ObservableObject {
 
         let voicePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
         for voiceNumber in 1...96 {
-            voicePopup.addItem(withTitle: "Voice \(voiceNumber)")
+            voicePopup.addItem(withTitle: voiceSlotMenuTitle(slot: voiceNumber - 1))
         }
         voicePopup.selectItem(at: min(max(number - 1, 0), 95))
 
         stack.addArrangedSubview(labelledPopup(label: "Edit buffer:", popup: instrumentPopup))
-        stack.addArrangedSubview(labelledPopup(label: "Store slot:", popup: voicePopup))
+        stack.addArrangedSubview(labelledPopup(label: "Overwrite slot:", popup: voicePopup))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -839,8 +842,11 @@ final class DocumentModel: ObservableObject {
 
         let alert = NSAlert()
         alert.messageText = "Store and Confirm Voice"
-        alert.informativeText = "This sends \(voice.name.isEmpty ? "the selected voice" : voice.name) from \(source.title) to a current instrument edit buffer, stores that instrument voice to a selected FB-01 voice slot, and waits for the FB-01 status response."
-        alert.addButton(withTitle: "Store and Confirm")
+        alert.informativeText = storeVoicePromptText(
+            action: "This sends \(voiceDisplayName(voice)) from \(source.title) to a current instrument edit buffer, permanently stores that instrument voice to a selected FB-01 voice slot, and waits for the FB-01 status response.",
+            voiceSlot: min(max(number - 1, 0), 95)
+        )
+        alert.addButton(withTitle: "Store, Overwrite, and Confirm")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
@@ -857,12 +863,12 @@ final class DocumentModel: ObservableObject {
 
         let voicePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
         for voiceNumber in 1...96 {
-            voicePopup.addItem(withTitle: "Voice \(voiceNumber)")
+            voicePopup.addItem(withTitle: voiceSlotMenuTitle(slot: voiceNumber - 1))
         }
         voicePopup.selectItem(at: min(max(number - 1, 0), 95))
 
         stack.addArrangedSubview(labelledPopup(label: "Edit buffer:", popup: instrumentPopup))
-        stack.addArrangedSubview(labelledPopup(label: "Store slot:", popup: voicePopup))
+        stack.addArrangedSubview(labelledPopup(label: "Overwrite slot:", popup: voicePopup))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -1269,6 +1275,57 @@ final class DocumentModel: ObservableObject {
         return stack
     }
 
+    private func voiceDisplayName(_ voice: FB01VoiceData) -> String {
+        voice.name.isEmpty ? "the selected voice" : "\"\(voice.name)\""
+    }
+
+    private func storeVoicePromptText(action: String, voiceSlot: Int) -> String {
+        let destination = knownVoiceSlotDescription(slot: voiceSlot)
+            ?? "Voice \(voiceSlot + 1), current contents unknown because RAM bank data is not loaded"
+        return "\(action)\n\nThis overwrites \(destination). The overwrite slot menu shows the loaded destination voice name when the app knows it."
+    }
+
+    private func voiceSlotMenuTitle(slot: Int) -> String {
+        if let destination = knownVoiceSlotDescription(slot: slot) {
+            return destination
+        }
+        return "Voice \(slot + 1) - unknown current contents"
+    }
+
+    private func knownVoiceSlotDescription(slot: Int) -> String? {
+        guard (0..<FB01VoiceBankData.voiceCount * 2).contains(slot) else {
+            return nil
+        }
+
+        let bank = slot / FB01VoiceBankData.voiceCount
+        let number = slot % FB01VoiceBankData.voiceCount + 1
+
+        guard let voice = knownVoice(bank: bank, number: number) else {
+            return nil
+        }
+
+        let name = voice.name.isEmpty ? "Untitled" : voice.name
+        return "Voice \(slot + 1) - Bank \(bank + 1) #\(number): \(name)"
+    }
+
+    private func knownVoice(bank: Int, number: Int) -> FB01VoiceData? {
+        for source in sources.reversed() {
+            switch source.artifact.messages.first {
+            case let .voiceBankDumpData(_, sourceBank, _, data, _) where sourceBank == bank:
+                if let voiceBank = try? FB01VoiceBankData(bank: sourceBank, data: data) {
+                    return source.voice(number: number, in: voiceBank)
+                }
+            case let .voiceRAMDumpData(_, _, data, _) where bank == 0:
+                if let voiceBank = try? FB01VoiceBankData(bank: 0, data: data) {
+                    return source.voice(number: number, in: voiceBank)
+                }
+            default:
+                break
+            }
+        }
+        return nil
+    }
+
     private func deviceStatusCode(from messages: [[UInt8]]) throws -> UInt8? {
         for bytes in messages {
             let artifact = try FB01Artifact(sysexBytes: bytes)
@@ -1334,6 +1391,13 @@ struct LibrarySource: Identifiable, Equatable {
 
     func isVoiceEdited(number: Int) -> Bool {
         editedVoices[number] != nil
+    }
+
+    func voice(number: Int, in voiceBank: FB01VoiceBankData) -> FB01VoiceData? {
+        if let editedVoice = editedVoices[number] {
+            return editedVoice
+        }
+        return voiceBank.voices.first { $0.number == number }?.voice
     }
 
     var isSingleVoiceSource: Bool {

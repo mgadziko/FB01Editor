@@ -50,20 +50,22 @@ cp "$ICON_PATH" "$RESOURCES_DIR/$ICON_FILE"
 
 if command -v xattr >/dev/null 2>&1; then
   xattr -cr "$APP_DIR"
+  xattr -rd com.apple.macl "$APP_DIR" >/dev/null 2>&1 || true
   xattr -rd com.apple.provenance "$APP_DIR" >/dev/null 2>&1 || true
   xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
   xattr -d "com.apple.fileprovider.fpfs#P" "$APP_DIR" >/dev/null 2>&1 || true
 fi
 
 if command -v codesign >/dev/null 2>&1; then
-  if ! codesign --force --sign - "$APP_DIR" >/dev/null; then
+  if ! codesign --force --sign - "$APP_DIR" >/dev/null 2>&1; then
     if command -v xattr >/dev/null 2>&1; then
+      xattr -rd com.apple.macl "$APP_DIR" >/dev/null 2>&1 || true
       xattr -rd com.apple.provenance "$APP_DIR" >/dev/null 2>&1 || true
       xattr -d com.apple.FinderInfo "$APP_DIR" >/dev/null 2>&1 || true
       xattr -d "com.apple.fileprovider.fpfs#P" "$APP_DIR" >/dev/null 2>&1 || true
     fi
 
-    if ! codesign --force --sign - "$APP_DIR" >/dev/null; then
+    if ! codesign --force --sign - "$APP_DIR" >/dev/null 2>&1; then
       echo "warning: ad-hoc signing failed; leaving local development app bundle unsigned" >&2
     fi
   fi
