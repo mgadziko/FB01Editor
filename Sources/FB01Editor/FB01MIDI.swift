@@ -41,6 +41,7 @@ public struct FB01MIDIEndpoint: Equatable, Sendable {
 
 public enum FB01MIDIRequestKind: Equatable, Sendable {
     case unitID
+    case instrumentVoice(Int)
     case currentConfiguration
     case configuration(Int)
     case voiceRAM1
@@ -50,6 +51,8 @@ public enum FB01MIDIRequestKind: Equatable, Sendable {
         switch self {
         case .unitID:
             try FB01Command.requestUnitID(systemChannel: systemChannel).bytes
+        case .instrumentVoice(let instrument):
+            try FB01Command.requestInstrumentVoice(systemChannel: systemChannel, instrument: instrument - 1).bytes
         case .currentConfiguration:
             try FB01Command.requestCurrentConfiguration(systemChannel: systemChannel).bytes
         case .configuration(let number):
@@ -65,6 +68,8 @@ public enum FB01MIDIRequestKind: Equatable, Sendable {
         switch self {
         case .unitID:
             "unit ID"
+        case .instrumentVoice(let instrument):
+            "instrument \(instrument) voice"
         case .currentConfiguration:
             "current configuration"
         case .configuration(let number):

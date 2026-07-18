@@ -749,6 +749,33 @@ final class DocumentModel: ObservableObject {
         )
     }
 
+    func sendAndVerifyVoiceToInstrument(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
+        guard let source = sources.first(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Send and Verify Voice?"
+        alert.informativeText = "This sends \(voice.name.isEmpty ? "the selected voice" : voice.name) from \(source.title) to a current instrument edit buffer, requests that instrument voice back from the FB-01, and compares the returned bytes. It does not store the voice in a bank slot."
+        alert.addButton(withTitle: "Send and Verify")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
+        for instrument in 1...8 {
+            popup.addItem(withTitle: "Instrument \(instrument)")
+        }
+        popup.selectItem(at: min(max(number - 1, 0), 7))
+        alert.accessoryView = popup
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        let instrument = popup.indexOfSelectedItem
+        sendAndVerifyVoicePayload(voice, systemChannel: systemChannel, instrument: instrument)
+    }
+
     func storeVoiceToDeviceSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
         guard let source = sources.first(where: { $0.id == sourceID }) else {
             return
@@ -1070,6 +1097,52 @@ final class DocumentModel: ObservableObject {
         } catch {
             errorMessage = "Send voice failed: \(error)"
             statusMessage = nil
+        }
+    }
+
+    private func sendAndVerifyVoicePayload(_ voice: FB01VoiceData, systemChannel: Int, instrument: Int) {
+        guard !isBusy else { return }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
+        isFetchingFromDevice = true
+        statusMessage = "Sending and verifying voice..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let verified = try await Task.detached(priority: .userInitiated) {
+                    let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument)
+                    try FB01MIDI.sendSysEx([try artifact.sysexBytes], destinationIndex: destinationIndex)
+                    try await Task.sleep(nanoseconds: 350_000_000)
+                    let returnedBytes = try FB01MIDI.request(
+                        .instrumentVoice(instrument + 1),
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        timeout: 8
+                    )
+                    let returnedArtifact = try FB01Artifact(sysexBytes: returnedBytes)
+                    guard case let .instrumentVoiceDump(_, _, packet) = returnedArtifact.messages.first else {
+                        return false
+                    }
+                    return try FB01.nibbleDecode(packet.payload) == voice.bytes
+                }.value
+
+                if verified {
+                    statusMessage = "Verified voice in instrument \(instrument + 1) on \(destinationName)."
+                    errorMessage = nil
+                } else {
+                    statusMessage = nil
+                    errorMessage = "Voice verify failed: FB-01 returned different voice data."
+                }
+            } catch {
+                statusMessage = nil
+                errorMessage = "Voice verify failed: \(error)"
+            }
+
+            isFetchingFromDevice = false
         }
     }
 
@@ -2277,6 +2350,12 @@ struct VoiceDetailView: View {
                     document.sendVoiceToInstrument(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
                 } label: {
                     Label("Send", systemImage: "arrow.up.circle")
+                }
+                .disabled(document.isBusy)
+                Button {
+                    document.sendAndVerifyVoiceToInstrument(sourceID: sourceID, number: summary.number, voice: editableVoice, systemChannel: systemChannel)
+                } label: {
+                    Label("Send & Verify", systemImage: "checkmark.seal")
                 }
                 .disabled(document.isBusy)
                 Button {

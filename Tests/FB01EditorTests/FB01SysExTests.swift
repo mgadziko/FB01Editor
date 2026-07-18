@@ -35,6 +35,8 @@ import Testing
 @Test func buildsUserFacingStoredConfigurationRequests() throws {
     #expect(try FB01MIDIRequestKind.configuration(1).bytes(systemChannel: 0) == [0xF0, 0x43, 0x75, 0x00, 0x20, 0x02, 0x00, 0xF7])
     #expect(try FB01MIDIRequestKind.configuration(20).bytes(systemChannel: 0) == [0xF0, 0x43, 0x75, 0x00, 0x20, 0x02, 0x13, 0xF7])
+    #expect(try FB01MIDIRequestKind.instrumentVoice(1).bytes(systemChannel: 0) == [0xF0, 0x43, 0x75, 0x00, 0x28, 0x40, 0x00, 0xF7])
+    #expect(try FB01MIDIRequestKind.instrumentVoice(8).bytes(systemChannel: 0) == [0xF0, 0x43, 0x75, 0x00, 0x2F, 0x40, 0x00, 0xF7])
 }
 
 @Test func buildsStoreCommands() throws {
