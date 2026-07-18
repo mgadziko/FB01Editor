@@ -152,6 +152,53 @@ import Testing
 }
 
 @MainActor
+@Test func selectedLibraryConfigurationLocalActionsReflectSelectionAndBusyState() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    model.sources = [source]
+    model.selectedSourceID = source.id
+
+    #expect(model.canCreateLibraryConfigurationFromSelected)
+    #expect(model.canDuplicateSelectedLibraryConfiguration)
+    #expect(model.canSaveSelectedLibraryConfigurationAs)
+
+    model.isFetchingConfigurations = true
+    #expect(!model.canCreateLibraryConfigurationFromSelected)
+    #expect(!model.canDuplicateSelectedLibraryConfiguration)
+    #expect(!model.canSaveSelectedLibraryConfigurationAs)
+}
+
+@MainActor
+@Test func selectedLibraryConfigurationLocalActionsRejectVoiceBankSelection() throws {
+    let model = DocumentModel()
+    let source = try fixtureVoiceBankSource()
+    model.sources = [source]
+    model.selectedSourceID = source.id
+
+    #expect(!model.canCreateLibraryConfigurationFromSelected)
+    #expect(!model.canDuplicateSelectedLibraryConfiguration)
+    #expect(!model.canSaveSelectedLibraryConfigurationAs)
+}
+
+@MainActor
+@Test func createConfigurationDocumentFromSelectedAddsLocalLibraryItem() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    model.sources = [source]
+    model.selectedSourceID = source.id
+
+    model.createConfigurationDocumentFromSelected()
+
+    #expect(model.sources.count == 2)
+    let created = try #require(model.sources.last)
+    #expect(model.selectedSourceID == created.id)
+    #expect(created.title == "single Document")
+    #expect(created.isLocalConfigurationDocument)
+    #expect(created.displaySubtitle == "Local Document - Unsaved")
+    #expect(model.statusMessage == "Created local configuration document.")
+}
+
+@MainActor
 @Test func selectedLibraryConfigurationPayloadIsNilForVoiceBankSelection() throws {
     let model = DocumentModel()
     let source = try fixtureVoiceBankSource()

@@ -1432,20 +1432,20 @@ struct FB01EditorApplication: App {
 
                 Divider()
 
-                Button("New Configuration Document from Selected") {
+                Button("New Library Configuration from Selected...") {
                     document.createConfigurationDocumentFromSelected()
                 }
-                .disabled(!document.canSendSelectedConfiguration)
+                .disabled(!document.canCreateLibraryConfigurationFromSelected)
 
-                Button("Duplicate Selected Configuration...") {
+                Button("Duplicate Selected Library Configuration...") {
                     document.duplicateSelectedConfigurationDocument()
                 }
-                .disabled(!document.canSendSelectedConfiguration)
+                .disabled(!document.canDuplicateSelectedLibraryConfiguration)
 
-                Button("Save Selected Configuration As...") {
+                Button("Save Selected Library Configuration As...") {
                     document.saveSelectedConfigurationAs()
                 }
-                .disabled(!document.canSendSelectedConfiguration)
+                .disabled(!document.canSaveSelectedLibraryConfigurationAs)
             }
 
             CommandMenu("Voice") {
@@ -1698,6 +1698,18 @@ final class DocumentModel: ObservableObject {
 
     var canStoreSelectedConfiguration: Bool {
         canSendSelectedConfiguration
+    }
+
+    var canCreateLibraryConfigurationFromSelected: Bool {
+        selectedSource?.editableConfigurationPayload != nil && !isBusy
+    }
+
+    var canDuplicateSelectedLibraryConfiguration: Bool {
+        canCreateLibraryConfigurationFromSelected
+    }
+
+    var canSaveSelectedLibraryConfigurationAs: Bool {
+        canCreateLibraryConfigurationFromSelected
     }
 
     var canUseSelectedVoiceLibrarianActions: Bool {
