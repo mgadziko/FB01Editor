@@ -427,7 +427,8 @@ final class DocumentModel: ObservableObject {
                     LibrarySource(
                         title: message.sourceTitle(index: index + 1),
                         subtitle: "FB-01 Live Fetch",
-                        artifact: FB01Artifact(message: message)
+                        artifact: FB01Artifact(message: message),
+                        origin: .liveFetch
                     )
                 }
                 applyFetchedSources(fetchedSources, insertionMode: insertionMode)
@@ -471,7 +472,8 @@ final class DocumentModel: ObservableObject {
                     LibrarySource(
                         title: message.sourceTitle(index: index + 1),
                         subtitle: message.configurationSubtitle ?? "FB-01 Configuration Fetch",
-                        artifact: FB01Artifact(message: message)
+                        artifact: FB01Artifact(message: message),
+                        origin: .liveFetch
                     )
                 }
                 applyFetchedSources(fetchedSources, insertionMode: insertionMode)
@@ -492,20 +494,14 @@ final class DocumentModel: ObservableObject {
             return
         }
 
+        let title = payload.name.isEmpty ? "Configuration Document" : "\(payload.name) Document"
         do {
-            let systemChannel = source.configurationSystemChannel ?? 0
-            let title = payload.name.isEmpty ? "Configuration Document" : "\(payload.name) Document"
-            let artifact = FB01Artifact(message: .currentConfigurationDump(
-                systemChannel: systemChannel,
-                packet: try FB01SysExPacket(payload: payload.bytes)
-            ))
-            let documentSource = LibrarySource(
+            _ = try createConfigurationDocument(
+                sourceID: source.id,
+                configuration: payload,
                 title: title,
-                subtitle: "Local Configuration Document",
-                artifact: artifact
+                origin: .localDocument
             )
-            sources.append(documentSource)
-            selectedSourceID = documentSource.id
             statusMessage = "Created local configuration document."
             errorMessage = nil
         } catch {
@@ -549,18 +545,12 @@ final class DocumentModel: ObservableObject {
         }
 
         do {
-            let systemChannel = source.configurationSystemChannel ?? 0
-            let artifact = FB01Artifact(message: .currentConfigurationDump(
-                systemChannel: systemChannel,
-                packet: try FB01SysExPacket(payload: configuration.bytes)
-            ))
-            let documentSource = LibrarySource(
+            _ = try createConfigurationDocument(
+                sourceID: source.id,
+                configuration: configuration,
                 title: title,
-                subtitle: "Local Configuration Document",
-                artifact: artifact
+                origin: .duplicatedConfiguration
             )
-            sources.append(documentSource)
-            selectedSourceID = documentSource.id
             statusMessage = "Duplicated configuration as \(title)."
             errorMessage = nil
         } catch {
@@ -595,6 +585,37 @@ final class DocumentModel: ObservableObject {
 
         _ = saveEditedSource(at: index, to: url)
         selectedSourceID = sources[index].id
+    }
+
+    @discardableResult
+    func createConfigurationDocument(
+        sourceID: LibrarySource.ID,
+        configuration: FB01ConfigurationData,
+        title: String,
+        origin: LibrarySourceOrigin = .localDocument
+    ) throws -> LibrarySource.ID {
+        let systemChannel = sources.first { $0.id == sourceID }?.configurationSystemChannel ?? 0
+        let artifact = FB01Artifact(message: .currentConfigurationDump(
+            systemChannel: systemChannel,
+            packet: try FB01SysExPacket(payload: configuration.bytes)
+        ))
+        let documentSource = LibrarySource(
+            title: title,
+            subtitle: "Local Configuration Document",
+            artifact: artifact,
+            origin: origin
+        )
+        sources.append(documentSource)
+        selectedSourceID = documentSource.id
+        return documentSource.id
+    }
+
+    func configurationArtifactForSaving(sourceID: LibrarySource.ID) throws -> FB01Artifact {
+        guard let source = sources.first(where: { $0.id == sourceID }),
+              source.isConfigurationSource else {
+            throw FB01AppError.noConfigurationSource
+        }
+        return try source.artifactForSaving()
     }
 
     func saveSysEx() {
@@ -995,10 +1016,18 @@ final class DocumentModel: ObservableObject {
             return
         }
 
+        sendConfigurationToCurrentEditBuffer(sourceID: selectedSource.id, payload: payload)
+    }
+
+    func sendConfigurationToCurrentEditBuffer(sourceID: LibrarySource.ID, payload: FB01ConfigurationData) {
+        guard let source = sources.first(where: { $0.id == sourceID }) else {
+            return
+        }
+
         let alert = NSAlert()
-        alert.messageText = "Send Configuration to FB-01?"
-        alert.informativeText = "This sends the selected configuration to the FB-01 current edit buffer through \(selectedDestinationName). It does not store it in a numbered slot."
-        alert.addButton(withTitle: "Send")
+        alert.messageText = "Send Configuration to Current Edit Buffer?"
+        alert.informativeText = "This sends \(source.title) to the FB-01 current configuration edit buffer through \(selectedDestinationName). It does not store it in a numbered slot."
+        alert.addButton(withTitle: "Send to Edit Buffer")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
@@ -1008,7 +1037,7 @@ final class DocumentModel: ObservableObject {
 
         sendConfigurationPayload(
             payload,
-            systemChannel: selectedSource.configurationSystemChannel ?? 0,
+            systemChannel: source.configurationSystemChannel ?? 0,
             statusPrefix: "Sent configuration to current edit buffer"
         )
     }
@@ -1458,13 +1487,17 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func currentConfigurationMessageBytes(payload: FB01ConfigurationData, systemChannel: Int) throws -> [UInt8] {
+        let message = FB01SysExMessage.currentConfigurationDump(
+            systemChannel: systemChannel,
+            packet: try FB01SysExPacket(payload: payload.bytes)
+        )
+        return try message.bytes
+    }
+
     private func sendConfigurationPayload(_ payload: FB01ConfigurationData, systemChannel: Int, statusPrefix: String) {
         do {
-            let message = FB01SysExMessage.currentConfigurationDump(
-                systemChannel: systemChannel,
-                packet: try FB01SysExPacket(payload: payload.bytes)
-            )
-            sendMIDI([try message.bytes], statusMessage: "\(statusPrefix) on \(selectedDestinationName).")
+            sendMIDI([try currentConfigurationMessageBytes(payload: payload, systemChannel: systemChannel)], statusMessage: "\(statusPrefix) on \(selectedDestinationName).")
         } catch {
             errorMessage = "Send configuration failed: \(error)"
             statusMessage = nil
@@ -1776,12 +1809,37 @@ enum SourceInsertionMode {
     case append
 }
 
+enum LibrarySourceOrigin: String, Equatable {
+    case loadedFromDisk
+    case liveFetch
+    case localDocument
+    case duplicatedConfiguration
+
+    var displayName: String {
+        switch self {
+        case .loadedFromDisk:
+            "Loaded from Disk"
+        case .liveFetch:
+            "Fetched from FB-01"
+        case .localDocument:
+            "Local Document"
+        case .duplicatedConfiguration:
+            "Duplicated Document"
+        }
+    }
+}
+
+enum FB01AppError: Error {
+    case noConfigurationSource
+}
+
 struct LibrarySource: Identifiable, Equatable {
     var id = UUID()
     var title: String
     var subtitle: String
     var artifact: FB01Artifact
     var fileURL: URL?
+    var origin: LibrarySourceOrigin = .loadedFromDisk
     var editedVoices: [Int: FB01VoiceData] = [:]
     var editedConfiguration: FB01ConfigurationData?
 
@@ -1842,6 +1900,32 @@ struct LibrarySource: Identifiable, Equatable {
             return false
         }
         return storedConfigurationNumber >= 16
+    }
+
+    var displaySubtitle: String {
+        let state = if isEdited {
+            "Edited"
+        } else if fileURL != nil {
+            "Saved"
+        } else if origin == .localDocument || origin == .duplicatedConfiguration {
+            "Unsaved"
+        } else {
+            origin.displayName
+        }
+
+        if isLocalConfigurationDocument {
+            return "\(origin.displayName) - \(state)"
+        }
+
+        if isConfigurationSource, isEdited {
+            return "\(subtitle) - Edited"
+        }
+
+        if fileURL != nil, origin == .loadedFromDisk {
+            return "\(subtitle) - Loaded from Disk"
+        }
+
+        return subtitle
     }
 
     var voiceBankData: FB01VoiceBankData? {
@@ -1970,7 +2054,8 @@ struct LibrarySource: Identifiable, Equatable {
                 LibrarySource(
                     title: artifact.messages.first?.sourceTitle(index: 1) ?? fileName,
                     subtitle: fileName,
-                    artifact: artifact
+                    artifact: artifact,
+                    origin: .loadedFromDisk
                 ),
             ]
         }
@@ -1979,7 +2064,8 @@ struct LibrarySource: Identifiable, Equatable {
             LibrarySource(
                 title: message.sourceTitle(index: index + 1),
                 subtitle: fileName,
-                artifact: FB01Artifact(message: message)
+                artifact: FB01Artifact(message: message),
+                origin: .loadedFromDisk
             )
         }
     }
@@ -2187,7 +2273,7 @@ struct LibraryView: View {
                                                 .font(.body.weight(.medium))
                                                 .lineLimit(1)
                                         }
-                                        Text(source.subtitle)
+                                        Text(source.displaySubtitle)
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                             .lineLimit(1)
@@ -2464,6 +2550,12 @@ struct ConfigurationDetailView: View {
                     } label: {
                         Label("Save As", systemImage: "square.and.arrow.down")
                     }
+                    Button {
+                        document.sendConfigurationToCurrentEditBuffer(sourceID: sourceID, payload: editableConfiguration)
+                    } label: {
+                        Label("Send Edit Buffer", systemImage: "arrow.up.circle")
+                    }
+                    .disabled(document.isBusy)
                 }
             }
 

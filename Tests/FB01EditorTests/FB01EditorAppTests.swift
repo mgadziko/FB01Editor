@@ -1,0 +1,118 @@
+import Foundation
+import Testing
+@testable import FB01Editor
+@testable import FB01EditorApp
+
+@MainActor
+@Test func configurationDocumentDuplicateUsesCurrentPayloadAndStatus() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    model.sources = [source]
+    model.selectedSourceID = source.id
+
+    let original = try #require(source.editableConfigurationPayload)
+    let edited = try original
+        .settingName("COPYCFG")
+        .settingCombineModeEnabled(true)
+    let duplicateID = try model.createConfigurationDocument(
+        sourceID: source.id,
+        configuration: edited,
+        title: "Copy Config",
+        origin: .duplicatedConfiguration
+    )
+
+    let duplicate = try #require(model.sources.first { $0.id == duplicateID })
+    #expect(model.selectedSourceID == duplicateID)
+    #expect(duplicate.title == "Copy Config")
+    #expect(duplicate.isLocalConfigurationDocument)
+    #expect(duplicate.displaySubtitle == "Duplicated Document - Unsaved")
+
+    let duplicatePayload = try #require(duplicate.editableConfigurationPayload)
+    #expect(duplicatePayload.name == "COPYCFG")
+    #expect(duplicatePayload.combineModeEnabled)
+}
+
+@MainActor
+@Test func editedConfigurationArtifactRoundTripsForSaving() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .loadedFromDisk)
+    model.sources = [source]
+
+    let original = try #require(source.editableConfigurationPayload)
+    let edited = try original
+        .settingName("SAVEAS")
+        .settingLFOSpeed(91)
+        .replacingInstrument(
+            original.instruments[0]
+                .settingVoiceBank(6)
+                .settingVoiceNumber(33)
+        )
+
+    model.updateConfiguration(sourceID: source.id, configuration: edited)
+    let savedArtifact = try model.configurationArtifactForSaving(sourceID: source.id)
+
+    guard case let .currentConfigurationDump(_, packet) = savedArtifact.messages.first else {
+        Issue.record("Expected current configuration artifact")
+        return
+    }
+
+    let reparsed = try FB01ConfigurationData(bytes: packet.payload)
+    #expect(packet.checksum == FB01.checksum(for: edited.bytes))
+    #expect(reparsed.name == "SAVEAS")
+    #expect(reparsed.lfoSpeed == 91)
+    #expect(reparsed.instruments[0].voiceBank == 6)
+    #expect(reparsed.instruments[0].voiceNumber == 33)
+}
+
+@MainActor
+@Test func configurationSourceStatusLabelsReflectOriginAndSaveState() throws {
+    var local = try fixtureConfigurationSource(origin: .localDocument)
+    local.subtitle = "Local Configuration Document"
+    #expect(local.displaySubtitle == "Local Document - Unsaved")
+
+    let configuration = try #require(local.editableConfigurationPayload)
+    local.editedConfiguration = try configuration.settingName("EDITED")
+    #expect(local.displaySubtitle == "Local Document - Edited")
+
+    local.markSaved(
+        as: try local.artifactForSaving(),
+        fileURL: URL(fileURLWithPath: "/tmp/edited-config.syx")
+    )
+    #expect(local.displaySubtitle == "Local Document - Saved")
+
+    var fetched = try fixtureConfigurationSource(origin: .liveFetch)
+    fetched.editedConfiguration = try configuration.settingName("FETCHED")
+    #expect(fetched.displaySubtitle == "FB-01 Live Fetch - Edited")
+}
+
+@MainActor
+@Test func currentConfigurationSendBytesAreNonStoreDumpOnly() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    let configuration = try #require(source.editableConfigurationPayload)
+
+    let bytes = try model.currentConfigurationMessageBytes(payload: configuration, systemChannel: 2)
+    let message = try FB01SysExMessage(bytes: bytes)
+
+    guard case let .currentConfigurationDump(systemChannel, packet) = message else {
+        Issue.record("Expected current configuration dump bytes")
+        return
+    }
+
+    #expect(systemChannel == 2)
+    #expect(packet.payload == configuration.bytes)
+}
+
+private func fixtureConfigurationSource(origin: LibrarySourceOrigin) throws -> LibrarySource {
+    let fixtureURL = Bundle.module.url(
+        forResource: "current-configuration-single",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    return LibrarySource(
+        title: "Current Configuration",
+        subtitle: origin == .liveFetch ? "FB-01 Live Fetch" : "current-configuration-single.syx",
+        artifact: try FB01Artifact.readSysEx(from: fixtureURL),
+        origin: origin
+    )
+}

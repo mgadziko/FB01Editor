@@ -36,7 +36,7 @@ let package = Package(
         ),
         .testTarget(
             name: "FB01EditorTests",
-            dependencies: ["FB01Editor"],
+            dependencies: ["FB01Editor", "FB01EditorApp"],
             resources: [.copy("Fixtures")]
         ),
     ],
