@@ -101,6 +101,11 @@ struct FB01EditorApplication: App {
                 }
                 .disabled(!document.canSendSelectedConfiguration)
 
+                Button("Send and Confirm Selected Configuration...") {
+                    document.sendAndConfirmSelectedConfigurationToCurrentEditBuffer()
+                }
+                .disabled(!document.canSendSelectedConfiguration)
+
                 Button("Store Selected Configuration to Slot...") {
                     document.storeSelectedConfigurationToDeviceSlot()
                 }
@@ -1019,6 +1024,15 @@ final class DocumentModel: ObservableObject {
         sendConfigurationToCurrentEditBuffer(sourceID: selectedSource.id, payload: payload)
     }
 
+    func sendAndConfirmSelectedConfigurationToCurrentEditBuffer() {
+        guard let selectedSource,
+              let payload = selectedSource.editableConfigurationPayload else {
+            return
+        }
+
+        sendAndConfirmConfigurationToCurrentEditBuffer(sourceID: selectedSource.id, payload: payload)
+    }
+
     func sendConfigurationToCurrentEditBuffer(sourceID: LibrarySource.ID, payload: FB01ConfigurationData) {
         guard let source = sources.first(where: { $0.id == sourceID }) else {
             return
@@ -1042,6 +1056,29 @@ final class DocumentModel: ObservableObject {
         )
     }
 
+    func sendAndConfirmConfigurationToCurrentEditBuffer(sourceID: LibrarySource.ID, payload: FB01ConfigurationData) {
+        guard let source = sources.first(where: { $0.id == sourceID }) else {
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Send and Confirm Configuration?"
+        alert.informativeText = "This sends \(source.title) to the FB-01 current configuration edit buffer through \(selectedDestinationName), then asks the FB-01 for its current configuration. It does not store it in a numbered slot."
+        alert.addButton(withTitle: "Send and Confirm")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return
+        }
+
+        sendAndConfirmConfigurationPayload(
+            payload,
+            systemChannel: source.configurationSystemChannel ?? 0,
+            sourceTitle: source.title
+        )
+    }
+
     func storeSelectedConfigurationToDeviceSlot() {
         guard let selectedSource,
               let payload = selectedSource.editableConfigurationPayload else {
@@ -1050,19 +1087,26 @@ final class DocumentModel: ObservableObject {
 
         let alert = NSAlert()
         alert.messageText = "Store Configuration to FB-01 Slot"
-        alert.informativeText = "Choose a writable configuration slot. The app will send the selected configuration to the current edit buffer, then store it to that slot."
-        alert.addButton(withTitle: "Store")
+        alert.informativeText = "Choose a writable configuration slot. This permanently overwrites that slot on the FB-01 after first sending the selected configuration to the current edit buffer. Fetch and save a backup of the destination slot before continuing unless you are certain it can be replaced."
+        alert.addButton(withTitle: "Store and Overwrite")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
         for number in 1...16 {
-            popup.addItem(withTitle: "Configuration \(number)")
+            popup.addItem(withTitle: configurationSlotMenuTitle(slot: number - 1))
         }
         if let storedNumber = selectedSource.storedConfigurationNumber, storedNumber < 16 {
             popup.selectItem(at: storedNumber)
         }
-        alert.accessoryView = popup
+        stack.addArrangedSubview(labelledPopup(label: "Overwrite slot:", popup: popup))
+        stack.addArrangedSubview(makeWarningLabel("Writable slots are 1-16. Configurations 17-20 are read only and are intentionally unavailable here."))
+        alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
             return
@@ -1495,12 +1539,66 @@ final class DocumentModel: ObservableObject {
         return try message.bytes
     }
 
+    func currentConfigurationSendAndConfirmMessages(payload: FB01ConfigurationData, systemChannel: Int) throws -> [[UInt8]] {
+        [
+            try currentConfigurationMessageBytes(payload: payload, systemChannel: systemChannel),
+            try FB01MIDIRequestKind.currentConfiguration.bytes(systemChannel: systemChannel),
+        ]
+    }
+
     private func sendConfigurationPayload(_ payload: FB01ConfigurationData, systemChannel: Int, statusPrefix: String) {
         do {
             sendMIDI([try currentConfigurationMessageBytes(payload: payload, systemChannel: systemChannel)], statusMessage: "\(statusPrefix) on \(selectedDestinationName).")
         } catch {
             errorMessage = "Send configuration failed: \(error)"
             statusMessage = nil
+        }
+    }
+
+    private func sendAndConfirmConfigurationPayload(_ payload: FB01ConfigurationData, systemChannel: Int, sourceTitle: String) {
+        guard !isBusy else { return }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
+        isFetchingFromDevice = true
+        statusMessage = "Sending configuration and waiting for current edit buffer..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let configurationBytes = try currentConfigurationMessageBytes(payload: payload, systemChannel: systemChannel)
+                let response = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendSysEx(
+                        [configurationBytes],
+                        destinationIndex: destinationIndex,
+                        delayBetweenMessages: 0
+                    )
+                    try await Task.sleep(for: .milliseconds(800))
+                    return [
+                        try FB01MIDI.request(
+                            .currentConfiguration,
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 8
+                        ),
+                    ]
+                }.value
+
+                if let confirmedConfiguration = try currentConfigurationPayload(from: response),
+                   confirmedConfiguration.bytes == payload.bytes {
+                    statusMessage = "FB-01 confirmed current edit buffer matches \(sourceTitle) on \(destinationName)."
+                } else {
+                    statusMessage = "Sent \(sourceTitle); FB-01 returned a current configuration that did not match exactly."
+                }
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Configuration confirm failed: \(error)"
+            }
+
+            isFetchingFromDevice = false
         }
     }
 
@@ -1648,6 +1746,15 @@ final class DocumentModel: ObservableObject {
         return stack
     }
 
+    private func makeWarningLabel(_ string: String) -> NSTextField {
+        let text = NSTextField(wrappingLabelWithString: string)
+        text.textColor = .secondaryLabelColor
+        text.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        text.maximumNumberOfLines = 3
+        text.preferredMaxLayoutWidth = 330
+        return text
+    }
+
     private func chooseVoiceSlot(
         title: String,
         message: String,
@@ -1708,6 +1815,17 @@ final class DocumentModel: ObservableObject {
         return "Voice \(summary.number) - \(name)\(edited ? " (LOCAL EDIT)" : "")"
     }
 
+    private func configurationSlotMenuTitle(slot: Int) -> String {
+        let userNumber = slot + 1
+        guard let source = sources.first(where: { $0.storedConfigurationNumber == slot }),
+              let configuration = source.editableConfigurationPayload else {
+            return "Configuration \(userNumber)"
+        }
+        let name = configuration.name.isEmpty ? "Untitled" : configuration.name
+        let edited = source.isEdited ? " (LOCAL EDIT)" : ""
+        return "Configuration \(userNumber) - \(name)\(edited)"
+    }
+
     private func voiceDisplayName(_ voice: FB01VoiceData) -> String {
         voice.name.isEmpty ? "the selected voice" : "\"\(voice.name)\""
     }
@@ -1765,6 +1883,18 @@ final class DocumentModel: ObservableObject {
             for message in artifact.messages {
                 if case .deviceStatus(let code) = message {
                     return code
+                }
+            }
+        }
+        return nil
+    }
+
+    private func currentConfigurationPayload(from messages: [[UInt8]]) throws -> FB01ConfigurationData? {
+        for bytes in messages {
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            for message in artifact.messages {
+                if case let .currentConfigurationDump(_, packet) = message {
+                    return try FB01ConfigurationData(bytes: packet.payload)
                 }
             }
         }
@@ -2554,6 +2684,12 @@ struct ConfigurationDetailView: View {
                         document.sendConfigurationToCurrentEditBuffer(sourceID: sourceID, payload: editableConfiguration)
                     } label: {
                         Label("Send Edit Buffer", systemImage: "arrow.up.circle")
+                    }
+                    .disabled(document.isBusy)
+                    Button {
+                        document.sendAndConfirmConfigurationToCurrentEditBuffer(sourceID: sourceID, payload: editableConfiguration)
+                    } label: {
+                        Label("Send & Confirm", systemImage: "checkmark.seal")
                     }
                     .disabled(document.isBusy)
                 }

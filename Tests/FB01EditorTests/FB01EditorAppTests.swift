@@ -103,6 +103,25 @@ import Testing
     #expect(packet.payload == configuration.bytes)
 }
 
+@MainActor
+@Test func currentConfigurationSendAndConfirmMessagesSendThenRequestCurrentConfiguration() throws {
+    let model = DocumentModel()
+    let source = try fixtureConfigurationSource(origin: .liveFetch)
+    let configuration = try #require(source.editableConfigurationPayload)
+
+    let messages = try model.currentConfigurationSendAndConfirmMessages(payload: configuration, systemChannel: 3)
+    #expect(messages.count == 2)
+
+    guard case let .currentConfigurationDump(systemChannel, packet) = try FB01SysExMessage(bytes: messages[0]) else {
+        Issue.record("Expected current configuration send dump")
+        return
+    }
+    #expect(systemChannel == 3)
+    #expect(packet.payload == configuration.bytes)
+
+    #expect(try FB01SysExMessage(bytes: messages[1]) == .command(.requestCurrentConfiguration(systemChannel: 3)))
+}
+
 private func fixtureConfigurationSource(origin: LibrarySourceOrigin) throws -> LibrarySource {
     let fixtureURL = Bundle.module.url(
         forResource: "current-configuration-single",
