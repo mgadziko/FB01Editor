@@ -111,10 +111,387 @@ enum SidebarSelection: Equatable {
     case source
 }
 
+struct ActiveEditorDocumentActions {
+    var save: () -> Void
+    var saveAs: () -> Void
+    var reset: () -> Void
+    var isEdited: Bool
+}
+
+private struct ActiveEditorDocumentActionsKey: FocusedValueKey {
+    typealias Value = ActiveEditorDocumentActions
+}
+
+extension FocusedValues {
+    var activeEditorDocumentActions: ActiveEditorDocumentActions? {
+        get { self[ActiveEditorDocumentActionsKey.self] }
+        set { self[ActiveEditorDocumentActionsKey.self] = newValue }
+    }
+}
+
+struct EditorDocumentCommands: View {
+    @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
+    @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
+
+    var body: some View {
+        Button("New Voice Document") {
+            let id = workspace.createVoiceDocument()
+            openWindow(id: "voice-document", value: id)
+        }
+        .keyboardShortcut("n", modifiers: .command)
+
+        Button("New Configuration Document") {
+            let id = workspace.createConfigurationDocument()
+            openWindow(id: "configuration-document", value: id)
+        }
+        .keyboardShortcut("n", modifiers: [.command, .shift])
+
+        Divider()
+
+        Button(activeDocumentActions == nil ? "Save SysEx..." : "Save") {
+            if let activeDocumentActions {
+                activeDocumentActions.save()
+            } else {
+                document.saveSysEx()
+            }
+        }
+        .keyboardShortcut("s", modifiers: .command)
+        .disabled(activeDocumentActions == nil && !document.hasDocument)
+
+        Button(activeDocumentActions == nil ? "Save SysEx As..." : "Save As...") {
+            if let activeDocumentActions {
+                activeDocumentActions.saveAs()
+            } else {
+                document.saveSysEx()
+            }
+        }
+        .keyboardShortcut("s", modifiers: [.command, .shift])
+        .disabled(activeDocumentActions == nil && !document.hasDocument)
+
+        Button("Revert Document") {
+            activeDocumentActions?.reset()
+        }
+        .disabled(activeDocumentActions?.isEdited != true)
+
+        Divider()
+    }
+}
+
+@MainActor
+final class EditorDocumentWorkspace: ObservableObject {
+    @Published private(set) var voiceDocuments: [UUID: VoiceDocumentModel] = [:]
+    @Published private(set) var configurationDocuments: [UUID: ConfigurationDocumentModel] = [:]
+
+    func createVoiceDocument(voice: FB01VoiceData = EditorDocumentTemplates.voice(), systemChannel: Int = 0) -> UUID {
+        let document = VoiceDocumentModel(voice: voice, systemChannel: systemChannel)
+        voiceDocuments[document.id] = document
+        return document.id
+    }
+
+    func createConfigurationDocument(configuration: FB01ConfigurationData = EditorDocumentTemplates.configuration(), systemChannel: Int = 0) -> UUID {
+        let document = ConfigurationDocumentModel(configuration: configuration, systemChannel: systemChannel)
+        configurationDocuments[document.id] = document
+        return document.id
+    }
+
+    func voiceDocument(id: UUID) -> VoiceDocumentModel? {
+        voiceDocuments[id]
+    }
+
+    func configurationDocument(id: UUID) -> ConfigurationDocumentModel? {
+        configurationDocuments[id]
+    }
+
+    func confirmApplicationTermination() -> NSApplication.TerminateReply {
+        let editedCount = voiceDocuments.values.filter(\.isEdited).count + configurationDocuments.values.filter(\.isEdited).count
+        guard editedCount > 0 else {
+            return .terminateNow
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Save Document Changes Before Quitting?"
+        alert.informativeText = "There are unsaved changes in \(editedCount) editor document\(editedCount == 1 ? "" : "s"). Save each document from its window before quitting?"
+        alert.addButton(withTitle: "Save...")
+        alert.addButton(withTitle: "Discard Changes")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            for document in voiceDocuments.values where document.isEdited {
+                document.save()
+            }
+            for document in configurationDocuments.values where document.isEdited {
+                document.save()
+            }
+            let remainingEdits = voiceDocuments.values.contains(where: \.isEdited) || configurationDocuments.values.contains(where: \.isEdited)
+            return remainingEdits ? .terminateCancel : .terminateNow
+        case .alertSecondButtonReturn:
+            return .terminateNow
+        default:
+            return .terminateCancel
+        }
+    }
+}
+
+enum EditorDocumentTemplates {
+    static func voice() -> FB01VoiceData {
+        do {
+            var voice = try FB01VoiceData(bytes: Array(repeating: 0, count: FB01VoiceData.byteCount))
+            voice = try voice.settingName("Init")
+            voice = try voice.settingLeftOutputEnabled(true)
+            voice = try voice.settingRightOutputEnabled(true)
+            return voice
+        } catch {
+            fatalError("Unable to create template voice: \(error)")
+        }
+    }
+
+    static func configuration() -> FB01ConfigurationData {
+        do {
+            var configuration = try FB01ConfigurationData(bytes: Array(repeating: 0, count: FB01ConfigurationData.byteCount))
+            configuration = try configuration.settingName("Init")
+            return configuration
+        } catch {
+            fatalError("Unable to create template configuration: \(error)")
+        }
+    }
+}
+
+private enum EditorFileDefaultsKey {
+    static let lastSaveDirectory = "FB01Editor.lastSaveDirectory"
+}
+
+private func preferredEditorSaveDirectoryURL() -> URL {
+    ensureDefaultEditorFileDirectory()
+
+    if let path = UserDefaults.standard.string(forKey: EditorFileDefaultsKey.lastSaveDirectory) {
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        if editorDirectoryExists(at: url) {
+            return url
+        }
+    }
+
+    return defaultEditorFileDirectoryURL
+}
+
+private func rememberEditorSaveDirectory(for url: URL) {
+    let directoryURL: URL
+    var isDirectory: ObjCBool = false
+    if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+        directoryURL = url.standardizedFileURL
+    } else {
+        directoryURL = url.deletingLastPathComponent().standardizedFileURL
+    }
+
+    guard editorDirectoryExists(at: directoryURL) else {
+        return
+    }
+    UserDefaults.standard.set(directoryURL.path, forKey: EditorFileDefaultsKey.lastSaveDirectory)
+}
+
+private func ensureDefaultEditorFileDirectory() {
+    try? FileManager.default.createDirectory(
+        at: defaultEditorFileDirectoryURL,
+        withIntermediateDirectories: true
+    )
+}
+
+private func editorDirectoryExists(at url: URL) -> Bool {
+    var isDirectory: ObjCBool = false
+    return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+}
+
+private var defaultEditorFileDirectoryURL: URL {
+    FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("Documents", isDirectory: true)
+        .appendingPathComponent("Forest FB01 Editor", isDirectory: true)
+}
+
+private func safeEditorFileName(_ name: String, fallback: String) -> String {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let base = trimmed.isEmpty ? fallback : trimmed
+    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+    let sanitized = base
+        .unicodeScalars
+        .map { allowed.contains($0) ? Character($0) : "-" }
+        .reduce("") { $0 + String($1) }
+    return sanitized.isEmpty ? fallback : sanitized
+}
+
+@MainActor
+final class VoiceDocumentModel: ObservableObject, Identifiable {
+    let id = UUID()
+    let systemChannel: Int
+    @Published var voice: FB01VoiceData
+    @Published var savedVoice: FB01VoiceData
+    @Published var fileURL: URL?
+    @Published var errorMessage: String?
+    @Published var statusMessage: String?
+
+    init(voice: FB01VoiceData, systemChannel: Int, fileURL: URL? = nil) {
+        self.voice = voice
+        self.savedVoice = voice
+        self.systemChannel = systemChannel
+        self.fileURL = fileURL
+    }
+
+    var title: String {
+        let name = voice.name.isEmpty ? "Untitled Voice" : voice.name
+        return isEdited ? "\(name) Edited" : name
+    }
+
+    var isEdited: Bool {
+        voice != savedVoice
+    }
+
+    func reset() {
+        voice = savedVoice
+        errorMessage = nil
+        statusMessage = "Reverted to last saved version."
+    }
+
+    func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
+        do {
+            voice = try edit(voice)
+            errorMessage = nil
+            statusMessage = nil
+        } catch {
+            errorMessage = "Edit failed: \(error)"
+        }
+    }
+
+    func save() {
+        if let fileURL {
+            save(to: fileURL)
+        } else {
+            saveAs()
+        }
+    }
+
+    func saveAs() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.sysex]
+        panel.directoryURL = preferredEditorSaveDirectoryURL()
+        panel.nameFieldStringValue = "\(safeEditorFileName(voice.name, fallback: "voice")).syx"
+        panel.message = "Save this voice document as a SysEx file."
+        panel.prompt = "Save Voice"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        save(to: url)
+    }
+
+    private func save(to url: URL) {
+        do {
+            let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
+            try artifact.writeSysEx(to: url)
+            savedVoice = voice
+            fileURL = url
+            rememberEditorSaveDirectory(for: url)
+            statusMessage = "Saved \(url.lastPathComponent)."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Save failed: \(error)"
+            statusMessage = nil
+        }
+    }
+}
+
+@MainActor
+final class ConfigurationDocumentModel: ObservableObject, Identifiable {
+    let id = UUID()
+    let systemChannel: Int
+    @Published var configuration: FB01ConfigurationData
+    @Published var savedConfiguration: FB01ConfigurationData
+    @Published var fileURL: URL?
+    @Published var errorMessage: String?
+    @Published var statusMessage: String?
+
+    init(configuration: FB01ConfigurationData, systemChannel: Int, fileURL: URL? = nil) {
+        self.configuration = configuration
+        self.savedConfiguration = configuration
+        self.systemChannel = systemChannel
+        self.fileURL = fileURL
+    }
+
+    var title: String {
+        let name = configuration.name.isEmpty ? "Untitled Configuration" : configuration.name
+        return isEdited ? "\(name) Edited" : name
+    }
+
+    var isEdited: Bool {
+        configuration != savedConfiguration
+    }
+
+    func reset() {
+        configuration = savedConfiguration
+        errorMessage = nil
+        statusMessage = "Reverted to last saved version."
+    }
+
+    func updateConfiguration(_ edit: (FB01ConfigurationData) throws -> FB01ConfigurationData) {
+        do {
+            configuration = try edit(configuration)
+            errorMessage = nil
+            statusMessage = nil
+        } catch {
+            errorMessage = "Edit failed: \(error)"
+        }
+    }
+
+    func save() {
+        if let fileURL {
+            save(to: fileURL)
+        } else {
+            saveAs()
+        }
+    }
+
+    func saveAs() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.sysex]
+        panel.directoryURL = preferredEditorSaveDirectoryURL()
+        panel.nameFieldStringValue = "\(safeEditorFileName(configuration.name, fallback: "configuration")).syx"
+        panel.message = "Save this configuration document as a SysEx file."
+        panel.prompt = "Save Configuration"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        save(to: url)
+    }
+
+    private func save(to url: URL) {
+        do {
+            let artifact = FB01Artifact(message: .currentConfigurationDump(
+                systemChannel: systemChannel,
+                packet: try FB01SysExPacket(payload: configuration.bytes)
+            ))
+            try artifact.writeSysEx(to: url)
+            savedConfiguration = configuration
+            fileURL = url
+            rememberEditorSaveDirectory(for: url)
+            statusMessage = "Saved \(url.lastPathComponent)."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Save failed: \(error)"
+            statusMessage = nil
+        }
+    }
+}
+
 @main
 struct FB01EditorApplication: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var document = DocumentModel()
+    @StateObject private var documentWorkspace = EditorDocumentWorkspace()
 
     var body: some Scene {
         WindowGroup("Forest FB01 Editor") {
@@ -122,7 +499,26 @@ struct FB01EditorApplication: App {
                 .frame(minWidth: 840, minHeight: 540)
                 .onAppear {
                     appDelegate.document = document
+                    appDelegate.documentWorkspace = documentWorkspace
                 }
+        }
+        WindowGroup("Voice Document", id: "voice-document", for: UUID.self) { $id in
+            if let id, let voiceDocument = documentWorkspace.voiceDocument(id: id) {
+                VoiceDocumentWindow(document: voiceDocument)
+                    .frame(minWidth: 760, minHeight: 620)
+            } else {
+                MissingEditorDocumentView()
+                    .frame(width: 420, height: 180)
+            }
+        }
+        WindowGroup("Configuration Document", id: "configuration-document", for: UUID.self) { $id in
+            if let id, let configurationDocument = documentWorkspace.configurationDocument(id: id) {
+                ConfigurationDocumentWindow(document: configurationDocument)
+                    .frame(minWidth: 820, minHeight: 620)
+            } else {
+                MissingEditorDocumentView()
+                    .frame(width: 420, height: 180)
+            }
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
@@ -131,18 +527,14 @@ struct FB01EditorApplication: App {
                 }
             }
 
-            CommandGroup(replacing: .newItem) { }
+            CommandGroup(replacing: .newItem) {
+                EditorDocumentCommands(document: document, workspace: documentWorkspace)
+            }
             CommandGroup(after: .newItem) {
                 Button("Open SysEx...") {
                     document.openSysEx()
                 }
                 .keyboardShortcut("o", modifiers: .command)
-
-                Button("Save SysEx...") {
-                    document.saveSysEx()
-                }
-                .keyboardShortcut("s", modifiers: .command)
-                .disabled(!document.hasDocument)
 
                 Button("Save Configuration Set...") {
                     document.saveConfigurationSet()
@@ -226,9 +618,14 @@ struct FB01EditorApplication: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var document: DocumentModel?
+    weak var documentWorkspace: EditorDocumentWorkspace?
 
     func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
-        document?.confirmApplicationTermination() ?? .terminateNow
+        let libraryReply = document?.confirmApplicationTermination() ?? .terminateNow
+        guard libraryReply == .terminateNow else {
+            return libraryReply
+        }
+        return documentWorkspace?.confirmApplicationTermination() ?? .terminateNow
     }
 }
 
@@ -3552,6 +3949,272 @@ struct MessageView: View {
             KeyValueRow("Type", message.displayName),
             KeyValueRow("Bytes", ((try? message.bytes.count).map(String.init)) ?? "Unknown"),
         ]
+    }
+}
+
+struct MissingEditorDocumentView: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "doc.badge.gearshape")
+                .font(.system(size: 34))
+                .foregroundStyle(.secondary)
+            Text("Document Not Available")
+                .font(.headline)
+            Text("The editor document for this window is no longer open.")
+                .foregroundStyle(.secondary)
+        }
+        .padding(24)
+    }
+}
+
+struct VoiceDocumentWindow: View {
+    @ObservedObject var document: VoiceDocumentModel
+
+    private var voice: FB01VoiceData {
+        document.voice
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(voice.name.isEmpty ? "Untitled Voice" : voice.name)
+                            .font(.title2.weight(.semibold))
+                        Text(document.fileURL?.path ?? "New voice document")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Text(document.isEdited ? "Edited" : "Saved")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(document.isEdited ? .orange : .secondary)
+                }
+
+                SummaryPanel(rows: [
+                    KeyValueRow("Name", voice.name),
+                    KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
+                    KeyValueRow("Algorithm", "\(voice.algorithm + 1)"),
+                    KeyValueRow("Feedback", "\(voice.feedbackLevel)"),
+                    KeyValueRow("Transpose", "\(voice.transpose)"),
+                    KeyValueRow("LFO", "Speed \(voice.lfoSpeed), Waveform \(voice.lfoWaveform.lfoWaveformDisplayName), Sync \(voice.lfoSyncEnabled ? "On" : "Off")"),
+                    KeyValueRow("Modulation", "AMD \(voice.amplitudeModulationDepth), PMD \(voice.pitchModulationDepth), AMS \(voice.amplitudeModulationSensitivity), PMS \(voice.pitchModulationSensitivity)"),
+                    KeyValueRow("Operators", enabledOperatorsText),
+                    KeyValueRow("Output", outputText),
+                    KeyValueRow("User Code", "\(voice.userCode)"),
+                ])
+
+                VoiceEditorControls(
+                    name: Binding(
+                        get: { voice.name },
+                        set: { setName($0) }
+                    ),
+                    algorithm: Binding(
+                        get: { voice.algorithm + 1 },
+                        set: { newValue in document.updateVoice { voice in try voice.settingAlgorithm(newValue - 1) } }
+                    ),
+                    feedback: Binding(
+                        get: { voice.feedbackLevel },
+                        set: { newValue in document.updateVoice { voice in try voice.settingFeedbackLevel(newValue) } }
+                    ),
+                    lfoSpeed: Binding(
+                        get: { voice.lfoSpeed },
+                        set: { newValue in document.updateVoice { voice in try voice.settingLFOSpeed(newValue) } }
+                    ),
+                    lfoWaveform: Binding(
+                        get: { voice.lfoWaveform },
+                        set: { newValue in document.updateVoice { voice in try voice.settingLFOWaveform(newValue) } }
+                    ),
+                    lfoSyncEnabled: Binding(
+                        get: { voice.lfoSyncEnabled },
+                        set: { newValue in document.updateVoice { voice in try voice.settingLFOSyncEnabled(newValue) } }
+                    ),
+                    amplitudeModulationDepth: Binding(
+                        get: { voice.amplitudeModulationDepth },
+                        set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationDepth(newValue) } }
+                    ),
+                    pitchModulationDepth: Binding(
+                        get: { voice.pitchModulationDepth },
+                        set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationDepth(newValue) } }
+                    ),
+                    amplitudeModulationSensitivity: Binding(
+                        get: { voice.amplitudeModulationSensitivity },
+                        set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationSensitivity(newValue) } }
+                    ),
+                    pitchModulationSensitivity: Binding(
+                        get: { voice.pitchModulationSensitivity },
+                        set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationSensitivity(newValue) } }
+                    ),
+                    transpose: Binding(
+                        get: { voice.transpose },
+                        set: { newValue in document.updateVoice { voice in try voice.settingTranspose(newValue) } }
+                    ),
+                    leftOutputEnabled: Binding(
+                        get: { voice.leftOutputEnabled },
+                        set: { newValue in document.updateVoice { voice in try voice.settingLeftOutputEnabled(newValue) } }
+                    ),
+                    rightOutputEnabled: Binding(
+                        get: { voice.rightOutputEnabled },
+                        set: { newValue in document.updateVoice { voice in try voice.settingRightOutputEnabled(newValue) } }
+                    ),
+                    operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
+                        Binding(
+                            get: { voice.operatorEnabled[index] },
+                            set: { enabled in
+                                document.updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
+                            }
+                        )
+                    }
+                )
+
+                OperatorEditor(
+                    operators: voice.operators,
+                    updateOperator: { operatorData in
+                        document.updateVoice { try $0.replacingOperator(operatorData) }
+                    }
+                )
+
+                DocumentStatusFooter(errorMessage: document.errorMessage, statusMessage: document.statusMessage)
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle(document.title)
+        .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
+            save: { document.save() },
+            saveAs: { document.saveAs() },
+            reset: { document.reset() },
+            isEdited: document.isEdited
+        ))
+    }
+
+    private var enabledOperatorsText: String {
+        voice.operatorEnabled.enumerated()
+            .filter(\.element)
+            .map { "\($0.offset + 1)" }
+            .joined(separator: ", ")
+    }
+
+    private var outputText: String {
+        "Left \(voice.leftOutputEnabled ? "On" : "Off"), Right \(voice.rightOutputEnabled ? "On" : "Off")"
+    }
+
+    private func setName(_ value: String) {
+        let limited = String(value.prefix(FB01VoiceData.nameLength))
+        document.updateVoice { try $0.settingName(limited) }
+    }
+}
+
+struct ConfigurationDocumentWindow: View {
+    @ObservedObject var document: ConfigurationDocumentModel
+
+    private var configuration: FB01ConfigurationData {
+        document.configuration
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(configuration.name.isEmpty ? "Untitled Configuration" : configuration.name)
+                            .font(.title2.weight(.semibold))
+                        Text(document.fileURL?.path ?? "New configuration document")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Text(document.isEdited ? "Edited" : "Saved")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(document.isEdited ? .orange : .secondary)
+                }
+
+                SummaryPanel(rows: [
+                    KeyValueRow("Name", configuration.name),
+                    KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
+                    KeyValueRow("Combine", configuration.combineModeEnabled ? "On" : "Off"),
+                    KeyValueRow("Key-Code Mode", configuration.keyCodeReceiveMode.displayName),
+                    KeyValueRow("LFO", "Speed \(configuration.lfoSpeed), AMD \(configuration.amplitudeModulationDepth), PMD \(configuration.pitchModulationDepth), Waveform \(configuration.lfoWaveform.lfoWaveformDisplayName)"),
+                ])
+
+                ConfigurationEditorControls(
+                    name: Binding(
+                        get: { configuration.name },
+                        set: { setName($0) }
+                    ),
+                    combineModeEnabled: Binding(
+                        get: { configuration.combineModeEnabled },
+                        set: { newValue in document.updateConfiguration { configuration in try configuration.settingCombineModeEnabled(newValue) } }
+                    ),
+                    keyCodeReceiveMode: Binding(
+                        get: { configuration.keyCodeReceiveMode },
+                        set: { newValue in document.updateConfiguration { configuration in try configuration.settingKeyCodeReceiveMode(newValue) } }
+                    ),
+                    lfoSpeed: Binding(
+                        get: { configuration.lfoSpeed },
+                        set: { newValue in document.updateConfiguration { configuration in try configuration.settingLFOSpeed(newValue) } }
+                    ),
+                    amplitudeModulationDepth: Binding(
+                        get: { configuration.amplitudeModulationDepth },
+                        set: { newValue in document.updateConfiguration { configuration in try configuration.settingAmplitudeModulationDepth(newValue) } }
+                    ),
+                    pitchModulationDepth: Binding(
+                        get: { configuration.pitchModulationDepth },
+                        set: { newValue in document.updateConfiguration { configuration in try configuration.settingPitchModulationDepth(newValue) } }
+                    ),
+                    lfoWaveform: Binding(
+                        get: { configuration.lfoWaveform },
+                        set: { newValue in document.updateConfiguration { configuration in try configuration.settingLFOWaveform(newValue) } }
+                    )
+                )
+
+                ConfigurationInstrumentEditor(
+                    instruments: configuration.instruments,
+                    updateInstrument: { instrument in
+                        document.updateConfiguration { try $0.replacingInstrument(instrument) }
+                    }
+                )
+
+                DocumentStatusFooter(errorMessage: document.errorMessage, statusMessage: document.statusMessage)
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .navigationTitle(document.title)
+        .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
+            save: { document.save() },
+            saveAs: { document.saveAs() },
+            reset: { document.reset() },
+            isEdited: document.isEdited
+        ))
+    }
+
+    private func setName(_ value: String) {
+        let limited = String(value.prefix(FB01ConfigurationData.nameLength))
+        document.updateConfiguration { try $0.settingName(limited) }
+    }
+}
+
+struct DocumentStatusFooter: View {
+    var errorMessage: String?
+    var statusMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if let statusMessage {
+                Text(statusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
