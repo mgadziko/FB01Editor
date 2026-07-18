@@ -8,6 +8,11 @@ enum VoiceSlotOperation {
     case swap
 }
 
+enum SidebarSelection: Equatable {
+    case system
+    case source
+}
+
 @main
 struct FB01EditorApplication: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -256,6 +261,9 @@ final class DocumentModel: ObservableObject {
     @Published var selectedSourceIndex = 0
     @Published var selectedDestinationIndex = 0
     @Published var selectedVoiceNumbers: [LibrarySource.ID: Int] = [:]
+    @Published var sidebarSelection: SidebarSelection = .system
+    @Published var systemMemoryProtectEnabled = false
+    @Published var systemMasterOutputLevel = 127
 
     private enum DefaultsKey {
         static let sourceIndex = "FB01Editor.selectedMIDISourceIndex"
@@ -321,7 +329,10 @@ final class DocumentModel: ObservableObject {
     }
 
     var selectedTitle: String? {
-        selectedSource?.title
+        guard sidebarSelection == .source else {
+            return "System"
+        }
+        return selectedSource?.title
     }
 
     private var selectedVoiceContext: (sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary])? {
@@ -343,7 +354,7 @@ final class DocumentModel: ObservableObject {
     }
 
     var canManageSource: Bool {
-        selectedSource != nil && !isBusy
+        sidebarSelection == .source && selectedSource != nil && !isBusy
     }
 
     var hasUnsavedEdits: Bool {
@@ -391,6 +402,47 @@ final class DocumentModel: ObservableObject {
     func selectDestination(_ destination: FB01MIDIEndpoint) {
         selectedDestinationIndex = destination.index
         persistSelectedEndpoints()
+    }
+
+    func selectSystemPanel() {
+        sidebarSelection = .system
+    }
+
+    func setMemoryProtect(_ enabled: Bool) {
+        systemMemoryProtectEnabled = enabled
+        do {
+            let command = FB01SysExMessage.command(.setMemoryProtect(
+                systemChannel: 0,
+                enabled ? .on : .off
+            ))
+            sendMIDI(
+                [try command.bytes],
+                delayBetweenMessages: 0,
+                statusMessage: "Set FB-01 Protect \(enabled ? "ON" : "OFF") on \(selectedDestinationName)."
+            )
+        } catch {
+            errorMessage = "Set Protect failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    func setMasterOutputLevel(_ level: Int) {
+        let bounded = min(max(level, 0), 127)
+        systemMasterOutputLevel = bounded
+        do {
+            let command = FB01SysExMessage.command(.setMasterOutputLevel(
+                systemChannel: 0,
+                level: UInt8(bounded)
+            ))
+            sendMIDI(
+                [try command.bytes],
+                delayBetweenMessages: 0,
+                statusMessage: "Set FB-01 master output level to \(bounded) on \(selectedDestinationName)."
+            )
+        } catch {
+            errorMessage = "Set master output failed: \(error)"
+            statusMessage = nil
+        }
     }
 
     func openSysEx() {
@@ -747,6 +799,7 @@ final class DocumentModel: ObservableObject {
 
     func selectSource(_ source: LibrarySource) {
         selectedSourceID = source.id
+        sidebarSelection = .source
     }
 
     func selectVoice(sourceID: LibrarySource.ID, number: Int) {
@@ -763,8 +816,10 @@ final class DocumentModel: ObservableObject {
 
         if sources.isEmpty {
             selectedSourceID = nil
+            sidebarSelection = .system
         } else {
             selectedSourceID = sources[min(index, sources.count - 1)].id
+            sidebarSelection = .source
         }
 
         statusMessage = "Removed \(selectedSource.title)."
@@ -819,6 +874,7 @@ final class DocumentModel: ObservableObject {
         let count = sources.count
         sources.removeAll()
         selectedSourceID = nil
+        sidebarSelection = .system
         statusMessage = "Cleared \(count) source\(count == 1 ? "" : "s")."
         errorMessage = nil
     }
@@ -1263,7 +1319,7 @@ final class DocumentModel: ObservableObject {
                        confirmedConfiguration.bytes == payload.bytes {
                         statusMessage = "FB-01 confirmed \(sourceTitle) stored to configuration \(slot + 1) on \(destinationName).\(backupText)"
                     } else {
-                        statusMessage = "Stored \(sourceTitle) to configuration \(slot + 1), but fetched data did not match exactly.\(backupText)"
+                        statusMessage = "Stored \(sourceTitle) to configuration \(slot + 1), but fetched data did not match exactly. Protect may still be ON, the MIDI path may be wrong, or the FB-01 did not accept the store.\(backupText)"
                     }
                 } else {
                     statusMessage = "Stored \(sourceTitle) to configuration \(slot + 1) on \(destinationName).\(backupText)"
@@ -1271,7 +1327,7 @@ final class DocumentModel: ObservableObject {
                 errorMessage = nil
             } catch {
                 statusMessage = nil
-                errorMessage = "Store configuration failed: \(error)"
+                errorMessage = "Store configuration failed: \(error). Protect may still be ON, the MIDI path may be wrong, or the FB-01 did not accept the store."
             }
 
             isFetchingFromDevice = false
@@ -1365,7 +1421,7 @@ final class DocumentModel: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "Store Voice to FB-01 Slot"
         alert.informativeText = storeVoicePromptText(
-            action: "This sends \(voiceDisplayName(voice)) from \(source.title) to a current instrument edit buffer, then permanently stores that instrument voice to a voice slot on the FB-01.",
+            action: "This sends Protect OFF, sends \(voiceDisplayName(voice)) from \(source.title) to a current instrument edit buffer, then permanently stores that instrument voice to a voice slot on the FB-01.",
             voiceSlot: min(max(number - 1, 0), 95)
         )
         alert.addButton(withTitle: "Store and Overwrite")
@@ -1400,18 +1456,13 @@ final class DocumentModel: ObservableObject {
         let instrument = instrumentPopup.indexOfSelectedItem
         let voiceSlot = voicePopup.indexOfSelectedItem
         do {
-            let voiceMessage = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument).messages[0]
-            let storeCommand = FB01SysExMessage.command(.storeCurrentInstrumentVoice(
-                systemChannel: systemChannel,
-                instrument: instrument,
-                voiceNumber: voiceSlot
-            ))
             sendMIDI(
-                [try voiceMessage.bytes, try storeCommand.bytes],
+                try storeVoiceMessages(voice: voice, systemChannel: systemChannel, instrument: instrument, voiceSlot: voiceSlot),
+                delayBetweenMessages: 0.35,
                 statusMessage: "Stored voice to slot \(voiceSlot + 1) on \(selectedDestinationName)."
             )
         } catch {
-            errorMessage = "Store voice failed: \(error)"
+            errorMessage = "Store voice failed: \(error). Protect may still be ON, the MIDI path may be wrong, or the FB-01 did not accept the store."
             statusMessage = nil
         }
     }
@@ -1424,7 +1475,7 @@ final class DocumentModel: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "Store and Confirm Voice"
         alert.informativeText = storeVoicePromptText(
-            action: "This sends \(voiceDisplayName(voice)) from \(source.title) to a current instrument edit buffer, permanently stores that instrument voice to a selected FB-01 voice slot, and waits for the FB-01 status response.",
+            action: "This sends Protect OFF, sends \(voiceDisplayName(voice)) from \(source.title) to a current instrument edit buffer, permanently stores that instrument voice to a selected FB-01 voice slot, and waits for the FB-01 status response.",
             voiceSlot: min(max(number - 1, 0), 95)
         )
         alert.addButton(withTitle: "Store, Overwrite, and Confirm")
@@ -1488,6 +1539,7 @@ final class DocumentModel: ObservableObject {
         if !loadedSources.isEmpty {
             sources.append(contentsOf: loadedSources)
             selectedSourceID = loadedSources.first?.id
+            sidebarSelection = .source
             statusMessage = "Opened \(loadedSources.count) source\(loadedSources.count == 1 ? "" : "s")."
         }
 
@@ -1675,6 +1727,7 @@ final class DocumentModel: ObservableObject {
             sources.append(contentsOf: fetchedSources)
         }
         selectedSourceID = fetchedSources.first?.id ?? sources.first?.id
+        sidebarSelection = selectedSourceID == nil ? .system : .source
     }
 
     private func fetchInsertionMode(title: String = "Fetch FB-01 Banks", noun: String = "banks") -> SourceInsertionMode? {
@@ -1832,15 +1885,10 @@ final class DocumentModel: ObservableObject {
 
         Task {
             do {
+                let storeMessages = try storeVoiceMessages(voice: voice, systemChannel: systemChannel, instrument: instrument, voiceSlot: voiceSlot)
                 let status = try await Task.detached(priority: .userInitiated) {
-                    let voiceMessage = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument).messages[0]
-                    let storeCommand = FB01SysExMessage.command(.storeCurrentInstrumentVoice(
-                        systemChannel: systemChannel,
-                        instrument: instrument,
-                        voiceNumber: voiceSlot
-                    ))
                     return try FB01MIDI.sendAndReceive(
-                        [try voiceMessage.bytes, try storeCommand.bytes],
+                        storeMessages,
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
                         timeout: 8,
@@ -1857,11 +1905,25 @@ final class DocumentModel: ObservableObject {
                 errorMessage = nil
             } catch {
                 statusMessage = nil
-                errorMessage = "Store confirm failed: \(error)"
+                errorMessage = "Store confirm failed: \(error). Protect may still be ON, the MIDI path may be wrong, or the FB-01 did not accept the store."
             }
 
             isFetchingFromDevice = false
         }
+    }
+
+    func storeVoiceMessages(voice: FB01VoiceData, systemChannel: Int, instrument: Int, voiceSlot: Int) throws -> [[UInt8]] {
+        let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(
+            systemChannel: systemChannel,
+            .off
+        ))
+        let voiceMessage = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument).messages[0]
+        let storeCommand = FB01SysExMessage.command(.storeCurrentInstrumentVoice(
+            systemChannel: systemChannel,
+            instrument: instrument,
+            voiceNumber: voiceSlot
+        ))
+        return try [protectOffCommand.bytes, voiceMessage.bytes, storeCommand.bytes]
     }
 
     private func playVoiceTestNotes(voice: FB01VoiceData, systemChannel: Int, instrument: Int) {
@@ -2401,13 +2463,7 @@ struct ContentView: View {
 
             Divider()
 
-            Group {
-                if !document.sources.isEmpty {
-                    LibraryView(document: document)
-                } else {
-                    EmptyStateView()
-                }
-            }
+            LibraryView(document: document)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if let errorMessage = document.errorMessage {
@@ -2532,6 +2588,37 @@ struct LibraryView: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    document.selectSystemPanel()
+                } label: {
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 15, height: 16)
+                            .padding(.top, 2)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("System")
+                                .font(.body.weight(.medium))
+                                .lineLimit(1)
+                            Text("Protect and output")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        document.sidebarSelection == .system
+                            ? Color.accentColor.opacity(0.18)
+                            : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                }
+                .buttonStyle(.plain)
+
                 HStack(spacing: 6) {
                     Text("Sources")
                         .font(.headline)
@@ -2616,9 +2703,87 @@ struct LibraryView: View {
 
             Divider()
 
-            if let source = document.selectedSource {
+            if document.sidebarSelection == .system {
+                SystemSettingsView(document: document)
+            } else if let source = document.selectedSource {
                 ArtifactView(document: document, source: source)
+            } else {
+                EmptyStateView()
             }
+        }
+    }
+}
+
+struct SystemSettingsView: View {
+    @ObservedObject var document: DocumentModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                SummaryPanel(rows: [
+                    KeyValueRow("Destination", document.selectedDestinationName),
+                    KeyValueRow("System Channel", "1"),
+                    KeyValueRow("Protect", document.systemMemoryProtectEnabled ? "On" : "Off"),
+                    KeyValueRow("Master Output", "\(document.systemMasterOutputLevel)"),
+                ])
+
+                HStack(alignment: .top, spacing: 14) {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Memory Protect", isOn: Binding(
+                                get: { document.systemMemoryProtectEnabled },
+                                set: { document.setMemoryProtect($0) }
+                            ))
+                            .toggleStyle(.switch)
+
+                            Text("Protect ON blocks stored voices and configurations. Store operations set Protect OFF before writing.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.top, 4)
+                    } label: {
+                        SectionTitle("Protect")
+                    }
+                    .frame(width: 300, alignment: .topLeading)
+
+                    GroupBox {
+                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                            GridRow {
+                                Text("Level")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Slider(
+                                    value: Binding(
+                                        get: { Double(document.systemMasterOutputLevel) },
+                                        set: { document.systemMasterOutputLevel = Int($0.rounded()) }
+                                    ),
+                                    in: 0...127,
+                                    step: 1
+                                )
+                                .frame(width: 220)
+                                Text("\(document.systemMasterOutputLevel)")
+                                    .monospacedDigit()
+                                    .frame(width: 34, alignment: .trailing)
+                            }
+                        }
+                        .padding(.top, 4)
+
+                        Button {
+                            document.setMasterOutputLevel(document.systemMasterOutputLevel)
+                        } label: {
+                            Label("Send Output Level", systemImage: "speaker.wave.2")
+                        }
+                        .padding(.top, 10)
+                        .disabled(document.isBusy)
+                    } label: {
+                        SectionTitle("Master Output")
+                    }
+                    .frame(width: 360, alignment: .topLeading)
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

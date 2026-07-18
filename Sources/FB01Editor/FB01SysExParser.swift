@@ -193,6 +193,11 @@ public enum FB01SysExMessage: Equatable, Sendable {
             }
         }
 
+        if body.count == 5, body[2] == 0x10, body[3] == 0x24 {
+            let systemChannel = Int(body[1] & 0x0F)
+            return .setMasterOutputLevel(systemChannel: systemChannel, level: body[4])
+        }
+
         if body.count == 5, (0x28...0x2F).contains(body[2]), body[3] == 0x00 {
             return .storeCurrentInstrumentVoice(
                 systemChannel: Int(body[1] & 0x0F),

@@ -141,6 +141,7 @@ public enum FB01Command: Equatable, Sendable {
     case requestAllConfigurations(systemChannel: Int)
     case requestUnitID(systemChannel: Int)
     case setMemoryProtect(systemChannel: Int, FB01MemoryProtect)
+    case setMasterOutputLevel(systemChannel: Int, level: UInt8)
     case storeCurrentConfiguration(systemChannel: Int, number: Int)
 
     public var bytes: [UInt8] {
@@ -207,6 +208,11 @@ public enum FB01Command: Equatable, Sendable {
             case let .setMemoryProtect(systemChannel, state):
                 let system = try FB01.validateSystemChannel(systemChannel)
                 return envelope([FB01.fb01Substatus, system, 0x10, 0x21, state.rawValue])
+
+            case let .setMasterOutputLevel(systemChannel, level):
+                let system = try FB01.validateSystemChannel(systemChannel)
+                let data = try FB01.validateSevenBit(level)
+                return envelope([FB01.fb01Substatus, system, 0x10, 0x24, data])
 
             case let .storeCurrentConfiguration(systemChannel, number):
                 let system = try FB01.validateSystemChannel(systemChannel)

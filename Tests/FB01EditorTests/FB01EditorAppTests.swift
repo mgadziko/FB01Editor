@@ -153,6 +153,25 @@ import Testing
 }
 
 @MainActor
+@Test func storeVoiceMessagesTurnProtectOffThenSendVoiceThenStoreWritableSlot() throws {
+    let model = DocumentModel()
+    let voice = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
+
+    let messages = try model.storeVoiceMessages(voice: voice, systemChannel: 2, instrument: 3, voiceSlot: 47)
+    #expect(messages.count == 3)
+    #expect(try FB01SysExMessage(bytes: messages[0]) == .command(.setMemoryProtect(systemChannel: 2, .off)))
+
+    guard case let .instrumentVoiceDump(systemChannel, instrument, packet) = try FB01SysExMessage(bytes: messages[1]) else {
+        Issue.record("Expected instrument voice send dump")
+        return
+    }
+    #expect(systemChannel == 2)
+    #expect(instrument == 3)
+    #expect(try FB01.nibbleDecode(packet.payload) == voice.bytes)
+    #expect(try FB01SysExMessage(bytes: messages[2]) == .command(.storeCurrentInstrumentVoice(systemChannel: 2, instrument: 3, voiceNumber: 47)))
+}
+
+@MainActor
 @Test func configurationSlotMenuTitleShowsKnownNamesAndUnknowns() throws {
     let model = DocumentModel()
     let source = try storedConfigurationSource(number: 2, name: "SLOT3", origin: .liveFetch)
