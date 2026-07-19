@@ -40,6 +40,29 @@ private func voiceBankData(from bytes: [UInt8], expectedBankNumber: Int) throws 
     throw FB01AppError.message("Response did not contain Bank \(expectedBankNumber)")
 }
 
+private func keyboardAuditionPreparationMessages(systemChannel: Int, midiChannel: Int) throws -> [[UInt8]] {
+    [
+        try FB01SysExMessage.command(.instrumentParameterChange(
+            systemChannel: systemChannel,
+            instrument: 0,
+            parameter: 0x00,
+            value: .oneByte(8)
+        )).bytes,
+        try FB01SysExMessage.command(.instrumentParameterChange(
+            systemChannel: systemChannel,
+            instrument: 0,
+            parameter: 0x01,
+            value: .oneByte(UInt8(min(max(midiChannel, 0), 15)))
+        )).bytes,
+        try FB01SysExMessage.command(.instrumentParameterChange(
+            systemChannel: systemChannel,
+            instrument: 0,
+            parameter: 0x08,
+            value: .oneByte(127)
+        )).bytes,
+    ]
+}
+
 private func backupFileName(prefix: String, timestamp: Date = Date()) -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyMMdd-HHmmss"
@@ -1114,7 +1137,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         do {
             if isOn {
-                for message in try keyboardPreparationMessages() {
+                for message in try keyboardPreparationMessages(midiChannel: Int(channel)) {
                     try FB01MIDI.sendImmediate(message, destinationIndex: destinationIndex)
                 }
             }
@@ -1148,15 +1171,15 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    private func keyboardPreparationMessages() throws -> [[UInt8]] {
-        let signature = "\(voice.bytes)"
+    private func keyboardPreparationMessages(midiChannel: Int) throws -> [[UInt8]] {
+        let signature = "\(midiChannel)-\(voice.bytes)"
         guard preparedKeyboardVoiceSignature != signature else {
             return []
         }
 
         let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
         preparedKeyboardVoiceSignature = signature
-        return [try artifact.sysexBytes]
+        return [try artifact.sysexBytes] + (try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel))
     }
 
     private static func readVoice(from url: URL) throws -> (voice: FB01VoiceData, systemChannel: Int) {
@@ -4086,7 +4109,7 @@ final class DocumentModel: ObservableObject {
 
         do {
             if isOn {
-                for message in try keyboardPreparationMessages() {
+                for message in try keyboardPreparationMessages(midiChannel: Int(channel)) {
                     try FB01MIDI.sendImmediate(message, destinationIndex: destinationIndex)
                 }
             }
@@ -4105,19 +4128,19 @@ final class DocumentModel: ObservableObject {
         }
     }
 
-    private func keyboardPreparationMessages() throws -> [[UInt8]] {
+    private func keyboardPreparationMessages(midiChannel: Int) throws -> [[UInt8]] {
         guard let context = selectedVoiceContext else {
-            return []
+            return try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel)
         }
 
-        let signature = "\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)"
+        let signature = "\(midiChannel)-\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)"
         guard preparedKeyboardVoiceSignature != signature else {
             return []
         }
 
         let artifact = try context.voice.instrumentVoiceArtifact(systemChannel: context.systemChannel, instrument: 0)
         preparedKeyboardVoiceSignature = signature
-        return [try artifact.sysexBytes]
+        return [try artifact.sysexBytes] + (try keyboardAuditionPreparationMessages(systemChannel: context.systemChannel, midiChannel: midiChannel))
     }
 
     private func scheduleKeyboardVoicePreparation(delayNanoseconds: UInt64 = 150_000_000) {
@@ -4126,7 +4149,8 @@ final class DocumentModel: ObservableObject {
             return
         }
 
-        let signature = "\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)"
+        let midiChannel = min(max(keyboardChannel, 0), 15)
+        let signature = "\(midiChannel)-\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)"
         guard preparedKeyboardVoiceSignature != signature else {
             return
         }
@@ -4139,8 +4163,12 @@ final class DocumentModel: ObservableObject {
                 try await Task.sleep(nanoseconds: delayNanoseconds)
                 try Task.checkCancellation()
                 let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
+                let auditionMessages = try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel)
                 try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.sendImmediate(try artifact.sysexBytes, destinationIndex: destinationIndex)
+                    for message in auditionMessages {
+                        try FB01MIDI.sendImmediate(message, destinationIndex: destinationIndex)
+                    }
                 }.value
                 try Task.checkCancellation()
                 await MainActor.run {
@@ -4994,7 +5022,10 @@ final class PianoKeyboardNSView: NSView {
         }
     }
     private var activeNote: Int?
+    private var activeNoteStartedAt: Date?
+    private var pendingNoteOffTask: DispatchWorkItem?
     private var tracking: NSTrackingArea?
+    private let minimumClickNoteDuration: TimeInterval = 0.18
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -5043,11 +5074,11 @@ final class PianoKeyboardNSView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        stopActiveNote()
+        stopActiveNote(respectingMinimumDuration: true)
     }
 
     override func mouseExited(with event: NSEvent) {
-        stopActiveNote()
+        stopActiveNote(respectingMinimumDuration: true)
     }
 
     private var whiteKeyCount: Int {
@@ -5101,20 +5132,43 @@ final class PianoKeyboardNSView: NSView {
             return
         }
 
-        if let activeNote {
-            noteOff(activeNote)
-        }
+        stopActiveNote(respectingMinimumDuration: false)
+        pendingNoteOffTask?.cancel()
+        pendingNoteOffTask = nil
         activeNote = note
+        activeNoteStartedAt = Date()
         noteOn(note)
         needsDisplay = true
     }
 
-    private func stopActiveNote() {
+    private func stopActiveNote(respectingMinimumDuration: Bool = false) {
         guard let activeNote else {
             return
         }
+        pendingNoteOffTask?.cancel()
+        pendingNoteOffTask = nil
+
+        let elapsed = activeNoteStartedAt.map { Date().timeIntervalSince($0) } ?? minimumClickNoteDuration
+        if respectingMinimumDuration && elapsed < minimumClickNoteDuration {
+            let note = activeNote
+            let delay = minimumClickNoteDuration - elapsed
+            let task = DispatchWorkItem { [weak self] in
+                guard let self, self.activeNote == note else {
+                    return
+                }
+                self.noteOff(note)
+                self.activeNote = nil
+                self.activeNoteStartedAt = nil
+                self.needsDisplay = true
+            }
+            pendingNoteOffTask = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
+            return
+        }
+
         noteOff(activeNote)
         self.activeNote = nil
+        activeNoteStartedAt = nil
         needsDisplay = true
     }
 
