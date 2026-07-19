@@ -5600,14 +5600,8 @@ struct VoiceDocumentWindow: View {
                 DocumentMIDIContextView(device: device, documentSystemChannel: document.systemChannel)
 
                 SummaryPanel(rows: [
-                    KeyValueRow("Name", voice.name),
                     KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
-                    KeyValueRow("Algorithm", "\(voice.algorithm + 1)"),
                     KeyValueRow("Feedback", "\(voice.feedbackLevel)"),
-                    KeyValueRow("Transpose", "\(voice.transpose)"),
-                    KeyValueRow("LFO", "Speed \(voice.lfoSpeed), Waveform \(voice.lfoWaveform.lfoWaveformDisplayName), Sync \(voice.lfoSyncEnabled ? "On" : "Off")"),
-                    KeyValueRow("Modulation", "AMD \(voice.amplitudeModulationDepth), PMD \(voice.pitchModulationDepth), AMS \(voice.amplitudeModulationSensitivity), PMS \(voice.pitchModulationSensitivity)"),
-                    KeyValueRow("Operators", enabledOperatorsText),
                     KeyValueRow("Output", outputText),
                     KeyValueRow("User Code", "\(voice.userCode)"),
                 ])
@@ -5749,13 +5743,6 @@ struct VoiceDocumentWindow: View {
             isEdited: document.isEdited,
             isBusy: document.isBusy
         ))
-    }
-
-    private var enabledOperatorsText: String {
-        voice.operatorEnabled.enumerated()
-            .filter(\.element)
-            .map { "\($0.offset + 1)" }
-            .joined(separator: ", ")
     }
 
     private var outputText: String {
@@ -6855,13 +6842,7 @@ struct VoiceDetailView: View {
             }
 
             SummaryPanel(rows: [
-                KeyValueRow("Name", editableVoice.name),
-                KeyValueRow("Algorithm", "\(editableVoice.algorithm + 1)"),
                 KeyValueRow("Feedback", "\(editableVoice.feedbackLevel)"),
-                KeyValueRow("Transpose", "\(editableVoice.transpose)"),
-                KeyValueRow("LFO", "Speed \(editableVoice.lfoSpeed), Waveform \(editableVoice.lfoWaveform.lfoWaveformDisplayName), Sync \(editableVoice.lfoSyncEnabled ? "On" : "Off")"),
-                KeyValueRow("Modulation", "AMD \(editableVoice.amplitudeModulationDepth), PMD \(editableVoice.pitchModulationDepth), AMS \(editableVoice.amplitudeModulationSensitivity), PMS \(editableVoice.pitchModulationSensitivity)"),
-                KeyValueRow("Operators", enabledOperatorsText),
                 KeyValueRow("Output", outputText),
                 KeyValueRow("User Code", "\(editableVoice.userCode)"),
             ])
@@ -6952,13 +6933,6 @@ struct VoiceDetailView: View {
         .onChange(of: editableVoice.name) { _, newName in
             nameText = newName
         }
-    }
-
-    private var enabledOperatorsText: String {
-        editableVoice.operatorEnabled.enumerated()
-            .filter(\.element)
-            .map { "\($0.offset + 1)" }
-            .joined(separator: ", ")
     }
 
     private var outputText: String {
