@@ -5080,14 +5080,24 @@ final class PianoKeyboardNSView: NSView {
     var noteOff: (Int) -> Void = { _ in }
     var startNote = 36 {
         didSet {
-            startNote = min(max(startNote, 0), 127)
+            let clampedStartNote = min(max(startNote, 0), 127)
+            guard clampedStartNote != oldValue else {
+                startNote = clampedStartNote
+                return
+            }
+            startNote = clampedStartNote
             stopActiveNote()
             needsDisplay = true
         }
     }
     var octaveCount = 5 {
         didSet {
-            octaveCount = min(max(octaveCount, 1), 8)
+            let clampedOctaveCount = min(max(octaveCount, 1), 8)
+            guard clampedOctaveCount != oldValue else {
+                octaveCount = clampedOctaveCount
+                return
+            }
+            octaveCount = clampedOctaveCount
             stopActiveNote()
             needsDisplay = true
         }
