@@ -5853,11 +5853,6 @@ struct ArtifactView: View {
     var body: some View {
         if artifact.messages.count > 1 {
             VStack(alignment: .leading, spacing: 0) {
-                SummaryPanel(rows: summaryRows)
-                    .padding(18)
-
-                Divider()
-
                 MessageBrowser(
                     document: document,
                     sourceID: source.id,
@@ -5868,24 +5863,14 @@ struct ArtifactView: View {
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    SummaryPanel(rows: summaryRows)
-
                     ForEach(Array(artifact.messages.enumerated()), id: \.offset) { index, message in
-                        MessageView(document: document, sourceID: source.id, index: index + 1, message: message)
+                        MessageView(document: document, sourceID: source.id, index: index + 1, message: message, showsHeader: false)
                     }
                 }
                 .padding(18)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-    }
-
-    private var summaryRows: [KeyValueRow] {
-        [
-            KeyValueRow("Artifact", artifact.kind.displayName),
-            KeyValueRow("Messages", "\(artifact.messages.count)"),
-            KeyValueRow("Bytes", ((try? artifact.sysexBytes.count).map(String.init)) ?? "Unknown"),
-        ]
     }
 }
 
@@ -5947,16 +5932,19 @@ struct MessageView: View {
     var sourceID: LibrarySource.ID
     var index: Int
     var message: FB01SysExMessage
+    var showsHeader = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Message \(index)")
-                    .font(.title3.weight(.semibold))
-                Spacer()
-                Text(message.displayName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
+            if showsHeader {
+                HStack {
+                    Text(message.sourceTitle(index: index))
+                        .font(.title3.weight(.semibold))
+                    Spacer()
+                    Text(message.displayName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             switch message {
