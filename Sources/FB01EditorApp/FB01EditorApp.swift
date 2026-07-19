@@ -1108,6 +1108,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     func sendKeyboardNote(_ note: Int, isOn: Bool, device: DocumentModel) {
         let boundedNote = min(max(note, 0), 127)
         let destinationIndex = device.selectedDestinationIndex
+        let destinationName = device.selectedDestinationName
         let channel = UInt8(min(max(device.keyboardChannel, 0), 15))
         let velocity = UInt8(min(max(device.keyboardVelocity, 1), 127))
 
@@ -1122,6 +1123,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 UInt8(boundedNote),
                 isOn ? velocity : 0,
             ], destinationIndex: destinationIndex)
+            if isOn {
+                statusMessage = "Keyboard sent note \(boundedNote) on channel \(Int(channel) + 1) to \(destinationName)."
+                errorMessage = nil
+            }
         } catch {
             errorMessage = "Keyboard note failed: \(error)"
             statusMessage = nil
@@ -4075,6 +4080,7 @@ final class DocumentModel: ObservableObject {
     func sendKeyboardNote(_ note: Int, isOn: Bool) {
         let boundedNote = min(max(note, 0), 127)
         let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
         let channel = UInt8(min(max(keyboardChannel, 0), 15))
         let velocity = UInt8(min(max(keyboardVelocity, 1), 127))
 
@@ -4089,6 +4095,10 @@ final class DocumentModel: ObservableObject {
                 UInt8(boundedNote),
                 isOn ? velocity : 0,
             ], destinationIndex: destinationIndex)
+            if isOn {
+                statusMessage = "Keyboard sent note \(boundedNote) on channel \(Int(channel) + 1) to \(destinationName)."
+                errorMessage = nil
+            }
         } catch {
             errorMessage = "Keyboard note failed: \(error)"
             statusMessage = nil
