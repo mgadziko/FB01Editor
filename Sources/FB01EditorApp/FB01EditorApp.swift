@@ -395,33 +395,43 @@ final class EditorDocumentWorkspace: ObservableObject {
     }
 
     func confirmApplicationTermination() -> NSApplication.TerminateReply {
-        let editedCount = voiceDocuments.values.filter(\.isEdited).count + configurationDocuments.values.filter(\.isEdited).count
-        guard editedCount > 0 else {
-            return .terminateNow
-        }
+        let editedVoices = voiceDocuments.values
+            .filter(\.isEdited)
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        let editedConfigurations = configurationDocuments.values
+            .filter(\.isEdited)
+            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
 
+        for document in editedVoices {
+            guard confirmTermination(for: document.title, save: { document.save() }, isEdited: { document.isEdited }) else {
+                return .terminateCancel
+            }
+        }
+        for document in editedConfigurations {
+            guard confirmTermination(for: document.title, save: { document.save() }, isEdited: { document.isEdited }) else {
+                return .terminateCancel
+            }
+        }
+        return .terminateNow
+    }
+
+    private func confirmTermination(for title: String, save: () -> Void, isEdited: () -> Bool) -> Bool {
         let alert = NSAlert()
-        alert.messageText = "Save Document Changes Before Quitting?"
-        alert.informativeText = "There are unsaved changes in \(editedCount) editor document\(editedCount == 1 ? "" : "s"). Save each document from its window before quitting?"
-        alert.addButton(withTitle: "Save...")
+        alert.messageText = "Save Changes to \(title.replacingOccurrences(of: " *", with: ""))?"
+        alert.informativeText = "This document has unsaved changes."
+        alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Discard Changes")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            for document in voiceDocuments.values where document.isEdited {
-                document.save()
-            }
-            for document in configurationDocuments.values where document.isEdited {
-                document.save()
-            }
-            let remainingEdits = voiceDocuments.values.contains(where: \.isEdited) || configurationDocuments.values.contains(where: \.isEdited)
-            return remainingEdits ? .terminateCancel : .terminateNow
+            save()
+            return !isEdited()
         case .alertSecondButtonReturn:
-            return .terminateNow
+            return true
         default:
-            return .terminateCancel
+            return false
         }
     }
 }
