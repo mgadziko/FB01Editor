@@ -2245,7 +2245,6 @@ final class DocumentModel: ObservableObject {
     @Published var keyboardVelocity = 100
     @Published var keyboardChannel = 0
     @Published var keyboardStartNote = 36
-    @Published var keyboardGateSeconds = 1.8
 
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
@@ -2262,7 +2261,6 @@ final class DocumentModel: ObservableObject {
         static let keyboardChannel = "FB01Editor.keyboardChannel"
         static let keyboardVelocity = "FB01Editor.keyboardVelocity"
         static let keyboardStartNote = "FB01Editor.keyboardStartNote"
-        static let keyboardGateSeconds = "FB01Editor.keyboardGateSeconds"
     }
 
     init() {
@@ -2277,8 +2275,6 @@ final class DocumentModel: ObservableObject {
         keyboardVelocity = (1...127).contains(savedKeyboardVelocity) ? savedKeyboardVelocity : 100
         let savedKeyboardStartNote = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardStartNote)
         keyboardStartNote = (0...67).contains(savedKeyboardStartNote) ? savedKeyboardStartNote : 36
-        let savedKeyboardGateSeconds = UserDefaults.standard.double(forKey: DefaultsKey.keyboardGateSeconds)
-        keyboardGateSeconds = (0.1...5.0).contains(savedKeyboardGateSeconds) ? savedKeyboardGateSeconds : 1.8
         refreshMIDIEndpoints()
     }
 
@@ -2473,11 +2469,6 @@ final class DocumentModel: ObservableObject {
     func setKeyboardStartNote(_ note: Int) {
         keyboardStartNote = min(max(note, 0), 67)
         UserDefaults.standard.set(keyboardStartNote, forKey: DefaultsKey.keyboardStartNote)
-    }
-
-    func setKeyboardGateSeconds(_ seconds: Double) {
-        keyboardGateSeconds = min(max(seconds, 0.1), 5.0)
-        UserDefaults.standard.set(keyboardGateSeconds, forKey: DefaultsKey.keyboardGateSeconds)
     }
 
     func setMemoryProtect(_ enabled: Bool) {
@@ -5009,22 +5000,14 @@ struct LiveKeyboardView: View {
                             .monospacedDigit()
                     }
 
-                    Stepper(value: Binding(
-                        get: { document.keyboardGateSeconds },
-                        set: { document.setKeyboardGateSeconds($0) }
-                    ), in: 0.1...5.0, step: 0.1) {
-                        Text("Gate \(document.keyboardGateSeconds, specifier: "%.1f")s")
-                            .monospacedDigit()
-                    }
                 }
                 .font(.caption)
             }
-            .frame(width: 370, alignment: .leading)
+            .frame(width: 260, alignment: .leading)
 
             PianoKeyboardRepresentable(
                 startNote: document.keyboardStartNote,
                 octaveCount: 5,
-                minimumClickNoteDuration: document.keyboardGateSeconds,
                 noteOn: { document.sendKeyboardNote($0, isOn: true) },
                 noteOff: { document.sendKeyboardNote($0, isOn: false) }
             )
@@ -5036,7 +5019,6 @@ struct LiveKeyboardView: View {
 struct PianoKeyboardRepresentable: NSViewRepresentable {
     var startNote: Int
     var octaveCount: Int
-    var minimumClickNoteDuration: TimeInterval
     var noteOn: (Int) -> Void
     var noteOff: (Int) -> Void
 
@@ -5048,7 +5030,6 @@ struct PianoKeyboardRepresentable: NSViewRepresentable {
         let view = PianoKeyboardNSView()
         view.startNote = startNote
         view.octaveCount = octaveCount
-        view.minimumClickNoteDuration = minimumClickNoteDuration
         view.noteOn = context.coordinator.noteOn
         view.noteOff = context.coordinator.noteOff
         return view
@@ -5059,7 +5040,6 @@ struct PianoKeyboardRepresentable: NSViewRepresentable {
         context.coordinator.noteOff = noteOff
         nsView.startNote = startNote
         nsView.octaveCount = octaveCount
-        nsView.minimumClickNoteDuration = minimumClickNoteDuration
         nsView.noteOn = context.coordinator.noteOn
         nsView.noteOff = context.coordinator.noteOff
     }
@@ -5103,14 +5083,7 @@ final class PianoKeyboardNSView: NSView {
         }
     }
     private var activeNote: Int?
-    private var activeNoteStartedAt: Date?
-    private var pendingNoteOffTask: DispatchWorkItem?
     private var tracking: NSTrackingArea?
-    var minimumClickNoteDuration: TimeInterval = 1.8 {
-        didSet {
-            minimumClickNoteDuration = min(max(minimumClickNoteDuration, 0.1), 5.0)
-        }
-    }
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -5159,11 +5132,11 @@ final class PianoKeyboardNSView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        stopActiveNote(respectingMinimumDuration: true)
+        stopActiveNote()
     }
 
     override func mouseExited(with event: NSEvent) {
-        stopActiveNote(respectingMinimumDuration: true)
+        stopActiveNote()
     }
 
     private var whiteKeyCount: Int {
@@ -5217,43 +5190,19 @@ final class PianoKeyboardNSView: NSView {
             return
         }
 
-        stopActiveNote(respectingMinimumDuration: false)
-        pendingNoteOffTask?.cancel()
-        pendingNoteOffTask = nil
+        stopActiveNote()
         activeNote = note
-        activeNoteStartedAt = Date()
         noteOn(note)
         needsDisplay = true
     }
 
-    private func stopActiveNote(respectingMinimumDuration: Bool = false) {
+    private func stopActiveNote() {
         guard let activeNote else {
-            return
-        }
-        pendingNoteOffTask?.cancel()
-        pendingNoteOffTask = nil
-
-        let elapsed = activeNoteStartedAt.map { Date().timeIntervalSince($0) } ?? minimumClickNoteDuration
-        if respectingMinimumDuration && elapsed < minimumClickNoteDuration {
-            let note = activeNote
-            let delay = minimumClickNoteDuration - elapsed
-            let task = DispatchWorkItem { [weak self] in
-                guard let self, self.activeNote == note else {
-                    return
-                }
-                self.noteOff(note)
-                self.activeNote = nil
-                self.activeNoteStartedAt = nil
-                self.needsDisplay = true
-            }
-            pendingNoteOffTask = task
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: task)
             return
         }
 
         noteOff(activeNote)
         self.activeNote = nil
-        activeNoteStartedAt = nil
         needsDisplay = true
     }
 
@@ -5810,20 +5759,11 @@ struct VoiceDocumentLiveKeyboardView: View {
                 }
                 .frame(width: 140)
 
-                Stepper(value: Binding(
-                    get: { device.keyboardGateSeconds },
-                    set: { device.setKeyboardGateSeconds($0) }
-                ), in: 0.1...5.0, step: 0.1) {
-                    Text("Gate \(device.keyboardGateSeconds, specifier: "%.1f")s")
-                        .monospacedDigit()
-                }
-                .frame(width: 130)
             }
 
             PianoKeyboardRepresentable(
                 startNote: device.keyboardStartNote,
                 octaveCount: 5,
-                minimumClickNoteDuration: device.keyboardGateSeconds,
                 noteOn: { document.sendKeyboardNote($0, isOn: true, device: device) },
                 noteOff: { document.sendKeyboardNote($0, isOn: false, device: device) }
             )
