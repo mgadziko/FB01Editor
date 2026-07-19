@@ -5075,7 +5075,7 @@ final class PianoKeyboardNSView: NSView {
     private var activeNoteStartedAt: Date?
     private var pendingNoteOffTask: DispatchWorkItem?
     private var tracking: NSTrackingArea?
-    private let minimumClickNoteDuration: TimeInterval = 0.18
+    private let minimumClickNoteDuration: TimeInterval = 0.85
 
     override var acceptsFirstResponder: Bool { true }
 
