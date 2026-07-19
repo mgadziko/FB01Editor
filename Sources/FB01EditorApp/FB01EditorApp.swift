@@ -2348,6 +2348,9 @@ final class DocumentModel: ObservableObject {
     @Published var midiDestinations: [FB01MIDIEndpoint] = []
     @Published var selectedSourceIndex = 0
     @Published var selectedDestinationIndex = 0
+    @Published var selectedKeyboardSourceIndex = 0
+    @Published var externalKeyboardEnabled = false
+    @Published var externalKeyboardStatus = "Off"
     @Published var selectedVoiceNumbers: [LibrarySource.ID: Int] = [:]
     @Published var sidebarSelection: SidebarSelection = .system
     @Published var systemChannel = 0
@@ -2360,12 +2363,16 @@ final class DocumentModel: ObservableObject {
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
+    private var externalKeyboardMonitor: FB01MIDILiveInputMonitor?
 
     private enum DefaultsKey {
         static let sourceIndex = "FB01Editor.selectedMIDISourceIndex"
         static let sourceUniqueID = "FB01Editor.selectedMIDISourceUniqueID"
         static let destinationIndex = "FB01Editor.selectedMIDIDestinationIndex"
         static let destinationUniqueID = "FB01Editor.selectedMIDIDestinationUniqueID"
+        static let keyboardSourceIndex = "FB01Editor.selectedKeyboardSourceIndex"
+        static let keyboardSourceUniqueID = "FB01Editor.selectedKeyboardSourceUniqueID"
+        static let externalKeyboardEnabled = "FB01Editor.externalKeyboardEnabled"
         static let lastLoadDirectory = "FB01Editor.lastLoadDirectory"
         static let lastSaveDirectory = "FB01Editor.lastSaveDirectory"
         static let systemChannel = "FB01Editor.systemChannel"
@@ -2378,6 +2385,8 @@ final class DocumentModel: ObservableObject {
         ensureDefaultFileDirectory()
         selectedSourceIndex = UserDefaults.standard.integer(forKey: DefaultsKey.sourceIndex)
         selectedDestinationIndex = UserDefaults.standard.integer(forKey: DefaultsKey.destinationIndex)
+        selectedKeyboardSourceIndex = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardSourceIndex)
+        externalKeyboardEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.externalKeyboardEnabled)
         let savedSystemChannel = UserDefaults.standard.integer(forKey: DefaultsKey.systemChannel)
         systemChannel = (0...15).contains(savedSystemChannel) ? savedSystemChannel : 0
         let savedKeyboardChannel = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardChannel)
@@ -2520,6 +2529,10 @@ final class DocumentModel: ObservableObject {
         midiDestinations.first { $0.index == selectedDestinationIndex }?.displayName ?? "Destination \(selectedDestinationIndex)"
     }
 
+    var selectedKeyboardSourceName: String {
+        midiSources.first { $0.index == selectedKeyboardSourceIndex }?.displayName ?? "Input \(selectedKeyboardSourceIndex)"
+    }
+
     func refreshMIDIEndpoints() {
         let previousDestinationIndex = selectedDestinationIndex
         midiSources = FB01MIDI.availableSources()
@@ -2530,6 +2543,13 @@ final class DocumentModel: ObservableObject {
             selectedSourceIndex = source.index
         } else if !midiSources.contains(where: { $0.index == selectedSourceIndex }) {
             selectedSourceIndex = midiSources.first?.index ?? 0
+        }
+
+        if let storedKeyboardSource = storedUniqueID(for: DefaultsKey.keyboardSourceUniqueID),
+           let source = midiSources.first(where: { $0.uniqueID == storedKeyboardSource }) {
+            selectedKeyboardSourceIndex = source.index
+        } else if !midiSources.contains(where: { $0.index == selectedKeyboardSourceIndex }) {
+            selectedKeyboardSourceIndex = midiSources.first?.index ?? 0
         }
 
         if let storedDestination = storedUniqueID(for: DefaultsKey.destinationUniqueID),
@@ -2543,6 +2563,7 @@ final class DocumentModel: ObservableObject {
             invalidateKeyboardPreparation()
         }
         persistSelectedEndpoints()
+        restartExternalKeyboardMonitor()
     }
 
     func selectSource(_ source: FB01MIDIEndpoint) {
@@ -2554,6 +2575,18 @@ final class DocumentModel: ObservableObject {
         selectedDestinationIndex = destination.index
         invalidateKeyboardPreparation()
         persistSelectedEndpoints()
+    }
+
+    func selectKeyboardSource(_ source: FB01MIDIEndpoint) {
+        selectedKeyboardSourceIndex = source.index
+        persistSelectedEndpoints()
+        restartExternalKeyboardMonitor()
+    }
+
+    func setExternalKeyboardEnabled(_ enabled: Bool) {
+        externalKeyboardEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: DefaultsKey.externalKeyboardEnabled)
+        restartExternalKeyboardMonitor()
     }
 
     func selectSystemPanel() {
@@ -3969,12 +4002,20 @@ final class DocumentModel: ObservableObject {
     private func persistSelectedEndpoints() {
         UserDefaults.standard.set(selectedSourceIndex, forKey: DefaultsKey.sourceIndex)
         UserDefaults.standard.set(selectedDestinationIndex, forKey: DefaultsKey.destinationIndex)
+        UserDefaults.standard.set(selectedKeyboardSourceIndex, forKey: DefaultsKey.keyboardSourceIndex)
 
         if let source = midiSources.first(where: { $0.index == selectedSourceIndex }),
            let uniqueID = source.uniqueID {
             UserDefaults.standard.set(Int(uniqueID), forKey: DefaultsKey.sourceUniqueID)
         } else {
             UserDefaults.standard.removeObject(forKey: DefaultsKey.sourceUniqueID)
+        }
+
+        if let keyboardSource = midiSources.first(where: { $0.index == selectedKeyboardSourceIndex }),
+           let uniqueID = keyboardSource.uniqueID {
+            UserDefaults.standard.set(Int(uniqueID), forKey: DefaultsKey.keyboardSourceUniqueID)
+        } else {
+            UserDefaults.standard.removeObject(forKey: DefaultsKey.keyboardSourceUniqueID)
         }
 
         if let destination = midiDestinations.first(where: { $0.index == selectedDestinationIndex }),
@@ -3989,6 +4030,33 @@ final class DocumentModel: ObservableObject {
         preparedKeyboardVoiceSignature = nil
         preparedKeyboardVoiceDate = nil
         keyboardPreparationTask?.cancel()
+    }
+
+    private func restartExternalKeyboardMonitor() {
+        externalKeyboardMonitor?.stop()
+        externalKeyboardMonitor = nil
+
+        guard externalKeyboardEnabled else {
+            externalKeyboardStatus = "Off"
+            return
+        }
+        guard midiSources.contains(where: { $0.index == selectedKeyboardSourceIndex }) else {
+            externalKeyboardStatus = "No input selected"
+            return
+        }
+
+        do {
+            let sourceName = selectedKeyboardSourceName
+            externalKeyboardMonitor = try FB01MIDI.liveInputMonitor(sourceIndex: selectedKeyboardSourceIndex) { [weak self] message in
+                Task { @MainActor [weak self] in
+                    self?.receiveExternalKeyboardMessage(message)
+                }
+            }
+            externalKeyboardStatus = "Listening to \(sourceName)"
+        } catch {
+            externalKeyboardStatus = "Input unavailable"
+            errorMessage = "MIDI input monitor failed: \(error)"
+        }
     }
 
     private func storedUniqueID(for key: String) -> Int32? {
@@ -4439,6 +4507,46 @@ final class DocumentModel: ObservableObject {
             }
         } catch {
             errorMessage = "Keyboard note failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    func receiveExternalKeyboardMessage(_ message: [UInt8]) {
+        guard externalKeyboardEnabled else { return }
+        guard !isBusy else {
+            externalKeyboardStatus = "Paused during device operation"
+            return
+        }
+        guard let status = message.first, (0x80...0xEF).contains(status) else {
+            return
+        }
+
+        let event = status & 0xF0
+        let channel = UInt8(min(max(keyboardChannel, 0), 15))
+        let rewritten = [event | channel] + message.dropFirst()
+        let isNoteOn = event == 0x90 && message.count > 2 && message[2] > 0
+
+        do {
+            if isNoteOn {
+                let preparationMessages = try keyboardPreparationMessages(midiChannel: Int(channel))
+                for preparationMessage in preparationMessages {
+                    try FB01MIDI.sendImmediate(preparationMessage, destinationIndex: selectedDestinationIndex)
+                }
+                if !preparationMessages.isEmpty {
+                    Thread.sleep(forTimeInterval: keyboardPreparationSettleDelay)
+                }
+            }
+            try FB01MIDI.sendImmediate(rewritten, destinationIndex: selectedDestinationIndex)
+
+            if isNoteOn, message.count > 1 {
+                externalKeyboardStatus = "Input sent note \(message[1]) on channel \(Int(channel) + 1)"
+            } else {
+                externalKeyboardStatus = "Input forwarding to \(selectedDestinationName)"
+            }
+            errorMessage = nil
+        } catch {
+            externalKeyboardStatus = "Input error"
+            errorMessage = "MIDI input failed: \(error)"
             statusMessage = nil
         }
     }
@@ -5256,7 +5364,7 @@ struct ContentView: View {
             Divider()
 
             LiveKeyboardView(document: document)
-                .frame(height: 96)
+                .frame(height: 126)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
 
@@ -5400,8 +5508,36 @@ struct LiveKeyboardView: View {
 
                 }
                 .font(.caption)
+
+                HStack(spacing: 8) {
+                    Toggle("MIDI Input", isOn: Binding(
+                        get: { document.externalKeyboardEnabled },
+                        set: { document.setExternalKeyboardEnabled($0) }
+                    ))
+                    .toggleStyle(.checkbox)
+
+                    Menu {
+                        ForEach(document.midiSources, id: \.index) { source in
+                            Button {
+                                document.selectKeyboardSource(source)
+                            } label: {
+                                endpointLabel(source, selected: source.index == document.selectedKeyboardSourceIndex)
+                            }
+                        }
+                    } label: {
+                        Text(document.selectedKeyboardSourceName)
+                            .lineLimit(1)
+                    }
+                    .disabled(document.midiSources.isEmpty || !document.externalKeyboardEnabled)
+                }
+                .font(.caption)
+
+                Text(document.externalKeyboardStatus)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            .frame(width: 260, alignment: .leading)
+            .frame(width: 320, alignment: .leading)
 
             PianoKeyboardRepresentable(
                 startNote: document.keyboardStartNote,
@@ -5411,6 +5547,11 @@ struct LiveKeyboardView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private func endpointLabel(_ endpoint: FB01MIDIEndpoint, selected: Bool) -> some View {
+        let unique = endpoint.uniqueID.map { " id=\($0)" } ?? ""
+        return Label("[\(endpoint.index)] \(endpoint.displayName)\(unique)", systemImage: selected ? "checkmark" : "circle")
     }
 }
 

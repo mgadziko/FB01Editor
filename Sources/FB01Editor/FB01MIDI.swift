@@ -240,6 +240,17 @@ public enum FB01MIDI {
         try immediateSender.send(bytes: bytes, destinationIndex: destinationIndex)
     }
 
+    public static func liveInputMonitor(
+        sourceIndex: Int,
+        onMessage: @escaping @Sendable ([UInt8]) -> Void
+    ) throws -> FB01MIDILiveInputMonitor {
+        try FB01MIDILiveInputMonitor(
+            clientStore: clientStore,
+            sourceIndex: sourceIndex,
+            onMessage: onMessage
+        )
+    }
+
     public static func sendAndReceive(
         _ messages: [[UInt8]],
         sourceIndex: Int,
@@ -387,7 +398,7 @@ public enum FB01MIDI {
         throw FB01MIDIError.timedOut(kind.displayName)
     }
 
-    private static func sourceEndpoint(at index: Int) throws -> MIDIEndpointRef {
+    fileprivate static func sourceEndpoint(at index: Int) throws -> MIDIEndpointRef {
         guard MIDIGetNumberOfSources() > 0 else { throw FB01MIDIError.noSources }
         guard index >= 0, index < MIDIGetNumberOfSources() else { throw FB01MIDIError.sourceNotFound(index) }
         return MIDIGetSource(index)
@@ -445,6 +456,39 @@ public enum FB01MIDI {
         }
 
         try check(MIDISend(outputPort, destination, packetListPointer), "MIDISend")
+    }
+}
+
+public final class FB01MIDILiveInputMonitor: @unchecked Sendable {
+    private let parser = FB01MIDIShortMessageParser()
+    private var inputPort = MIDIPortRef()
+    private var isRunning = false
+
+    fileprivate init(
+        clientStore: FB01MIDIClientStore,
+        sourceIndex: Int,
+        onMessage: @escaping @Sendable ([UInt8]) -> Void
+    ) throws {
+        let client = try clientStore.client()
+        let source = try FB01MIDI.sourceEndpoint(at: sourceIndex)
+        try FB01MIDI.check(MIDIInputPortCreateWithBlock(client, "FB01EditorLiveKeyboardInput" as CFString, &inputPort) { [parser] packetList, _ in
+            for message in parser.messages(from: packetList) {
+                onMessage(message)
+            }
+        }, "MIDIInputPortCreateWithBlock")
+        try FB01MIDI.check(MIDIPortConnectSource(inputPort, source, nil), "MIDIPortConnectSource")
+        isRunning = true
+    }
+
+    deinit {
+        stop()
+    }
+
+    public func stop() {
+        guard isRunning else { return }
+        MIDIPortDispose(inputPort)
+        inputPort = 0
+        isRunning = false
     }
 }
 
@@ -509,6 +553,95 @@ private final class FB01MIDIImmediateSender: @unchecked Sendable {
         try FB01MIDI.check(MIDIOutputPortCreate(client, "FB01EditorImmediateOutput" as CFString, &outputPort), "MIDIOutputPortCreate")
         hasOutputPort = true
         return outputPort
+    }
+}
+
+private final class FB01MIDIShortMessageParser: @unchecked Sendable {
+    private let lock = NSLock()
+    private var runningStatus: UInt8?
+    private var pending: [UInt8] = []
+    private var expectedLength = 0
+    private var isSkippingSysEx = false
+
+    func messages(from packetList: UnsafePointer<MIDIPacketList>) -> [[UInt8]] {
+        var packet = packetList.pointee.packet
+        var messages: [[UInt8]] = []
+
+        for _ in 0..<packetList.pointee.numPackets {
+            withUnsafeBytes(of: packet.data) { rawData in
+                messages.append(contentsOf: parse(Array(rawData.prefix(Int(packet.length)))))
+            }
+            packet = MIDIPacketNext(&packet).pointee
+        }
+        return messages
+    }
+
+    private func parse(_ bytes: [UInt8]) -> [[UInt8]] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        var messages: [[UInt8]] = []
+        for byte in bytes {
+            if isSkippingSysEx {
+                if byte == FB01.end {
+                    isSkippingSysEx = false
+                }
+                continue
+            }
+
+            if byte == FB01.start {
+                isSkippingSysEx = true
+                pending.removeAll(keepingCapacity: true)
+                expectedLength = 0
+                continue
+            }
+
+            if byte >= 0xF8 {
+                continue
+            }
+
+            if byte >= 0xF0 {
+                runningStatus = nil
+                pending.removeAll(keepingCapacity: true)
+                expectedLength = 0
+                continue
+            }
+
+            if byte >= 0x80 {
+                runningStatus = byte
+                pending = [byte]
+                expectedLength = messageLength(forStatus: byte)
+                if expectedLength == 1 {
+                    messages.append(pending)
+                    pending.removeAll(keepingCapacity: true)
+                }
+                continue
+            }
+
+            if pending.isEmpty {
+                guard let runningStatus else {
+                    continue
+                }
+                pending = [runningStatus]
+                expectedLength = messageLength(forStatus: runningStatus)
+            }
+
+            pending.append(byte)
+            if pending.count == expectedLength {
+                messages.append(pending)
+                pending = runningStatus.map { [$0] } ?? []
+            }
+        }
+        return messages
+    }
+
+    private func messageLength(forStatus status: UInt8) -> Int {
+        switch status & 0xF0 {
+        case 0xC0, 0xD0:
+            return 2
+        default:
+            return 3
+        }
     }
 }
 
