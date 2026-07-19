@@ -746,8 +746,9 @@ private final class EditorProgressPanel {
     var onCancel: (() -> Void)?
 
     init(title: String, message: String, showsCancelButton: Bool = false) {
+        let panelHeight: CGFloat = showsCancelButton ? 220 : 190
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 430, height: showsCancelButton ? 190 : 150),
+            contentRect: NSRect(x: 0, y: 0, width: 430, height: panelHeight),
             styleMask: [.titled],
             backing: .buffered,
             defer: false
@@ -756,21 +757,25 @@ private final class EditorProgressPanel {
         panel.isReleasedWhenClosed = false
         panel.center()
 
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: showsCancelButton ? 190 : 150))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: panelHeight))
         panel.contentView = content
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .boldSystemFont(ofSize: 15)
-        titleLabel.frame = NSRect(x: 24, y: showsCancelButton ? 144 : 104, width: 382, height: 22)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.maximumNumberOfLines = 1
+        titleLabel.frame = NSRect(x: 24, y: showsCancelButton ? 172 : 142, width: 382, height: 22)
         content.addSubview(titleLabel)
 
         messageLabel = NSTextField(wrappingLabelWithString: message)
         messageLabel.textColor = .secondaryLabelColor
         messageLabel.font = .systemFont(ofSize: 13)
-        messageLabel.frame = NSRect(x: 24, y: showsCancelButton ? 86 : 66, width: 382, height: 52)
+        messageLabel.maximumNumberOfLines = 3
+        messageLabel.preferredMaxLayoutWidth = 382
+        messageLabel.frame = NSRect(x: 24, y: showsCancelButton ? 104 : 78, width: 382, height: 58)
         content.addSubview(messageLabel)
 
-        progress = NSProgressIndicator(frame: NSRect(x: 24, y: showsCancelButton ? 58 : 34, width: 382, height: 14))
+        progress = NSProgressIndicator(frame: NSRect(x: 24, y: showsCancelButton ? 72 : 42, width: 382, height: 14))
         progress.style = .bar
         progress.isIndeterminate = true
         content.addSubview(progress)
@@ -881,6 +886,13 @@ private final class ConfigurationFetchDialogController: NSObject {
 
     @objc func cancel() {
         result = .cancel
+        NSApp.stopModal()
+    }
+}
+
+private final class DoneDialogController: NSObject {
+    @MainActor
+    @objc func done() {
         NSApp.stopModal()
     }
 }
@@ -2174,7 +2186,7 @@ struct FB01EditorApplication: App {
 
                 Divider()
 
-                Button("Reset Device...") {
+                Button("Reset Instructions...") {
                     document.resetDeviceToFactorySettings()
                 }
                 .disabled(document.isBusy)
@@ -2871,7 +2883,7 @@ final class DocumentModel: ObservableObject {
     }
 
     func resetDeviceToFactorySettings() {
-        guard confirmFactoryResetInstructions() else { return }
+        showFactoryResetInstructions()
         statusMessage = "Factory reset instructions shown. Complete the FB-01 front-panel reset, wait for END, then power-cycle the unit."
         errorMessage = nil
     }
@@ -4702,22 +4714,57 @@ final class DocumentModel: ObservableObject {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func confirmFactoryResetInstructions() -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "Are You Sure You Want to Reset the FB-01?"
-        alert.informativeText = """
-        This restores the factory presets and clears user-defined sounds or possible SRAM corruption.
+    private func showFactoryResetInstructions() {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 300),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = DoneDialogController()
+        panel.title = "Reset Instructions"
+        panel.isReleasedWhenClosed = false
+        panel.center()
+
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 300))
+        panel.contentView = content
+
+        let icon = NSImageView(frame: NSRect(x: 32, y: 118, width: 64, height: 64))
+        icon.image = NSImage(named: NSImage.cautionName)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        content.addSubview(icon)
+
+        let titleLabel = NSTextField(labelWithString: "Reset Instructions")
+        titleLabel.font = .boldSystemFont(ofSize: 16)
+        titleLabel.frame = NSRect(x: 120, y: 250, width: 480, height: 22)
+        content.addSubview(titleLabel)
+
+        let instructions = NSTextField(wrappingLabelWithString: """
+        To restore the factory presets and clear user-defined sounds and possible SRAM corruption:
 
         1. Turn the FB-01 OFF.
         2. Hold System Setup + Inst Select + Data Entry No/-1.
         3. While holding all three buttons, turn the FB-01 ON.
         4. Keep holding until the display counter reaches FFFFFFFF and then shows END.
         5. Release the buttons, turn the FB-01 OFF, then turn it ON again.
-        """
-        alert.addButton(withTitle: "Show Reset Instructions")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .critical
-        return alert.runModal() == .alertFirstButtonReturn
+        """)
+        instructions.font = .systemFont(ofSize: 13)
+        instructions.textColor = .labelColor
+        instructions.frame = NSRect(x: 120, y: 74, width: 480, height: 168)
+        content.addSubview(instructions)
+
+        let doneButton = NSButton(title: "Done", target: nil, action: nil)
+        doneButton.frame = NSRect(x: 520, y: 24, width: 86, height: 30)
+        doneButton.bezelStyle = .rounded
+        doneButton.keyEquivalent = "\r"
+        doneButton.target = controller
+        doneButton.action = #selector(DoneDialogController.done)
+        content.addSubview(doneButton)
+
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.runModal(for: panel)
+        panel.orderOut(nil)
     }
 
     private func fetchGeneralMIDISourceVoices(
