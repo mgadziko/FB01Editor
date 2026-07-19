@@ -18,6 +18,10 @@ let package = Package(
             targets: ["fb01-dump"]
         ),
         .executable(
+            name: "fb01-gm-load",
+            targets: ["fb01-gm-load"]
+        ),
+        .executable(
             name: "FB01EditorApp",
             targets: ["FB01EditorApp"]
         ),
@@ -28,6 +32,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "fb01-dump",
+            dependencies: ["FB01Editor"]
+        ),
+        .executableTarget(
+            name: "fb01-gm-load",
             dependencies: ["FB01Editor"]
         ),
         .executableTarget(

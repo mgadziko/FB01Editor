@@ -187,6 +187,55 @@ public enum FB01MIDI {
         }
     }
 
+    public static func sendLongSysEx(
+        _ bytes: [UInt8],
+        destinationIndex: Int = 0,
+        timeout: TimeInterval = 30
+    ) throws {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+
+        try bytes.forEach { _ = try FB01.validateByte($0) }
+
+        let destination = try destinationEndpoint(at: destinationIndex)
+        let completion = FB01MIDISysexSendCompletion()
+        let retainedCompletion = Unmanaged.passRetained(completion)
+
+        var mutableBytes = bytes
+        try mutableBytes.withUnsafeMutableBufferPointer { buffer in
+            guard let baseAddress = buffer.baseAddress else {
+                throw FB01SysExError.invalidPayloadLength(expected: 1, actual: 0)
+            }
+
+            var request = MIDISysexSendRequest(
+                destination: destination,
+                data: baseAddress,
+                bytesToSend: UInt32(buffer.count),
+                complete: false,
+                reserved: (0, 0, 0),
+                completionProc: { requestPointer in
+                    guard let refCon = requestPointer.pointee.completionRefCon else {
+                        return
+                    }
+                    Unmanaged<FB01MIDISysexSendCompletion>
+                        .fromOpaque(refCon)
+                        .takeUnretainedValue()
+                        .signal()
+                },
+                completionRefCon: retainedCompletion.toOpaque()
+            )
+
+            try check(MIDISendSysex(&request), "MIDISendSysex")
+
+            let waitResult = completion.semaphore.wait(timeout: .now() + timeout)
+            guard waitResult == .success else {
+                throw FB01MIDIError.timedOut("long SysEx send")
+            }
+        }
+
+        retainedCompletion.release()
+    }
+
     public static func sendImmediate(_ bytes: [UInt8], destinationIndex: Int = 0) throws {
         try immediateSender.send(bytes: bytes, destinationIndex: destinationIndex)
     }
@@ -396,6 +445,14 @@ public enum FB01MIDI {
         }
 
         try check(MIDISend(outputPort, destination, packetListPointer), "MIDISend")
+    }
+}
+
+private final class FB01MIDISysexSendCompletion: @unchecked Sendable {
+    let semaphore = DispatchSemaphore(value: 0)
+
+    func signal() {
+        semaphore.signal()
     }
 }
 
