@@ -838,12 +838,13 @@ private func labelledEditorPopup(label: String, popup: NSPopUpButton) -> NSView 
 }
 
 @MainActor
-private func makeWarningLabel(_ string: String) -> NSTextField {
+private func makeWarningLabel(_ string: String, width: CGFloat = 330) -> NSTextField {
     let text = NSTextField(wrappingLabelWithString: string)
     text.textColor = .secondaryLabelColor
     text.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     text.maximumNumberOfLines = 3
-    text.preferredMaxLayoutWidth = 330
+    text.preferredMaxLayoutWidth = width
+    text.frame = NSRect(x: 0, y: 0, width: width, height: 44)
     return text
 }
 
@@ -1444,6 +1445,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         alert.alertStyle = .warning
 
         let stack = NSStackView()
+        stack.frame = NSRect(x: 0, y: 0, width: 520, height: 116)
         stack.orientation = .vertical
         stack.spacing = 8
         stack.alignment = .leading
@@ -1996,6 +1998,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         alert.alertStyle = .warning
 
         let stack = NSStackView()
+        stack.frame = NSRect(x: 0, y: 0, width: 520, height: 132)
         stack.orientation = .vertical
         stack.spacing = 8
         stack.alignment = .leading
@@ -2009,7 +2012,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
         stack.addArrangedSubview(labelledEditorPopup(label: "Slot:", popup: slotPopup))
         stack.addArrangedSubview(confirmCheckbox)
-        stack.addArrangedSubview(makeWarningLabel("Configurations 1-16 are writable. Configurations 17-20 are read only and are intentionally unavailable here."))
+        stack.addArrangedSubview(makeWarningLabel("Configurations 1-16 are writable. Configurations 17-20 are read only and are intentionally unavailable here.", width: 500))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -3543,6 +3546,7 @@ final class DocumentModel: ObservableObject {
         alert.alertStyle = .warning
 
         let stack = NSStackView()
+        stack.frame = NSRect(x: 0, y: 0, width: 520, height: 148)
         stack.orientation = .vertical
         stack.spacing = 8
         stack.alignment = .leading
@@ -3562,7 +3566,7 @@ final class DocumentModel: ObservableObject {
         stack.addArrangedSubview(labelledPopup(label: "Overwrite slot:", popup: popup))
         stack.addArrangedSubview(backupCheckbox)
         stack.addArrangedSubview(confirmCheckbox)
-        stack.addArrangedSubview(makeWarningLabel("Writable slots are 1-16. Configurations 17-20 are read only and are intentionally unavailable here. Protect is set OFF before writing."))
+        stack.addArrangedSubview(makeWarningLabel("Writable slots are 1-16. Configurations 17-20 are read only and are intentionally unavailable here. Protect is set OFF before writing.", width: 500))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -4553,12 +4557,13 @@ final class DocumentModel: ObservableObject {
         return container
     }
 
-    private func makeWarningLabel(_ string: String) -> NSTextField {
+    private func makeWarningLabel(_ string: String, width: CGFloat = 330) -> NSTextField {
         let text = NSTextField(wrappingLabelWithString: string)
         text.textColor = .secondaryLabelColor
         text.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         text.maximumNumberOfLines = 3
-        text.preferredMaxLayoutWidth = 330
+        text.preferredMaxLayoutWidth = width
+        text.frame = NSRect(x: 0, y: 0, width: width, height: 44)
         return text
     }
 
