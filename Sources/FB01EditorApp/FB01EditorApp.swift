@@ -762,10 +762,10 @@ private final class EditorProgressPanel {
 @MainActor
 private func labelledEditorPopup(label: String, popup: NSPopUpButton) -> NSView {
     let container = NSStackView()
+    container.frame = NSRect(x: 0, y: 0, width: 520, height: 32)
     container.orientation = .horizontal
     container.alignment = .centerY
     container.spacing = 12
-    container.translatesAutoresizingMaskIntoConstraints = false
 
     let text = NSTextField(labelWithString: label)
     text.alignment = .right
