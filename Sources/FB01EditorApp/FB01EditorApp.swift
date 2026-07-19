@@ -2070,6 +2070,13 @@ struct FB01EditorApplication: App {
                     document.saveSelectedEditedVoiceBankAs()
                 }
                 .disabled(!document.canResetAllSelectedVoiceEdits)
+
+                Divider()
+
+                Button("Store General MIDI voices...") {
+                    document.storeGeneralMIDIVoicesToDevice()
+                }
+                .disabled(document.isBusy)
             }
 
             CommandMenu("Device") {
@@ -2092,6 +2099,13 @@ struct FB01EditorApplication: App {
                     document.storeAndConfirmSelectedConfigurationToDeviceSlot()
                 }
                 .disabled(!document.canStoreSelectedConfiguration)
+
+                Divider()
+
+                Button("Reset Device...") {
+                    document.resetDeviceToFactorySettings()
+                }
+                .disabled(document.isBusy)
             }
         }
     }
@@ -2620,6 +2634,102 @@ final class DocumentModel: ObservableObject {
 
             isFetchingConfigurations = false
         }
+    }
+
+    func storeGeneralMIDIVoicesToDevice() {
+        guard !isBusy else { return }
+        guard let targetBank = chooseGeneralMIDITargetBank() else { return }
+        guard confirmGeneralMIDIOverwrite(targetBank: targetBank) else { return }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        let destinationName = selectedDestinationName
+        isFetchingFromDevice = true
+        statusMessage = "Preparing General MIDI voices for Bank \(targetBank)..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let backupDirectory = try ensureDefaultEditorBackupDirectory()
+                let backupURL = backupDirectory.appendingPathComponent(
+                    backupFileName(prefix: "bank-\(targetBank)-before-general-midi")
+                )
+
+                let selectedVoices = try await fetchGeneralMIDISourceVoices(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                )
+
+                statusMessage = "Backing up Bank \(targetBank) before General MIDI install..."
+                let originalBytes = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.request(
+                        .voiceBank(targetBank),
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        timeout: 15
+                    )
+                }.value
+                let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
+                try await Task.detached(priority: .userInitiated) {
+                    try originalArtifact.writeSysEx(to: backupURL)
+                }.value
+
+                let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
+                try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+                }.value
+                try await Task.sleep(for: .milliseconds(300))
+
+                var readback = try voiceBankData(from: originalBytes, expectedBankNumber: targetBank)
+                var mismatches = generalMIDIMismatches(readback: readback, targetBank: targetBank, selectedVoices: selectedVoices)
+                var previousMismatchCount = mismatches.count + 1
+                var pass = 0
+
+                while !mismatches.isEmpty {
+                    pass += 1
+                    guard pass <= 60 else {
+                        throw FB01AppError.message("Bank \(targetBank) still has \(mismatches.count) General MIDI mismatches after 60 write passes.")
+                    }
+                    guard mismatches.count < previousMismatchCount else {
+                        throw FB01AppError.message("Bank \(targetBank) made no write progress; first mismatch: \(mismatches[0])")
+                    }
+
+                    previousMismatchCount = mismatches.count
+                    statusMessage = "Writing General MIDI voices to Bank \(targetBank), pass \(pass); \(mismatches.count) mismatch\(mismatches.count == 1 ? "" : "es") remain..."
+                    let editedBank = try readback.replacingVoices(selectedVoices)
+                    let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
+                    let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
+                        try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+                        try await Task.sleep(for: .milliseconds(1500))
+                        return try FB01MIDI.request(
+                            .voiceBank(targetBank),
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 15
+                        )
+                    }.value
+                    readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: targetBank)
+                    mismatches = generalMIDIMismatches(readback: readback, targetBank: targetBank, selectedVoices: selectedVoices)
+                }
+
+                statusMessage = "FB-01 verified General MIDI voices in Bank \(targetBank) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "General MIDI install failed: \(error)"
+            }
+            isFetchingFromDevice = false
+        }
+    }
+
+    func resetDeviceToFactorySettings() {
+        guard confirmFactoryResetInstructions() else { return }
+        statusMessage = "Factory reset requires the FB-01 front panel: power off, hold System Setup + Inst Select + Data Entry -1, then power on."
+        errorMessage = nil
     }
 
     func createConfigurationDocumentFromSelected() {
@@ -4416,6 +4526,86 @@ final class DocumentModel: ObservableObject {
 
     private func voiceDisplayName(_ voice: FB01VoiceData) -> String {
         voice.name.isEmpty ? "the selected voice" : "\"\(voice.name)\""
+    }
+
+    private func chooseGeneralMIDITargetBank() -> Int? {
+        let alert = NSAlert()
+        alert.messageText = "Store General MIDI voices"
+        alert.informativeText = "Choose the writable FB-01 bank that will receive the 48 General MIDI voice mappings."
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
+        popup.addItem(withTitle: "Bank 1")
+        popup.lastItem?.representedObject = 1
+        popup.addItem(withTitle: "Bank 2")
+        popup.lastItem?.representedObject = 2
+        alert.accessoryView = labelledEditorPopup(label: "Bank:", popup: popup)
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+        return popup.selectedItem?.representedObject as? Int
+    }
+
+    private func confirmGeneralMIDIOverwrite(targetBank: Int) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Overwrite Bank \(targetBank) with General MIDI voices?"
+        alert.informativeText = "This will destroy the current contents of FB-01 Bank \(targetBank). The app will first save a backup of the current bank, then write and verify all 48 General MIDI mapped voices."
+        alert.addButton(withTitle: "Overwrite Bank \(targetBank)")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .critical
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func confirmFactoryResetInstructions() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Are You Sure You Want to Reset the FB-01?"
+        alert.informativeText = "I have not found a documented FB-01 MIDI SysEx command for factory reset. The known factory reset procedure is physical: power the FB-01 off, hold System Setup + Inst Select + Data Entry -1, then power on. This will erase user memory on the device."
+        alert.addButton(withTitle: "Show Reset Instructions")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .critical
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func fetchGeneralMIDISourceVoices(sourceIndex: Int, destinationIndex: Int, systemChannel: Int) async throws -> [Int: FB01VoiceData] {
+        let mappings = FB01GeneralMIDI.mappings
+        let sourceBanks = Set(mappings.map(\.sourceBank)).sorted()
+        var banks: [Int: FB01VoiceBankData] = [:]
+
+        for bank in sourceBanks {
+            statusMessage = "Reading source Bank \(bank) for General MIDI install..."
+            let bytes = try await Task.detached(priority: .userInitiated) {
+                try FB01MIDI.request(
+                    .voiceBank(bank),
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    timeout: 15
+                )
+            }.value
+            banks[bank] = try voiceBankData(from: bytes, expectedBankNumber: bank)
+        }
+
+        return try Dictionary(uniqueKeysWithValues: mappings.map { mapping -> (Int, FB01VoiceData) in
+            guard let voice = banks[mapping.sourceBank]?.voices.first(where: { $0.number == mapping.sourceVoice })?.voice else {
+                throw FB01AppError.message("Missing source Bank \(mapping.sourceBank) Voice \(mapping.sourceVoice) for GM \(mapping.gmNumber) \(mapping.gmName).")
+            }
+            return (mapping.gmNumber, voice)
+        })
+    }
+
+    private func generalMIDIMismatches(readback: FB01VoiceBankData, targetBank: Int, selectedVoices: [Int: FB01VoiceData]) -> [String] {
+        FB01GeneralMIDI.mappings.compactMap { mapping -> String? in
+            guard let expected = selectedVoices[mapping.gmNumber],
+                  let actual = readback.voices.first(where: { $0.number == mapping.gmNumber })?.voice else {
+                return "Bank \(targetBank) Voice \(mapping.gmNumber): missing readback"
+            }
+            guard actual.bytes == expected.bytes else {
+                return "Bank \(targetBank) Voice \(mapping.gmNumber): expected \(expected.name), got \(actual.name)"
+            }
+            return nil
+        }
     }
 
     private func storeVoicePromptText(action: String, voiceSlot: Int) -> String {

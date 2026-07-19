@@ -1,64 +1,7 @@
 import FB01Editor
 import Foundation
 
-struct GMMapping {
-    var gmNumber: Int
-    var gmName: String
-    var sourceBank: Int
-    var sourceVoice: Int
-    var expectedName: String
-}
-
-let mappings: [GMMapping] = [
-    GMMapping(gmNumber: 1, gmName: "Acoustic Grand", sourceBank: 4, sourceVoice: 8, expectedName: "Grand"),
-    GMMapping(gmNumber: 2, gmName: "Bright Piano", sourceBank: 4, sourceVoice: 9, expectedName: "DpGrand"),
-    GMMapping(gmNumber: 3, gmName: "Electric Grand", sourceBank: 3, sourceVoice: 8, expectedName: "EGrand"),
-    GMMapping(gmNumber: 4, gmName: "Honky Tonk", sourceBank: 4, sourceVoice: 13, expectedName: "Honkey1"),
-    GMMapping(gmNumber: 5, gmName: "Electric Piano 1", sourceBank: 4, sourceVoice: 22, expectedName: "EPiano2"),
-    GMMapping(gmNumber: 6, gmName: "Electric Piano 2", sourceBank: 4, sourceVoice: 23, expectedName: "EPiano3"),
-    GMMapping(gmNumber: 7, gmName: "Harpsichord", sourceBank: 3, sourceVoice: 26, expectedName: "Harpsic"),
-    GMMapping(gmNumber: 8, gmName: "Clavinet", sourceBank: 3, sourceVoice: 25, expectedName: "Clav"),
-    GMMapping(gmNumber: 9, gmName: "Celesta", sourceBank: 4, sourceVoice: 47, expectedName: "Celeste"),
-    GMMapping(gmNumber: 10, gmName: "Glockenspiel", sourceBank: 3, sourceVoice: 20, expectedName: "Glocken"),
-    GMMapping(gmNumber: 11, gmName: "Music Box", sourceBank: 5, sourceVoice: 14, expectedName: "SynBell"),
-    GMMapping(gmNumber: 12, gmName: "Vibraphone", sourceBank: 4, sourceVoice: 16, expectedName: "PfVibe"),
-    GMMapping(gmNumber: 13, gmName: "Marimba", sourceBank: 3, sourceVoice: 41, expectedName: "Marimba"),
-    GMMapping(gmNumber: 14, gmName: "Xylophone", sourceBank: 3, sourceVoice: 22, expectedName: "Xylophn"),
-    GMMapping(gmNumber: 15, gmName: "Tubular Bells", sourceBank: 6, sourceVoice: 37, expectedName: "TubeBe2"),
-    GMMapping(gmNumber: 16, gmName: "Dulcimer", sourceBank: 7, sourceVoice: 23, expectedName: "Santur"),
-    GMMapping(gmNumber: 17, gmName: "Drawbar Organ", sourceBank: 7, sourceVoice: 1, expectedName: "JOrgan1"),
-    GMMapping(gmNumber: 18, gmName: "Percussive Organ", sourceBank: 7, sourceVoice: 2, expectedName: "JOrgan2"),
-    GMMapping(gmNumber: 19, gmName: "Rock Organ", sourceBank: 7, sourceVoice: 3, expectedName: "COrgan1"),
-    GMMapping(gmNumber: 20, gmName: "Church Organ", sourceBank: 7, sourceVoice: 15, expectedName: "Organ"),
-    GMMapping(gmNumber: 21, gmName: "Reed Organ", sourceBank: 3, sourceVoice: 13, expectedName: "EOrgan1"),
-    GMMapping(gmNumber: 22, gmName: "Accordion", sourceBank: 7, sourceVoice: 11, expectedName: "MidiPipe"),
-    GMMapping(gmNumber: 23, gmName: "Harmonica", sourceBank: 5, sourceVoice: 13, expectedName: "HuffBr"),
-    GMMapping(gmNumber: 24, gmName: "Bandoneon", sourceBank: 3, sourceVoice: 14, expectedName: "EOrgan2"),
-    GMMapping(gmNumber: 25, gmName: "Nylon Guitar", sourceBank: 7, sourceVoice: 17, expectedName: "Guitar"),
-    GMMapping(gmNumber: 26, gmName: "Steel Guitar", sourceBank: 7, sourceVoice: 18, expectedName: "Folk Gt"),
-    GMMapping(gmNumber: 27, gmName: "Jazz Guitar", sourceBank: 7, sourceVoice: 19, expectedName: "PluckGt"),
-    GMMapping(gmNumber: 28, gmName: "Clean Guitar", sourceBank: 7, sourceVoice: 20, expectedName: "BriteGt"),
-    GMMapping(gmNumber: 29, gmName: "Muted Guitar", sourceBank: 4, sourceVoice: 35, expectedName: "FuzzClv"),
-    GMMapping(gmNumber: 30, gmName: "Overdrive Guitar", sourceBank: 7, sourceVoice: 21, expectedName: "Fuzz Gt"),
-    GMMapping(gmNumber: 31, gmName: "Distortion Guitar", sourceBank: 7, sourceVoice: 21, expectedName: "Fuzz Gt"),
-    GMMapping(gmNumber: 32, gmName: "Guitar Harmonics", sourceBank: 7, sourceVoice: 24, expectedName: "SftHarp"),
-    GMMapping(gmNumber: 33, gmName: "Acoustic Bass", sourceBank: 6, sourceVoice: 20, expectedName: "UprtBas"),
-    GMMapping(gmNumber: 34, gmName: "Finger Bass", sourceBank: 6, sourceVoice: 17, expectedName: "RubBass"),
-    GMMapping(gmNumber: 35, gmName: "Picked Bass", sourceBank: 6, sourceVoice: 19, expectedName: "PlukBas"),
-    GMMapping(gmNumber: 36, gmName: "Fretless Bass", sourceBank: 6, sourceVoice: 21, expectedName: "Fretles"),
-    GMMapping(gmNumber: 37, gmName: "Slap Bass 1", sourceBank: 6, sourceVoice: 24, expectedName: "SynBas1"),
-    GMMapping(gmNumber: 38, gmName: "Slap Bass 2", sourceBank: 6, sourceVoice: 25, expectedName: "SynBas2"),
-    GMMapping(gmNumber: 39, gmName: "Synth Bass 1", sourceBank: 6, sourceVoice: 13, expectedName: "Cheeky"),
-    GMMapping(gmNumber: 40, gmName: "Synth Bass 2", sourceBank: 6, sourceVoice: 12, expectedName: "MonoSyn"),
-    GMMapping(gmNumber: 41, gmName: "Violin", sourceBank: 5, sourceVoice: 16, expectedName: "String1"),
-    GMMapping(gmNumber: 42, gmName: "Viola", sourceBank: 5, sourceVoice: 17, expectedName: "String2"),
-    GMMapping(gmNumber: 43, gmName: "Cello", sourceBank: 5, sourceVoice: 26, expectedName: "Cello2"),
-    GMMapping(gmNumber: 44, gmName: "Contrabass", sourceBank: 5, sourceVoice: 27, expectedName: "LoStrg3"),
-    GMMapping(gmNumber: 45, gmName: "Tremolo Strings", sourceBank: 4, sourceVoice: 30, expectedName: "EPString"),
-    GMMapping(gmNumber: 46, gmName: "Pizzicato Strings", sourceBank: 5, sourceVoice: 31, expectedName: "Pizzic1"),
-    GMMapping(gmNumber: 47, gmName: "Orchestral Harp", sourceBank: 5, sourceVoice: 25, expectedName: "Cello1"),
-    GMMapping(gmNumber: 48, gmName: "Timpani", sourceBank: 3, sourceVoice: 32, expectedName: "Timpani"),
-]
+let mappings = FB01GeneralMIDI.mappings
 
 func argumentValue(_ name: String, default defaultValue: Int) -> Int {
     let args = CommandLine.arguments

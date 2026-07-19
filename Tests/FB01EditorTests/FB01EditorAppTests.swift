@@ -97,6 +97,13 @@ import Testing
     #expect(FB01FactoryVoiceNames.name(bank: 1, voiceNumber: 1) == nil)
 }
 
+@Test func generalMIDIMappingCoversFortyEightVoices() {
+    let mappings = FB01GeneralMIDI.mappings
+    #expect(mappings.map(\.gmNumber) == Array(1...48))
+    #expect(Set(mappings.map(\.sourceBank)).isSubset(of: Set(3...7)))
+    #expect(mappings.allSatisfy { (1...FB01VoiceBankData.voiceCount).contains($0.sourceVoice) })
+}
+
 @Test func voiceFetchLookupPrefersLiveRAMNamesAndUsesROMFallbacks() {
     let lookup = VoiceDocumentFetchNameLookup(ramBankNames: [
         1: ["RAMONE"] + Array(repeating: "Other", count: FB01VoiceBankData.voiceCount - 1),
