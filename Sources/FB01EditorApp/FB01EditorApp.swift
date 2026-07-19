@@ -5288,20 +5288,6 @@ struct ToolbarView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Button {
-                document.fetchAllBanksFromDevice()
-            } label: {
-                Label(document.isFetchingFromDevice ? "Fetching" : "Fetch Banks", systemImage: "pianokeys")
-            }
-            .disabled(document.isBusy)
-
-            Button {
-                document.fetchStoredConfigurationsFromDevice()
-            } label: {
-                Label(document.isFetchingConfigurations ? "Fetching" : "Fetch Configs", systemImage: "list.bullet.rectangle")
-            }
-            .disabled(document.isBusy)
-
             Menu {
                 ForEach(document.midiSources, id: \.index) { source in
                     Button {
