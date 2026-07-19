@@ -740,11 +740,14 @@ private func showEditorError(title: String, message: String) {
 @MainActor
 private final class EditorProgressPanel {
     private let panel: NSPanel
+    private let messageLabel: NSTextField
     private let progress: NSProgressIndicator
+    private let cancelButton: NSButton
+    var onCancel: (() -> Void)?
 
-    init(title: String, message: String) {
+    init(title: String, message: String, showsCancelButton: Bool = false) {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 430, height: 150),
+            contentRect: NSRect(x: 0, y: 0, width: 430, height: showsCancelButton ? 190 : 150),
             styleMask: [.titled],
             backing: .buffered,
             defer: false
@@ -753,24 +756,32 @@ private final class EditorProgressPanel {
         panel.isReleasedWhenClosed = false
         panel.center()
 
-        let content = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: 150))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: showsCancelButton ? 190 : 150))
         panel.contentView = content
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .boldSystemFont(ofSize: 15)
-        titleLabel.frame = NSRect(x: 24, y: 104, width: 382, height: 22)
+        titleLabel.frame = NSRect(x: 24, y: showsCancelButton ? 144 : 104, width: 382, height: 22)
         content.addSubview(titleLabel)
 
-        let messageLabel = NSTextField(wrappingLabelWithString: message)
+        messageLabel = NSTextField(wrappingLabelWithString: message)
         messageLabel.textColor = .secondaryLabelColor
         messageLabel.font = .systemFont(ofSize: 13)
-        messageLabel.frame = NSRect(x: 24, y: 66, width: 382, height: 36)
+        messageLabel.frame = NSRect(x: 24, y: showsCancelButton ? 86 : 66, width: 382, height: 52)
         content.addSubview(messageLabel)
 
-        progress = NSProgressIndicator(frame: NSRect(x: 24, y: 34, width: 382, height: 14))
+        progress = NSProgressIndicator(frame: NSRect(x: 24, y: showsCancelButton ? 58 : 34, width: 382, height: 14))
         progress.style = .bar
         progress.isIndeterminate = true
         content.addSubview(progress)
+
+        cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+        cancelButton.frame = NSRect(x: 306, y: 18, width: 100, height: 30)
+        cancelButton.bezelStyle = .rounded
+        cancelButton.target = self
+        cancelButton.action = #selector(cancel)
+        cancelButton.isHidden = !showsCancelButton
+        content.addSubview(cancelButton)
     }
 
     func show() {
@@ -782,6 +793,16 @@ private final class EditorProgressPanel {
     func dismiss() {
         progress.stopAnimation(nil)
         panel.orderOut(nil)
+    }
+
+    func update(message: String) {
+        messageLabel.stringValue = message
+    }
+
+    @objc private func cancel() {
+        cancelButton.isEnabled = false
+        update(message: "Canceling after the current MIDI operation finishes...")
+        onCancel?()
     }
 }
 
@@ -1070,8 +1091,19 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         isBusy = true
         statusMessage = "Backing up Bank \(options.bank + 1) before storing voice..."
         errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Store Voice",
+            message: "The voice is being stored. Please wait.\nBacking up Bank \(options.bank + 1)...",
+            showsCancelButton: true
+        )
+        progressPanel.show()
 
-        Task {
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
+
+        operationTask = Task {
             do {
                 let bankNumber = options.bank + 1
                 let backupDirectory = try ensureDefaultEditorBackupDirectory()
@@ -1088,25 +1120,31 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     )
                 }.value
                 let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
+                try Task.checkCancellation()
                 try await Task.detached(priority: .userInitiated) {
                     try originalArtifact.writeSysEx(to: backupURL)
                 }.value
+                try Task.checkCancellation()
 
                 var readback = try voiceBankData(from: originalBytes, expectedBankNumber: bankNumber)
+                progressPanel.update(message: "The voice is being stored. Please wait.\nTurning FB-01 Protect OFF...")
                 let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
                 try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
                 }.value
                 try await Task.sleep(for: .milliseconds(300))
+                try Task.checkCancellation()
 
                 var pass = 0
                 while readback.voices[options.voiceNumber].voice.bytes != voiceToStore.bytes {
+                    try Task.checkCancellation()
                     pass += 1
                     guard pass <= 60 else {
                         throw FB01AppError.message("Bank \(bankNumber) Voice \(options.voiceNumber + 1) did not verify after 60 write passes.")
                     }
 
                     statusMessage = "Writing Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying after send..."
+                    progressPanel.update(message: "The voice is being stored. Please wait.\nWriting Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying by readback...")
                     let editedBank = try readback.replacingVoices([options.voiceNumber + 1: voiceToStore])
                     let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
                     let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
@@ -1120,15 +1158,20 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             timeout: 15
                         )
                     }.value
+                    try Task.checkCancellation()
                     readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: bankNumber)
                 }
 
                 statusMessage = "FB-01 verified Bank \(options.bank + 1) Voice \(options.voiceNumber + 1) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
                 errorMessage = nil
+            } catch is CancellationError {
+                statusMessage = nil
+                errorMessage = "Store voice canceled."
             } catch {
                 statusMessage = nil
                 errorMessage = "Store failed: \(error)"
             }
+            progressPanel.dismiss()
             isBusy = false
         }
     }
@@ -1702,23 +1745,47 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         isBusy = true
         statusMessage = "Storing configuration to slot \(options.slot + 1)..."
         errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Store Configuration",
+            message: "The configuration is being stored. Please wait.\nPreparing configuration \(options.slot + 1)...",
+            showsCancelButton: true
+        )
+        progressPanel.show()
 
-        Task {
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
+
+        operationTask = Task {
             do {
                 let messages = try Self.storeMessages(
                     configuration: configurationToStore,
                     systemChannel: systemChannel,
                     slot: options.slot
                 )
+                progressPanel.update(message: "The configuration is being stored. Please wait.\nTurning FB-01 Protect OFF...")
                 try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.sendSysEx([messages[0]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
                     try await Task.sleep(for: .milliseconds(300))
+                }.value
+                try Task.checkCancellation()
+
+                progressPanel.update(message: "The configuration is being stored. Please wait.\nSending configuration data...")
+                try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.sendSysEx([messages[1]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
                     try await Task.sleep(for: .milliseconds(1000))
+                }.value
+                try Task.checkCancellation()
+
+                progressPanel.update(message: "The configuration is being stored. Please wait.\nStoring configuration \(options.slot + 1) on the FB-01...")
+                try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.sendSysEx([messages[2]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
                 }.value
+                try Task.checkCancellation()
 
                 if options.confirmAfterStore {
+                    progressPanel.update(message: "The configuration is being stored. Please wait.\nVerifying configuration \(options.slot + 1) by readback...")
                     let readback = try await Task.detached(priority: .userInitiated) {
                         try await Task.sleep(for: .milliseconds(800))
                         return try FB01MIDI.request(
@@ -1729,6 +1796,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                             timeout: 8
                         )
                     }.value
+                    try Task.checkCancellation()
                     let readbackConfiguration = try Self.storedConfiguration(from: readback, slot: options.slot)
                     statusMessage = readbackConfiguration?.bytes == configurationToStore.bytes
                         ? "FB-01 confirmed store to configuration \(options.slot + 1) on \(destinationName)."
@@ -1737,10 +1805,14 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                     statusMessage = "Stored configuration \(options.slot + 1) on \(destinationName)."
                 }
                 errorMessage = nil
+            } catch is CancellationError {
+                statusMessage = nil
+                errorMessage = "Store configuration canceled."
             } catch {
                 statusMessage = nil
                 errorMessage = "Store failed: \(error)"
             }
+            progressPanel.dismiss()
             isBusy = false
         }
     }
@@ -2553,24 +2625,45 @@ final class DocumentModel: ObservableObject {
         isFetchingFromDevice = true
         statusMessage = "Fetching FB-01 banks..."
         errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Fetch FB-01 Banks",
+            message: "The voices are being fetched. Please wait.\nRequesting current configuration...",
+            showsCancelButton: true
+        )
+        progressPanel.show()
 
-        Task {
-            let sourceIndex = selectedSourceIndex
-            let destinationIndex = selectedDestinationIndex
-            let sourceName = selectedSourceName
-            let destinationName = selectedDestinationName
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let sourceName = selectedSourceName
+        let destinationName = selectedDestinationName
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
 
+        operationTask = Task {
             do {
-                let bytes = try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.requestAllBanks(
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: 0,
-                        timeoutPerRequest: 20
-                    ).flatMap { $0 }
-                }.value
+                var responses: [[UInt8]] = []
+                let requests: [FB01MIDIRequestKind] = [.currentConfiguration] + (1...7).map { .voiceBank($0) } + [.voiceRAM1]
+                for (index, request) in requests.enumerated() {
+                    try Task.checkCancellation()
+                    let detail = "Requesting \(request.displayName) (\(index + 1) of \(requests.count))..."
+                    statusMessage = detail
+                    progressPanel.update(message: "The voices are being fetched. Please wait.\n\(detail)")
+                    let response = try await Task.detached(priority: .userInitiated) {
+                        try FB01MIDI.request(
+                            request,
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: 0,
+                            timeout: 20
+                        )
+                    }.value
+                    responses.append(response)
+                }
+                try Task.checkCancellation()
 
-                let artifact = try FB01Artifact(sysexBytes: bytes)
+                let artifact = try FB01Artifact(sysexBytes: responses.flatMap { $0 })
                 let fetchedSources = artifact.messages.enumerated().map { index, message in
                     LibrarySource(
                         title: message.sourceTitle(index: index + 1),
@@ -2582,11 +2675,15 @@ final class DocumentModel: ObservableObject {
                 applyFetchedSources(fetchedSources, insertionMode: insertionMode)
                 statusMessage = "Fetched \(fetchedSources.count) library item\(fetchedSources.count == 1 ? "" : "s") from \(sourceName) -> \(destinationName)."
                 errorMessage = nil
+            } catch is CancellationError {
+                statusMessage = nil
+                errorMessage = "Fetch banks canceled."
             } catch {
                 errorMessage = "Fetch failed: \(error)"
                 statusMessage = nil
             }
 
+            progressPanel.dismiss()
             isFetchingFromDevice = false
         }
     }
@@ -2598,24 +2695,44 @@ final class DocumentModel: ObservableObject {
         isFetchingConfigurations = true
         statusMessage = "Fetching FB-01 configurations..."
         errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Fetch FB-01 Configurations",
+            message: "The configurations are being fetched. Please wait.\nRequesting configuration 1...",
+            showsCancelButton: true
+        )
+        progressPanel.show()
 
-        Task {
-            let sourceIndex = selectedSourceIndex
-            let destinationIndex = selectedDestinationIndex
-            let sourceName = selectedSourceName
-            let destinationName = selectedDestinationName
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let sourceName = selectedSourceName
+        let destinationName = selectedDestinationName
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
 
+        operationTask = Task {
             do {
-                let bytes = try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.requestStoredConfigurations(
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: 0,
-                        timeoutPerRequest: 15
-                    ).flatMap { $0 }
-                }.value
+                var responses: [[UInt8]] = []
+                for number in 1...20 {
+                    try Task.checkCancellation()
+                    let detail = "Requesting configuration \(number) of 20..."
+                    statusMessage = detail
+                    progressPanel.update(message: "The configurations are being fetched. Please wait.\n\(detail)")
+                    let response = try await Task.detached(priority: .userInitiated) {
+                        try FB01MIDI.request(
+                            .configuration(number),
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: 0,
+                            timeout: 15
+                        )
+                    }.value
+                    responses.append(response)
+                }
+                try Task.checkCancellation()
 
-                let artifact = try FB01Artifact(sysexBytes: bytes)
+                let artifact = try FB01Artifact(sysexBytes: responses.flatMap { $0 })
                 let fetchedSources = artifact.messages.enumerated().map { index, message in
                     LibrarySource(
                         title: message.sourceTitle(index: index + 1),
@@ -2627,11 +2744,15 @@ final class DocumentModel: ObservableObject {
                 applyFetchedSources(fetchedSources, insertionMode: insertionMode)
                 statusMessage = "Fetched \(fetchedSources.count) configurations from \(sourceName) -> \(destinationName)."
                 errorMessage = nil
+            } catch is CancellationError {
+                statusMessage = nil
+                errorMessage = "Configuration fetch canceled."
             } catch {
                 errorMessage = "Configuration fetch failed: \(error)"
                 statusMessage = nil
             }
 
+            progressPanel.dismiss()
             isFetchingConfigurations = false
         }
     }
@@ -2648,8 +2769,19 @@ final class DocumentModel: ObservableObject {
         isFetchingFromDevice = true
         statusMessage = "Preparing General MIDI voices for Bank \(targetBank)..."
         errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Store General MIDI Voices",
+            message: "The voices are being stored. Please wait.\nPreparing General MIDI voices for Bank \(targetBank)...",
+            showsCancelButton: true
+        )
+        progressPanel.show()
 
-        Task {
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
+
+        operationTask = Task {
             do {
                 let backupDirectory = try ensureDefaultEditorBackupDirectory()
                 let backupURL = backupDirectory.appendingPathComponent(
@@ -2659,10 +2791,13 @@ final class DocumentModel: ObservableObject {
                 let selectedVoices = try await fetchGeneralMIDISourceVoices(
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
+                    systemChannel: systemChannel,
+                    progressPanel: progressPanel
                 )
+                try Task.checkCancellation()
 
                 statusMessage = "Backing up Bank \(targetBank) before General MIDI install..."
+                progressPanel.update(message: "The voices are being stored. Please wait.\nBacking up Bank \(targetBank)...")
                 let originalBytes = try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.request(
                         .voiceBank(targetBank),
@@ -2676,12 +2811,15 @@ final class DocumentModel: ObservableObject {
                 try await Task.detached(priority: .userInitiated) {
                     try originalArtifact.writeSysEx(to: backupURL)
                 }.value
+                try Task.checkCancellation()
 
+                progressPanel.update(message: "The voices are being stored. Please wait.\nTurning FB-01 Protect OFF...")
                 let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
                 try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
                 }.value
                 try await Task.sleep(for: .milliseconds(300))
+                try Task.checkCancellation()
 
                 var readback = try voiceBankData(from: originalBytes, expectedBankNumber: targetBank)
                 var mismatches = generalMIDIMismatches(readback: readback, targetBank: targetBank, selectedVoices: selectedVoices)
@@ -2699,6 +2837,7 @@ final class DocumentModel: ObservableObject {
 
                     previousMismatchCount = mismatches.count
                     statusMessage = "Writing General MIDI voices to Bank \(targetBank), pass \(pass); \(mismatches.count) mismatch\(mismatches.count == 1 ? "" : "es") remain..."
+                    progressPanel.update(message: "The voices are being stored. Please wait.\nWriting Bank \(targetBank), pass \(pass); verifying by readback...")
                     let editedBank = try readback.replacingVoices(selectedVoices)
                     let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
                     let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
@@ -2712,23 +2851,28 @@ final class DocumentModel: ObservableObject {
                             timeout: 15
                         )
                     }.value
+                    try Task.checkCancellation()
                     readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: targetBank)
                     mismatches = generalMIDIMismatches(readback: readback, targetBank: targetBank, selectedVoices: selectedVoices)
                 }
 
                 statusMessage = "FB-01 verified General MIDI voices in Bank \(targetBank) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
                 errorMessage = nil
+            } catch is CancellationError {
+                statusMessage = nil
+                errorMessage = "General MIDI install canceled."
             } catch {
                 statusMessage = nil
                 errorMessage = "General MIDI install failed: \(error)"
             }
+            progressPanel.dismiss()
             isFetchingFromDevice = false
         }
     }
 
     func resetDeviceToFactorySettings() {
         guard confirmFactoryResetInstructions() else { return }
-        statusMessage = "Factory reset requires the FB-01 front panel: power off, hold System Setup + Inst Select + Data Entry -1, then power on."
+        statusMessage = "Factory reset instructions shown. Complete the FB-01 front-panel reset, wait for END, then power-cycle the unit."
         errorMessage = nil
     }
 
@@ -4561,20 +4705,35 @@ final class DocumentModel: ObservableObject {
     private func confirmFactoryResetInstructions() -> Bool {
         let alert = NSAlert()
         alert.messageText = "Are You Sure You Want to Reset the FB-01?"
-        alert.informativeText = "I have not found a documented FB-01 MIDI SysEx command for factory reset. The known factory reset procedure is physical: power the FB-01 off, hold System Setup + Inst Select + Data Entry -1, then power on. This will erase user memory on the device."
+        alert.informativeText = """
+        This restores the factory presets and clears user-defined sounds or possible SRAM corruption.
+
+        1. Turn the FB-01 OFF.
+        2. Hold System Setup + Inst Select + Data Entry No/-1.
+        3. While holding all three buttons, turn the FB-01 ON.
+        4. Keep holding until the display counter reaches FFFFFFFF and then shows END.
+        5. Release the buttons, turn the FB-01 OFF, then turn it ON again.
+        """
         alert.addButton(withTitle: "Show Reset Instructions")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .critical
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func fetchGeneralMIDISourceVoices(sourceIndex: Int, destinationIndex: Int, systemChannel: Int) async throws -> [Int: FB01VoiceData] {
+    private func fetchGeneralMIDISourceVoices(
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        progressPanel: EditorProgressPanel
+    ) async throws -> [Int: FB01VoiceData] {
         let mappings = FB01GeneralMIDI.mappings
         let sourceBanks = Set(mappings.map(\.sourceBank)).sorted()
         var banks: [Int: FB01VoiceBankData] = [:]
 
         for bank in sourceBanks {
+            try Task.checkCancellation()
             statusMessage = "Reading source Bank \(bank) for General MIDI install..."
+            progressPanel.update(message: "The voices are being stored. Please wait.\nReading source Bank \(bank) from the FB-01...")
             let bytes = try await Task.detached(priority: .userInitiated) {
                 try FB01MIDI.request(
                     .voiceBank(bank),
@@ -4586,6 +4745,7 @@ final class DocumentModel: ObservableObject {
             }.value
             banks[bank] = try voiceBankData(from: bytes, expectedBankNumber: bank)
         }
+        try Task.checkCancellation()
 
         return try Dictionary(uniqueKeysWithValues: mappings.map { mapping -> (Int, FB01VoiceData) in
             guard let voice = banks[mapping.sourceBank]?.voices.first(where: { $0.number == mapping.sourceVoice })?.voice else {
