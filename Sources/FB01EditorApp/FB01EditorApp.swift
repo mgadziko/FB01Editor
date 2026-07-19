@@ -2351,6 +2351,7 @@ final class DocumentModel: ObservableObject {
     @Published var selectedKeyboardSourceIndex = 0
     @Published var externalKeyboardEnabled = false
     @Published var externalKeyboardStatus = "Off"
+    @Published var externalKeyboardVolume = 127
     @Published var selectedVoiceNumbers: [LibrarySource.ID: Int] = [:]
     @Published var sidebarSelection: SidebarSelection = .system
     @Published var systemChannel = 0
@@ -2364,6 +2365,7 @@ final class DocumentModel: ObservableObject {
     private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
     private var externalKeyboardMonitor: FB01MIDILiveInputMonitor?
+    private var externalVolumeTask: Task<Void, Never>?
 
     private enum DefaultsKey {
         static let sourceIndex = "FB01Editor.selectedMIDISourceIndex"
@@ -2395,6 +2397,7 @@ final class DocumentModel: ObservableObject {
         keyboardVelocity = (1...127).contains(savedKeyboardVelocity) ? savedKeyboardVelocity : 100
         let savedKeyboardStartNote = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardStartNote)
         keyboardStartNote = (0...67).contains(savedKeyboardStartNote) ? savedKeyboardStartNote : 36
+        externalKeyboardVolume = systemMasterOutputLevel
         refreshMIDIEndpoints()
     }
 
@@ -4525,8 +4528,12 @@ final class DocumentModel: ObservableObject {
         let channel = UInt8(min(max(keyboardChannel, 0), 15))
         let rewritten = [event | channel] + message.dropFirst()
         let isNoteOn = event == 0x90 && message.count > 2 && message[2] > 0
+        let isVolumeControl = event == 0xB0 && message.count == 3 && message[1] == 7
 
         do {
+            if isVolumeControl {
+                applyExternalKeyboardVolume(Int(message[2]))
+            }
             if isNoteOn {
                 let preparationMessages = try keyboardPreparationMessages(midiChannel: Int(channel))
                 for preparationMessage in preparationMessages {
@@ -4540,6 +4547,8 @@ final class DocumentModel: ObservableObject {
 
             if isNoteOn, message.count > 1 {
                 externalKeyboardStatus = "Input sent note \(message[1]) on channel \(Int(channel) + 1)"
+            } else if isVolumeControl, message.count > 2 {
+                externalKeyboardStatus = "Volume \(message[2])"
             } else {
                 externalKeyboardStatus = "Input forwarding to \(selectedDestinationName)"
             }
@@ -4548,6 +4557,36 @@ final class DocumentModel: ObservableObject {
             externalKeyboardStatus = "Input error"
             errorMessage = "MIDI input failed: \(error)"
             statusMessage = nil
+        }
+    }
+
+    private func applyExternalKeyboardVolume(_ value: Int) {
+        let bounded = min(max(value, 0), 127)
+        externalKeyboardVolume = bounded
+        systemMasterOutputLevel = bounded
+
+        let destinationIndex = selectedDestinationIndex
+        externalVolumeTask?.cancel()
+        externalVolumeTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 80_000_000)
+                try Task.checkCancellation()
+                let message = try await MainActor.run {
+                    try self?.systemMasterOutputMessageBytes(level: bounded)
+                }
+                guard let message else { return }
+                try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendImmediate(message, destinationIndex: destinationIndex)
+                }.value
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run {
+                    self?.externalKeyboardStatus = "Volume send failed"
+                    self?.errorMessage = "Volume mapping failed: \(error)"
+                    self?.statusMessage = nil
+                }
+            }
         }
     }
 
