@@ -15,6 +15,9 @@ struct VoiceSlotTarget: Equatable {
     var number: Int
 }
 
+private let keyboardPreparationStaleAfter: TimeInterval = 10
+private let keyboardPreparationSettleDelay: TimeInterval = 0.30
+
 private func voiceBankLoadMessage(bank: FB01VoiceBankData, systemChannel: Int) throws -> [UInt8] {
     try FB01SysExMessage.voiceBankDumpData(
         systemChannel: systemChannel,
@@ -872,6 +875,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var statusMessage: String?
     @Published var isBusy = false
     private var preparedKeyboardVoiceSignature: String?
+    private var preparedKeyboardVoiceDate: Date?
 
     init(voice: FB01VoiceData, systemChannel: Int, fileURL: URL? = nil) {
         self.voice = voice
@@ -902,6 +906,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         do {
             voice = try edit(voice)
             preparedKeyboardVoiceSignature = nil
+            preparedKeyboardVoiceDate = nil
             errorMessage = nil
             statusMessage = nil
         } catch {
@@ -1136,9 +1141,13 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let velocity = UInt8(min(max(device.keyboardVelocity, 1), 127))
 
         do {
+            let preparationMessages = isOn ? try keyboardPreparationMessages(midiChannel: Int(channel)) : []
             if isOn {
-                for message in try keyboardPreparationMessages(midiChannel: Int(channel)) {
+                for message in preparationMessages {
                     try FB01MIDI.sendImmediate(message, destinationIndex: destinationIndex)
+                }
+                if !preparationMessages.isEmpty {
+                    Thread.sleep(forTimeInterval: keyboardPreparationSettleDelay)
                 }
             }
             try FB01MIDI.sendImmediate([
@@ -1173,13 +1182,21 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     private func keyboardPreparationMessages(midiChannel: Int) throws -> [[UInt8]] {
         let signature = "\(midiChannel)-\(voice.bytes)"
-        guard preparedKeyboardVoiceSignature != signature else {
+        guard preparedKeyboardVoiceSignature != signature || isKeyboardPreparationStale else {
             return []
         }
 
         let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
         preparedKeyboardVoiceSignature = signature
+        preparedKeyboardVoiceDate = Date()
         return [try artifact.sysexBytes] + (try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel))
+    }
+
+    private var isKeyboardPreparationStale: Bool {
+        guard let preparedKeyboardVoiceDate else {
+            return true
+        }
+        return Date().timeIntervalSince(preparedKeyboardVoiceDate) > keyboardPreparationStaleAfter
     }
 
     private static func readVoice(from url: URL) throws -> (voice: FB01VoiceData, systemChannel: Int) {
@@ -2230,6 +2247,7 @@ final class DocumentModel: ObservableObject {
     @Published var keyboardStartNote = 36
 
     private var preparedKeyboardVoiceSignature: String?
+    private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
 
     private enum DefaultsKey {
@@ -2392,6 +2410,7 @@ final class DocumentModel: ObservableObject {
     }
 
     func refreshMIDIEndpoints() {
+        let previousDestinationIndex = selectedDestinationIndex
         midiSources = FB01MIDI.availableSources()
         midiDestinations = FB01MIDI.availableDestinations()
 
@@ -2409,6 +2428,9 @@ final class DocumentModel: ObservableObject {
             selectedDestinationIndex = midiDestinations.first?.index ?? 0
         }
 
+        if selectedDestinationIndex != previousDestinationIndex {
+            invalidateKeyboardPreparation()
+        }
         persistSelectedEndpoints()
     }
 
@@ -2419,6 +2441,7 @@ final class DocumentModel: ObservableObject {
 
     func selectDestination(_ destination: FB01MIDIEndpoint) {
         selectedDestinationIndex = destination.index
+        invalidateKeyboardPreparation()
         persistSelectedEndpoints()
     }
 
@@ -2428,11 +2451,13 @@ final class DocumentModel: ObservableObject {
 
     func setSystemChannel(_ channel: Int) {
         systemChannel = min(max(channel, 0), 15)
+        invalidateKeyboardPreparation()
         UserDefaults.standard.set(systemChannel, forKey: DefaultsKey.systemChannel)
     }
 
     func setKeyboardChannel(_ channel: Int) {
         keyboardChannel = min(max(channel, 0), 15)
+        invalidateKeyboardPreparation()
         UserDefaults.standard.set(keyboardChannel, forKey: DefaultsKey.keyboardChannel)
     }
 
@@ -3680,6 +3705,12 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    private func invalidateKeyboardPreparation() {
+        preparedKeyboardVoiceSignature = nil
+        preparedKeyboardVoiceDate = nil
+        keyboardPreparationTask?.cancel()
+    }
+
     private func storedUniqueID(for key: String) -> Int32? {
         guard UserDefaults.standard.object(forKey: key) != nil else {
             return nil
@@ -4108,9 +4139,13 @@ final class DocumentModel: ObservableObject {
         let velocity = UInt8(min(max(keyboardVelocity, 1), 127))
 
         do {
+            let preparationMessages = isOn ? try keyboardPreparationMessages(midiChannel: Int(channel)) : []
             if isOn {
-                for message in try keyboardPreparationMessages(midiChannel: Int(channel)) {
+                for message in preparationMessages {
                     try FB01MIDI.sendImmediate(message, destinationIndex: destinationIndex)
+                }
+                if !preparationMessages.isEmpty {
+                    Thread.sleep(forTimeInterval: keyboardPreparationSettleDelay)
                 }
             }
             try FB01MIDI.sendImmediate([
@@ -4130,17 +4165,31 @@ final class DocumentModel: ObservableObject {
 
     private func keyboardPreparationMessages(midiChannel: Int) throws -> [[UInt8]] {
         guard let context = selectedVoiceContext else {
+            let signature = "\(midiChannel)-\(systemChannel)-audition"
+            guard preparedKeyboardVoiceSignature != signature || isKeyboardPreparationStale else {
+                return []
+            }
+            preparedKeyboardVoiceSignature = signature
+            preparedKeyboardVoiceDate = Date()
             return try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel)
         }
 
         let signature = "\(midiChannel)-\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)"
-        guard preparedKeyboardVoiceSignature != signature else {
+        guard preparedKeyboardVoiceSignature != signature || isKeyboardPreparationStale else {
             return []
         }
 
         let artifact = try context.voice.instrumentVoiceArtifact(systemChannel: context.systemChannel, instrument: 0)
         preparedKeyboardVoiceSignature = signature
+        preparedKeyboardVoiceDate = Date()
         return [try artifact.sysexBytes] + (try keyboardAuditionPreparationMessages(systemChannel: context.systemChannel, midiChannel: midiChannel))
+    }
+
+    private var isKeyboardPreparationStale: Bool {
+        guard let preparedKeyboardVoiceDate else {
+            return true
+        }
+        return Date().timeIntervalSince(preparedKeyboardVoiceDate) > keyboardPreparationStaleAfter
     }
 
     private func scheduleKeyboardVoicePreparation(delayNanoseconds: UInt64 = 150_000_000) {
@@ -4173,6 +4222,7 @@ final class DocumentModel: ObservableObject {
                 try Task.checkCancellation()
                 await MainActor.run {
                     self?.preparedKeyboardVoiceSignature = signature
+                    self?.preparedKeyboardVoiceDate = Date()
                 }
             } catch is CancellationError {
                 return
