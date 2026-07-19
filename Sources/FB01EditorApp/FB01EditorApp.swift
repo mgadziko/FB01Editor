@@ -648,7 +648,7 @@ private var defaultEditorFileDirectoryURL: URL {
     FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Documents", isDirectory: true)
-        .appendingPathComponent("Forest FB01 Editor", isDirectory: true)
+        .appendingPathComponent("Forest FB-01 Editor", isDirectory: true)
 }
 
 private func safeEditorFileName(_ name: String, fallback: String) -> String {
@@ -1884,7 +1884,7 @@ struct FB01EditorApplication: App {
     @StateObject private var documentWorkspace = EditorDocumentWorkspace()
 
     var body: some Scene {
-        WindowGroup("Forest FB01 Editor") {
+        WindowGroup("Forest FB-01 Editor") {
             ContentView(document: document)
                 .frame(minWidth: 840, minHeight: 540)
                 .onAppear {
@@ -1916,7 +1916,7 @@ struct FB01EditorApplication: App {
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About Forest FB01 Editor") {
+                Button("About Forest FB-01 Editor") {
                     AboutBoxController.shared.show()
                 }
             }
@@ -2073,7 +2073,7 @@ struct AboutBoxView: View {
                 AboutAppIcon()
                     .padding(.bottom, 22)
 
-                Text("Forest FB01 Editor")
+                Text("Forest FB-01 Editor")
                     .font(.headline.weight(.semibold))
                     .padding(.bottom, 4)
 
@@ -3620,7 +3620,7 @@ final class DocumentModel: ObservableObject {
         FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("Forest FB01 Editor", isDirectory: true)
+            .appendingPathComponent("Forest FB-01 Editor", isDirectory: true)
     }
 
     private func saveEditedSourcesForQuit() -> Bool {

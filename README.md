@@ -1,4 +1,4 @@
-# Forest FB01 Editor
+# Forest FB-01 Editor
 
 Offline-first editor and librarian core for the Yamaha FB-01 FM sound generator.
 
@@ -65,10 +65,10 @@ To build a launchable local `.app` bundle:
 
 ```sh
 ./scripts/build-macos-app.sh
-open "dist/Forest FB01 Editor.app"
+open "dist/Forest FB-01 Editor.app"
 ```
 
-The script creates an ad-hoc signed development bundle at `dist/Forest FB01 Editor.app`.
+The script creates an ad-hoc signed development bundle at `dist/Forest FB-01 Editor.app`.
 
 ## MIDI Capture And Safe Dump Requests
 
