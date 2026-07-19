@@ -15,6 +15,37 @@ struct VoiceSlotTarget: Equatable {
     var number: Int
 }
 
+private func voiceBankLoadMessage(bank: FB01VoiceBankData, systemChannel: Int) throws -> [UInt8] {
+    try FB01SysExMessage.voiceBankDumpData(
+        systemChannel: systemChannel,
+        bank: bank.bank,
+        byteCount: FB01VoiceBankData.bankHeaderByteCount,
+        data: bank.data,
+        checksum: FB01.checksum(for: bank.data)
+    ).bytes
+}
+
+private func voiceBankData(from bytes: [UInt8], expectedBankNumber: Int) throws -> FB01VoiceBankData {
+    let artifact = try FB01Artifact(sysexBytes: bytes)
+    for message in artifact.messages {
+        if case let .voiceBankDumpData(_, bank, _, data, _) = message,
+           bank == expectedBankNumber - 1 {
+            return try FB01VoiceBankData(bank: bank, data: data)
+        }
+        if case let .voiceRAMDumpData(_, _, data, _) = message,
+           expectedBankNumber == 1 {
+            return try FB01VoiceBankData(bank: 0, data: data)
+        }
+    }
+    throw FB01AppError.message("Response did not contain Bank \(expectedBankNumber)")
+}
+
+private func backupFileName(prefix: String, timestamp: Date = Date()) -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyMMdd-HHmmss"
+    return "\(prefix)-backup-\(formatter.string(from: timestamp)).syx"
+}
+
 final class VoiceSlotPickerAccessory: NSView {
     private let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let voicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -399,10 +430,8 @@ private enum EditorFileDefaultsKey {
 }
 
 private struct VoiceDocumentStoreOptions: Sendable {
-    var instrument: Int
     var bank: Int
     var voiceNumber: Int
-    var confirmAfterStore: Bool
 
     var voiceSlot: Int {
         bank * FB01VoiceBankData.voiceCount + voiceNumber
@@ -639,6 +668,12 @@ private func ensureDefaultEditorFileDirectory() {
     )
 }
 
+private func ensureDefaultEditorBackupDirectory() throws -> URL {
+    let url = defaultEditorBackupDirectoryURL
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
 private func editorDirectoryExists(at url: URL) -> Bool {
     var isDirectory: ObjCBool = false
     return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
@@ -649,6 +684,10 @@ private var defaultEditorFileDirectoryURL: URL {
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Documents", isDirectory: true)
         .appendingPathComponent("Forest FB-01 Editor", isDirectory: true)
+}
+
+private var defaultEditorBackupDirectoryURL: URL {
+    defaultEditorFileDirectoryURL.appendingPathComponent("Backups", isDirectory: true)
 }
 
 private func safeEditorFileName(_ name: String, fallback: String) -> String {
@@ -1001,46 +1040,62 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let systemChannel = device.systemChannel
         let destinationName = device.selectedDestinationName
         isBusy = true
-        statusMessage = "Storing voice to Bank \(options.bank + 1) Voice \(options.voiceNumber + 1)..."
+        statusMessage = "Backing up Bank \(options.bank + 1) before storing voice..."
         errorMessage = nil
 
         Task {
             do {
-                let messages = try Self.storeMessages(
-                    voice: voiceToStore,
-                    systemChannel: systemChannel,
-                    instrument: options.instrument,
-                    voiceSlot: options.voiceSlot
+                let bankNumber = options.bank + 1
+                let backupDirectory = try ensureDefaultEditorBackupDirectory()
+                let backupURL = backupDirectory.appendingPathComponent(
+                    backupFileName(prefix: "bank-\(bankNumber)-before-voice-\(options.voiceNumber + 1)")
                 )
-                let status = try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendAndReceive(
-                        messages,
+                let originalBytes = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.request(
+                        .voiceBank(bankNumber),
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
-                        timeout: 8,
-                        maxMessages: 1,
-                        delayBetweenMessages: 0.35
+                        systemChannel: systemChannel,
+                        timeout: 15
                     )
                 }.value
+                let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
+                try await Task.detached(priority: .userInitiated) {
+                    try originalArtifact.writeSysEx(to: backupURL)
+                }.value
 
-                if options.confirmAfterStore {
-                    let readback = try await Task.detached(priority: .userInitiated) {
-                        try FB01MIDI.request(
-                            .voiceBank(options.bank + 1),
+                var readback = try voiceBankData(from: originalBytes, expectedBankNumber: bankNumber)
+                let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
+                try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+                }.value
+                try await Task.sleep(for: .milliseconds(300))
+
+                var pass = 0
+                while readback.voices[options.voiceNumber].voice.bytes != voiceToStore.bytes {
+                    pass += 1
+                    guard pass <= 60 else {
+                        throw FB01AppError.message("Bank \(bankNumber) Voice \(options.voiceNumber + 1) did not verify after 60 write passes.")
+                    }
+
+                    statusMessage = "Writing Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying after send..."
+                    let editedBank = try readback.replacingVoices([options.voiceNumber + 1: voiceToStore])
+                    let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
+                    let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
+                        try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+                        try await Task.sleep(for: .milliseconds(1500))
+                        return try FB01MIDI.request(
+                            .voiceBank(bankNumber),
                             sourceIndex: sourceIndex,
                             destinationIndex: destinationIndex,
                             systemChannel: systemChannel,
                             timeout: 15
                         )
                     }.value
-                    let readbackVoice = try Self.storedVoice(from: readback, bank: options.bank, voiceNumber: options.voiceNumber)
-                    let statusSuffix = try deviceStatusCode(from: status).map { " (status \(String(format: "0x%02X", $0)))" } ?? ""
-                    statusMessage = readbackVoice?.bytes == voiceToStore.bytes
-                        ? "FB-01 confirmed store to Bank \(options.bank + 1) Voice \(options.voiceNumber + 1) on \(destinationName)\(statusSuffix)."
-                        : "Stored to Bank \(options.bank + 1) Voice \(options.voiceNumber + 1), but readback did not match exactly."
-                } else {
-                    statusMessage = "Stored voice to Bank \(options.bank + 1) Voice \(options.voiceNumber + 1) on \(destinationName)."
+                    readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: bankNumber)
                 }
+
+                statusMessage = "FB-01 verified Bank \(options.bank + 1) Voice \(options.voiceNumber + 1) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
                 errorMessage = nil
             } catch {
                 statusMessage = nil
@@ -1283,7 +1338,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private static func chooseStoreOptions(defaultVoiceName: String) -> VoiceDocumentStoreOptions? {
         let alert = NSAlert()
         alert.messageText = "Store Voice to FB-01"
-        alert.informativeText = "This sets Protect OFF, sends \(defaultVoiceName.isEmpty ? "this voice" : defaultVoiceName) to an instrument edit buffer, then permanently overwrites a Bank 1 or Bank 2 voice slot."
+        alert.informativeText = "This saves a backup of the destination RAM bank, writes \(defaultVoiceName.isEmpty ? "this voice" : defaultVoiceName) into a Bank 1 or Bank 2 slot, then reads the bank back until the destination voice verifies."
         alert.addButton(withTitle: "Store and Overwrite")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
@@ -1292,11 +1347,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         stack.orientation = .vertical
         stack.spacing = 8
         stack.alignment = .leading
-
-        let instrumentPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for instrument in 1...8 {
-            instrumentPopup.addItem(withTitle: "Instrument \(instrument)")
-        }
 
         let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
         bankPopup.addItem(withTitle: "Bank 1")
@@ -1307,14 +1357,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             voicePopup.addItem(withTitle: "Voice \(voice)")
         }
 
-        let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored bank after writing and compare the destination voice", target: nil, action: nil)
-        confirmCheckbox.state = .on
-
-        stack.addArrangedSubview(labelledEditorPopup(label: "Edit buffer:", popup: instrumentPopup))
         stack.addArrangedSubview(labelledEditorPopup(label: "Bank:", popup: bankPopup))
         stack.addArrangedSubview(labelledEditorPopup(label: "Voice:", popup: voicePopup))
-        stack.addArrangedSubview(confirmCheckbox)
-        stack.addArrangedSubview(makeWarningLabel("Only Bank 1 and Bank 2 are writable. Other banks are intentionally unavailable here."))
+        stack.addArrangedSubview(makeWarningLabel("A timestamped backup is saved automatically before overwrite. Only Bank 1 and Bank 2 are writable."))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -1324,10 +1369,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let bank = bankPopup.indexOfSelectedItem
         let voiceNumber = voicePopup.indexOfSelectedItem
         return VoiceDocumentStoreOptions(
-            instrument: instrumentPopup.indexOfSelectedItem,
             bank: bank,
-            voiceNumber: voiceNumber,
-            confirmAfterStore: confirmCheckbox.state == .on
+            voiceNumber: voiceNumber
         )
     }
 
@@ -3404,53 +3447,17 @@ final class DocumentModel: ObservableObject {
             return
         }
 
-        let alert = NSAlert()
-        alert.messageText = "Store Voice to FB-01 Slot"
-        alert.informativeText = storeVoicePromptText(
-            action: "This sends Protect OFF, sends \(voiceDisplayName(voice)) from \(source.title) to a current instrument edit buffer, then permanently stores that instrument voice to a voice slot on the FB-01.",
-            voiceSlot: min(max(number - 1, 0), 95)
-        )
-        alert.addButton(withTitle: "Store and Overwrite")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .warning
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.spacing = 8
-        stack.alignment = .leading
-
-        let instrumentPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
-        for instrument in 1...8 {
-            instrumentPopup.addItem(withTitle: "Instrument \(instrument)")
-        }
-        instrumentPopup.selectItem(at: min(max(number - 1, 0), 7))
-
-        let voicePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
-        for voiceNumber in 1...96 {
-            voicePopup.addItem(withTitle: voiceSlotMenuTitle(slot: voiceNumber - 1))
-        }
-        voicePopup.selectItem(at: min(max(number - 1, 0), 95))
-
-        stack.addArrangedSubview(labelledPopup(label: "Edit buffer:", popup: instrumentPopup))
-        stack.addArrangedSubview(labelledPopup(label: "Overwrite slot:", popup: voicePopup))
-        alert.accessoryView = stack
-
-        guard alert.runModal() == .alertFirstButtonReturn else {
+        guard let options = chooseDeviceVoiceStoreOptions(
+            title: "Store Voice to FB-01 Slot",
+            actionTitle: "Store and Overwrite",
+            voiceDescription: voiceDisplayName(voice),
+            sourceTitle: source.title,
+            currentNumber: number
+        ) else {
             return
         }
 
-        let instrument = instrumentPopup.indexOfSelectedItem
-        let voiceSlot = voicePopup.indexOfSelectedItem
-        do {
-            sendMIDI(
-                try storeVoiceMessages(voice: voice, systemChannel: systemChannel, instrument: instrument, voiceSlot: voiceSlot),
-                delayBetweenMessages: 0.35,
-                statusMessage: "Stored voice to slot \(voiceSlot + 1) on \(selectedDestinationName)."
-            )
-        } catch {
-            errorMessage = "Store voice failed: \(error). Protect may still be ON, the MIDI path may be wrong, or the FB-01 did not accept the store."
-            statusMessage = nil
-        }
+        storeVoicePayloadByBankImage(voice, systemChannel: systemChannel, options: options)
     }
 
     func storeAndConfirmVoiceToDeviceSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
@@ -3458,13 +3465,30 @@ final class DocumentModel: ObservableObject {
             return
         }
 
+        guard let options = chooseDeviceVoiceStoreOptions(
+            title: "Store and Confirm Voice",
+            actionTitle: "Store, Overwrite, and Confirm",
+            voiceDescription: voiceDisplayName(voice),
+            sourceTitle: source.title,
+            currentNumber: number
+        ) else {
+            return
+        }
+
+        storeVoicePayloadByBankImage(voice, systemChannel: systemChannel, options: options)
+    }
+
+    private func chooseDeviceVoiceStoreOptions(
+        title: String,
+        actionTitle: String,
+        voiceDescription: String,
+        sourceTitle: String,
+        currentNumber: Int
+    ) -> VoiceDocumentStoreOptions? {
         let alert = NSAlert()
-        alert.messageText = "Store and Confirm Voice"
-        alert.informativeText = storeVoicePromptText(
-            action: "This sends Protect OFF, sends \(voiceDisplayName(voice)) from \(source.title) to a current instrument edit buffer, permanently stores that instrument voice to a selected FB-01 voice slot, and waits for the FB-01 status response.",
-            voiceSlot: min(max(number - 1, 0), 95)
-        )
-        alert.addButton(withTitle: "Store, Overwrite, and Confirm")
+        alert.messageText = title
+        alert.informativeText = "This saves a timestamped backup of the destination RAM bank, writes \(voiceDescription) from \(sourceTitle) into the selected Bank 1 or Bank 2 slot, then reads the bank back until that voice verifies."
+        alert.addButton(withTitle: actionTitle)
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
@@ -3473,32 +3497,105 @@ final class DocumentModel: ObservableObject {
         stack.spacing = 8
         stack.alignment = .leading
 
-        let instrumentPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
-        for instrument in 1...8 {
-            instrumentPopup.addItem(withTitle: "Instrument \(instrument)")
-        }
-        instrumentPopup.selectItem(at: min(max(number - 1, 0), 7))
+        let bankPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
+        bankPopup.addItem(withTitle: "Bank 1")
+        bankPopup.addItem(withTitle: "Bank 2")
+        let preferredSlot = min(max(currentNumber - 1, 0), FB01VoiceBankData.voiceCount * 2 - 1)
+        bankPopup.selectItem(at: preferredSlot / FB01VoiceBankData.voiceCount)
 
         let voicePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
-        for voiceNumber in 1...96 {
-            voicePopup.addItem(withTitle: voiceSlotMenuTitle(slot: voiceNumber - 1))
+        for voiceNumber in 1...FB01VoiceBankData.voiceCount {
+            voicePopup.addItem(withTitle: "Voice \(voiceNumber)")
         }
-        voicePopup.selectItem(at: min(max(number - 1, 0), 95))
+        voicePopup.selectItem(at: preferredSlot % FB01VoiceBankData.voiceCount)
 
-        stack.addArrangedSubview(labelledPopup(label: "Edit buffer:", popup: instrumentPopup))
-        stack.addArrangedSubview(labelledPopup(label: "Overwrite slot:", popup: voicePopup))
+        stack.addArrangedSubview(labelledPopup(label: "Bank:", popup: bankPopup))
+        stack.addArrangedSubview(labelledPopup(label: "Voice:", popup: voicePopup))
+        stack.addArrangedSubview(makeWarningLabel("The backup is saved automatically in the Backups folder. The FB-01 may display dump/error during long writes; the app treats readback verification as the final result."))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
-            return
+            return nil
         }
 
-        storeAndConfirmVoicePayload(
-            voice,
-            systemChannel: systemChannel,
-            instrument: instrumentPopup.indexOfSelectedItem,
-            voiceSlot: voicePopup.indexOfSelectedItem
+        return VoiceDocumentStoreOptions(
+            bank: bankPopup.indexOfSelectedItem,
+            voiceNumber: voicePopup.indexOfSelectedItem
         )
+    }
+
+    private func storeVoicePayloadByBankImage(_ voice: FB01VoiceData, systemChannel: Int, options: VoiceDocumentStoreOptions) {
+        guard !isBusy else { return }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
+        let bankNumber = options.bank + 1
+        let voiceNumber = options.voiceNumber + 1
+        isFetchingFromDevice = true
+        statusMessage = "Backing up Bank \(bankNumber) before storing Voice \(voiceNumber)..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let backupDirectory = try ensureDefaultBackupDirectory()
+                let backupURL = backupDirectory.appendingPathComponent(
+                    backupFileName(prefix: "bank-\(bankNumber)-before-voice-\(voiceNumber)")
+                )
+                let originalBytes = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.request(
+                        .voiceBank(bankNumber),
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        timeout: 15
+                    )
+                }.value
+                let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
+                try await Task.detached(priority: .userInitiated) {
+                    try originalArtifact.writeSysEx(to: backupURL)
+                }.value
+
+                var readback = try voiceBankData(from: originalBytes, expectedBankNumber: bankNumber)
+                let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
+                try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+                }.value
+                try await Task.sleep(for: .milliseconds(300))
+
+                var pass = 0
+                while readback.voices[options.voiceNumber].voice.bytes != voice.bytes {
+                    pass += 1
+                    guard pass <= 60 else {
+                        throw FB01AppError.message("Bank \(bankNumber) Voice \(voiceNumber) did not verify after 60 write passes.")
+                    }
+
+                    statusMessage = "Writing Bank \(bankNumber) Voice \(voiceNumber), pass \(pass); verifying after send..."
+                    let editedBank = try readback.replacingVoices([voiceNumber: voice])
+                    let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
+                    let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
+                        try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+                        try await Task.sleep(for: .milliseconds(1500))
+                        return try FB01MIDI.request(
+                            .voiceBank(bankNumber),
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 15
+                        )
+                    }.value
+                    readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: bankNumber)
+                }
+
+                statusMessage = "FB-01 verified Bank \(bankNumber) Voice \(voiceNumber) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store voice failed: \(error). Backup may not have completed, Protect may still be ON, or the FB-01 may not have accepted the bank write."
+            }
+
+            isFetchingFromDevice = false
+        }
     }
 
     func playVoiceTestNotes(voice: FB01VoiceData, systemChannel: Int) {
@@ -3611,6 +3708,12 @@ final class DocumentModel: ObservableObject {
         )
     }
 
+    private func ensureDefaultBackupDirectory() throws -> URL {
+        let url = defaultBackupDirectoryURL
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     private func directoryExists(at url: URL) -> Bool {
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
@@ -3621,6 +3724,10 @@ final class DocumentModel: ObservableObject {
             .homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
             .appendingPathComponent("Forest FB-01 Editor", isDirectory: true)
+    }
+
+    private var defaultBackupDirectoryURL: URL {
+        defaultFileDirectoryURL.appendingPathComponent("Backups", isDirectory: true)
     }
 
     private func saveEditedSourcesForQuit() -> Bool {
@@ -4356,6 +4463,7 @@ enum FB01AppError: Error {
     case noVoiceSource
     case noConfigurationSource
     case readOnlyConfigurationSlot
+    case message(String)
 }
 
 private func deviceStatusCode(from messages: [[UInt8]]) throws -> UInt8? {
