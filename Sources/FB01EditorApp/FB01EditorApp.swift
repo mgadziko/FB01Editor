@@ -15,6 +15,189 @@ struct VoiceSlotTarget: Equatable {
     var number: Int
 }
 
+struct DeviceVoiceCopySelection: Equatable {
+    var sourceBank: Int
+    var sourceVoiceNumber: Int
+    var targetBank: Int
+    var targetVoiceNumber: Int
+}
+
+struct DeviceConfigurationCopySelection: Equatable {
+    var sourceSlot: Int
+    var targetSlot: Int
+}
+
+private final class DeviceConfigurationCopyAccessory: NSView {
+    private let sourceSlotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let targetSlotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let nameLookup: ConfigurationFetchNameLookup
+
+    var selection: DeviceConfigurationCopySelection {
+        DeviceConfigurationCopySelection(
+            sourceSlot: sourceSlotPopup.indexOfSelectedItem,
+            targetSlot: targetSlotPopup.indexOfSelectedItem
+        )
+    }
+
+    init(nameLookup: ConfigurationFetchNameLookup) {
+        self.nameLookup = nameLookup
+        super.init(frame: NSRect(x: 0, y: 0, width: 620, height: 108))
+
+        addSectionTitle("Fetch source:", x: 0)
+        addSectionTitle("Store target:", x: 322)
+        addSlotPopup(sourceSlotPopup, x: 0, slots: 1...20)
+        addSlotPopup(targetSlotPopup, x: 322, slots: 1...16)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    private func addSectionTitle(_ title: String, x: CGFloat) {
+        let label = NSTextField(labelWithString: title)
+        label.font = .boldSystemFont(ofSize: 13)
+        label.frame = NSRect(x: x, y: 84, width: 280, height: 18)
+        addSubview(label)
+    }
+
+    private func addSlotPopup(_ popup: NSPopUpButton, x: CGFloat, slots: ClosedRange<Int>) {
+        let slotLabel = NSTextField(labelWithString: "Configuration")
+        slotLabel.alignment = .right
+        slotLabel.frame = NSRect(x: x, y: 46, width: 90, height: 18)
+        addSubview(slotLabel)
+
+        popup.frame = NSRect(x: x + 102, y: 42, width: 178, height: 26)
+        for slot in slots {
+            popup.addItem(withTitle: nameLookup.menuTitle(slot: slot))
+        }
+        addSubview(popup)
+    }
+}
+
+private final class DeviceVoiceCopyAccessory: NSView {
+    private let sourceBankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let sourceVoicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let targetBankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let targetVoicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let nameLookup: VoiceDocumentFetchNameLookup
+
+    var selection: DeviceVoiceCopySelection {
+        DeviceVoiceCopySelection(
+            sourceBank: sourceBankPopup.indexOfSelectedItem + 1,
+            sourceVoiceNumber: sourceVoicePopup.indexOfSelectedItem,
+            targetBank: targetBankPopup.indexOfSelectedItem + 1,
+            targetVoiceNumber: targetVoicePopup.indexOfSelectedItem
+        )
+    }
+
+    init(nameLookup: VoiceDocumentFetchNameLookup) {
+        self.nameLookup = nameLookup
+        super.init(frame: NSRect(x: 0, y: 0, width: 620, height: 146))
+
+        addSectionTitle("Fetch source:", x: 0)
+        addSectionTitle("Store target:", x: 322)
+        addPopupRows(
+            bankPopup: sourceBankPopup,
+            voicePopup: sourceVoicePopup,
+            x: 0,
+            bankRange: 1...7,
+            bankTitle: { nameLookupBankTitle($0) }
+        )
+        addPopupRows(
+            bankPopup: targetBankPopup,
+            voicePopup: targetVoicePopup,
+            x: 322,
+            bankRange: 1...2,
+            bankTitle: { "Bank \($0)" }
+        )
+
+        sourceBankPopup.target = self
+        sourceBankPopup.action = #selector(sourceBankChanged)
+        targetBankPopup.target = self
+        targetBankPopup.action = #selector(targetBankChanged)
+        populateSourceVoices()
+        populateTargetVoices()
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    @objc private func sourceBankChanged() {
+        populateSourceVoices()
+    }
+
+    @objc private func targetBankChanged() {
+        populateTargetVoices()
+    }
+
+    private func addSectionTitle(_ title: String, x: CGFloat) {
+        let label = NSTextField(labelWithString: title)
+        label.font = .boldSystemFont(ofSize: 13)
+        label.frame = NSRect(x: x, y: 122, width: 280, height: 18)
+        addSubview(label)
+    }
+
+    private func addPopupRows(
+        bankPopup: NSPopUpButton,
+        voicePopup: NSPopUpButton,
+        x: CGFloat,
+        bankRange: ClosedRange<Int>,
+        bankTitle: (Int) -> String
+    ) {
+        let bankLabel = NSTextField(labelWithString: "Bank")
+        bankLabel.alignment = .right
+        bankLabel.frame = NSRect(x: x, y: 84, width: 54, height: 18)
+        addSubview(bankLabel)
+
+        let voiceLabel = NSTextField(labelWithString: "Voice")
+        voiceLabel.alignment = .right
+        voiceLabel.frame = NSRect(x: x, y: 46, width: 54, height: 18)
+        addSubview(voiceLabel)
+
+        bankPopup.frame = NSRect(x: x + 66, y: 80, width: 214, height: 26)
+        voicePopup.frame = NSRect(x: x + 66, y: 42, width: 214, height: 26)
+        for bank in bankRange {
+            bankPopup.addItem(withTitle: bankTitle(bank))
+        }
+        addSubview(bankPopup)
+        addSubview(voicePopup)
+    }
+
+    private func populateSourceVoices() {
+        let bank = sourceBankPopup.indexOfSelectedItem + 1
+        populateVoices(in: sourceVoicePopup, bank: bank, includeNames: true)
+    }
+
+    private func populateTargetVoices() {
+        let bank = targetBankPopup.indexOfSelectedItem + 1
+        populateVoices(in: targetVoicePopup, bank: bank, includeNames: true)
+    }
+
+    private func populateVoices(in popup: NSPopUpButton, bank: Int, includeNames: Bool) {
+        let selectedVoice = max(0, popup.indexOfSelectedItem)
+        popup.removeAllItems()
+        for voiceNumber in 1...FB01VoiceBankData.voiceCount {
+            let title = includeNames
+                ? nameLookup.voiceMenuTitle(location: .bank(bank), voiceNumber: voiceNumber)
+                : "Voice \(voiceNumber)"
+            popup.addItem(withTitle: title)
+        }
+        popup.selectItem(at: min(selectedVoice, FB01VoiceBankData.voiceCount - 1))
+    }
+
+    private func nameLookupBankTitle(_ bank: Int) -> String {
+        switch bank {
+        case 1:
+            "Bank 1 RAM"
+        case 2:
+            "Bank 2 RAM"
+        default:
+            "Bank \(bank) ROM\(bank - 2)"
+        }
+    }
+}
+
 private let keyboardPreparationStaleAfter: TimeInterval = 10
 private let keyboardPreparationSettleDelay: TimeInterval = 0.30
 
@@ -2263,6 +2446,11 @@ struct FB01EditorApplication: App {
                 Button("About Forest FB-01 Editor") {
                     AboutBoxController.shared.show()
                 }
+
+                Button("Reset Instructions...") {
+                    document.resetDeviceToFactorySettings()
+                }
+                .disabled(document.isBusy)
             }
 
             CommandGroup(replacing: .newItem) {
@@ -2301,7 +2489,7 @@ struct FB01EditorApplication: App {
                 Button("Copy Voice to Slot...") {
                     document.copySelectedVoiceToLocalSlot()
                 }
-                .disabled(!document.canUseSelectedVoiceLibrarianActions)
+                .disabled(document.isBusy)
 
                 Button("Swap Voice with Slot...") {
                     document.swapSelectedVoiceWithLocalSlot()
@@ -2335,7 +2523,14 @@ struct FB01EditorApplication: App {
                 .disabled(document.isBusy)
             }
 
-            CommandMenu("Device") {
+            CommandMenu("Configuration") {
+                Button("Copy Configuration to Slot ...") {
+                    document.copyConfigurationSlotOnDevice()
+                }
+                .disabled(document.isBusy)
+
+                Divider()
+
                 Button("Send Selected Configuration to Current Edit Buffer...") {
                     document.sendSelectedConfigurationToCurrentEditBuffer()
                 }
@@ -2355,13 +2550,6 @@ struct FB01EditorApplication: App {
                     document.storeAndConfirmSelectedConfigurationToDeviceSlot()
                 }
                 .disabled(!document.canStoreSelectedConfiguration)
-
-                Divider()
-
-                Button("Reset Instructions...") {
-                    document.resetDeviceToFactorySettings()
-                }
-                .disabled(document.isBusy)
             }
         }
     }
@@ -3505,10 +3693,179 @@ final class DocumentModel: ObservableObject {
     }
 
     func copySelectedVoiceToLocalSlot() {
-        guard let context = selectedVoiceContext else {
-            return
+        copyVoiceSlotOnDevice()
+    }
+
+    func copyVoiceSlotOnDevice() {
+        guard !isBusy else { return }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        let destinationName = selectedDestinationName
+
+        isFetchingFromDevice = true
+        statusMessage = "Reading Bank 1 and Bank 2 voice names from FB-01..."
+        errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Reading Voice Names",
+            message: "Reading Bank 1 and Bank 2 from the FB-01 so the Copy Voice to Slot dialog can show current RAM voice names."
+        )
+        progressPanel.show()
+
+        Task {
+            let nameLookup = await Task.detached(priority: .userInitiated) {
+                Self.fetchRAMVoiceNamesForDeviceCopy(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                )
+            }.value
+            progressPanel.dismiss()
+
+            guard let selection = Self.chooseDeviceVoiceCopySelection(nameLookup: nameLookup) else {
+                statusMessage = nil
+                isFetchingFromDevice = false
+                return
+            }
+
+            let sourceTitle = nameLookup.sourceTitle(
+                location: .bank(selection.sourceBank),
+                voiceNumber: selection.sourceVoiceNumber + 1
+            )
+            let targetTitle = "Bank \(selection.targetBank) Voice \(selection.targetVoiceNumber + 1)"
+            statusMessage = "Fetching \(sourceTitle) from FB-01..."
+
+            do {
+                let voice = try await Task.detached(priority: .userInitiated) {
+                    try Self.fetchDeviceVoice(
+                        bank: selection.sourceBank,
+                        voiceNumber: selection.sourceVoiceNumber,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel
+                    )
+                }.value
+
+                statusMessage = "Copying \(sourceTitle) to \(targetTitle)..."
+                let backupFileName = try await storeVoicePayloadByBankImage(
+                    voice,
+                    systemChannel: systemChannel,
+                    options: VoiceDocumentStoreOptions(
+                        bank: selection.targetBank - 1,
+                        voiceNumber: selection.targetVoiceNumber
+                    ),
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    destinationName: destinationName,
+                    statusPrefix: "Copying \(sourceTitle) to \(targetTitle)"
+                )
+                statusMessage = "FB-01 copied \(sourceTitle) to \(targetTitle) on \(destinationName). Backup saved to \(backupFileName)."
+                errorMessage = nil
+                showCopyComplete(
+                    itemKind: "Voice",
+                    sourceTitle: sourceTitle,
+                    targetTitle: targetTitle,
+                    destinationName: destinationName,
+                    backupFileName: backupFileName
+                )
+            } catch {
+                statusMessage = nil
+                errorMessage = "Copy voice to slot failed: \(error). Backup may not have completed, Protect may still be ON, or the FB-01 may not have accepted the bank write."
+            }
+
+            isFetchingFromDevice = false
         }
-        copyVoiceToLocalSlot(sourceID: context.sourceID, number: context.number, voice: context.voice, voices: context.voices)
+    }
+
+    func copyConfigurationSlotOnDevice() {
+        guard !isBusy else { return }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        let destinationName = selectedDestinationName
+
+        isFetchingConfigurations = true
+        statusMessage = "Reading configuration names from FB-01..."
+        errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Reading Configuration Names",
+            message: "Reading configurations 1-16 from the FB-01 so the Copy Configuration to Slot dialog can show current writable slot names."
+        )
+        progressPanel.show()
+
+        Task {
+            let nameLookup = await Task.detached(priority: .userInitiated) {
+                Self.fetchConfigurationNamesForDeviceCopy(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                )
+            }.value
+            progressPanel.dismiss()
+
+            guard let selection = Self.chooseDeviceConfigurationCopySelection(nameLookup: nameLookup) else {
+                statusMessage = nil
+                isFetchingConfigurations = false
+                return
+            }
+
+            let sourceTitle = nameLookup.menuTitle(slot: selection.sourceSlot + 1)
+            let targetTitle = "Configuration \(selection.targetSlot + 1)"
+            statusMessage = "Fetching \(sourceTitle) from FB-01..."
+
+            do {
+                let configuration = try await Task.detached(priority: .userInitiated) {
+                    try Self.fetchDeviceConfiguration(
+                        slot: selection.sourceSlot,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel
+                    )
+                }.value
+
+                statusMessage = "Copying \(sourceTitle) to \(targetTitle)..."
+                let backupFileName = try await storeConfigurationPayloadForDeviceCopy(
+                    configuration,
+                    systemChannel: systemChannel,
+                    slot: selection.targetSlot,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    destinationName: destinationName,
+                    statusPrefix: "Copying \(sourceTitle) to \(targetTitle)"
+                )
+                statusMessage = "FB-01 copied \(sourceTitle) to \(targetTitle) on \(destinationName). Backup saved to \(backupFileName)."
+                errorMessage = nil
+                showCopyComplete(
+                    itemKind: "Configuration",
+                    sourceTitle: sourceTitle,
+                    targetTitle: targetTitle,
+                    destinationName: destinationName,
+                    backupFileName: backupFileName
+                )
+            } catch {
+                statusMessage = nil
+                errorMessage = "Copy configuration to slot failed: \(error). Backup may not have completed, Protect may still be ON, or the FB-01 may not have accepted the store."
+            }
+
+            isFetchingConfigurations = false
+        }
+    }
+
+    private func showCopyComplete(
+        itemKind: String,
+        sourceTitle: String,
+        targetTitle: String,
+        destinationName: String,
+        backupFileName: String
+    ) {
+        let alert = NSAlert()
+        alert.messageText = "Copy Complete"
+        alert.informativeText = "\(itemKind) copy verified.\n\n\(sourceTitle) was copied to \(targetTitle) on \(destinationName).\n\nBackup saved to \(backupFileName)."
+        alert.addButton(withTitle: "OK")
+        alert.alertStyle = .informational
+        alert.runModal()
     }
 
     func swapSelectedVoiceWithLocalSlot() {
@@ -3921,6 +4278,68 @@ final class DocumentModel: ObservableObject {
         return try [protectOffCommand.bytes, currentMessage.bytes, storeCommand.bytes]
     }
 
+    private func storeConfigurationPayloadForDeviceCopy(
+        _ payload: FB01ConfigurationData,
+        systemChannel: Int,
+        slot: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        destinationName: String,
+        statusPrefix: String
+    ) async throws -> String {
+        let slotNumber = slot + 1
+        let backupDirectory = try ensureDefaultBackupDirectory()
+        let backupURL = backupDirectory.appendingPathComponent(
+            backupFileName(prefix: "configuration-\(slotNumber)-before-copy")
+        )
+
+        statusMessage = "\(statusPrefix): backing up Configuration \(slotNumber) on \(destinationName)..."
+        let originalBytes = try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.request(
+                .configuration(slotNumber),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 8
+            )
+        }.value
+        let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
+        try await Task.detached(priority: .userInitiated) {
+            try originalArtifact.writeSysEx(to: backupURL)
+        }.value
+
+        statusMessage = "\(statusPrefix): turning FB-01 Protect OFF..."
+        let storeMessages = try storeConfigurationMessages(
+            payload: payload,
+            systemChannel: systemChannel,
+            slot: slot
+        )
+        let response = try await Task.detached(priority: .userInitiated) { () -> [[UInt8]] in
+            try FB01MIDI.sendSysEx([storeMessages[0]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+            try await Task.sleep(for: .milliseconds(300))
+            try FB01MIDI.sendSysEx([storeMessages[1]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+            try await Task.sleep(for: .milliseconds(1000))
+            try FB01MIDI.sendSysEx([storeMessages[2]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+            try await Task.sleep(for: .milliseconds(800))
+            return [
+                try FB01MIDI.request(
+                    .configuration(slotNumber),
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    timeout: 8
+                ),
+            ]
+        }.value
+
+        guard let confirmedConfiguration = try storedConfigurationPayload(from: response, slot: slot),
+              confirmedConfiguration.bytes == payload.bytes else {
+            throw FB01AppError.message("Configuration \(slotNumber) did not verify after writing.")
+        }
+
+        return backupURL.lastPathComponent
+    }
+
     func sendVoiceToInstrument(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, systemChannel: Int) {
         guard let source = sources.first(where: { $0.id == sourceID }) else {
             return
@@ -4062,6 +4481,161 @@ final class DocumentModel: ObservableObject {
         )
     }
 
+    private static func chooseDeviceConfigurationCopySelection(nameLookup: ConfigurationFetchNameLookup) -> DeviceConfigurationCopySelection? {
+        let alert = NSAlert()
+        alert.messageText = "Copy Configuration to Slot"
+        alert.informativeText = "Fetch one configuration currently on the FB-01, then store it unchanged into a writable configuration slot. The destination slot will be overwritten."
+        alert.addButton(withTitle: "Copy and Overwrite")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        alert.accessoryView = DeviceConfigurationCopyAccessory(nameLookup: nameLookup)
+
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let accessory = alert.accessoryView as? DeviceConfigurationCopyAccessory else {
+            return nil
+        }
+        return accessory.selection
+    }
+
+    nonisolated private static func fetchDeviceConfiguration(
+        slot: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) throws -> FB01ConfigurationData {
+        let bytes = try FB01MIDI.request(
+            .configuration(slot + 1),
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            timeout: 8
+        )
+        guard let configuration = try storedConfigurationPayload(from: bytes, slot: slot) else {
+            throw FB01AppError.message("Response did not contain Configuration \(slot + 1)")
+        }
+        return configuration
+    }
+
+    nonisolated private static func fetchConfigurationNamesForDeviceCopy(
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) -> ConfigurationFetchNameLookup {
+        var names: [Int: String] = [:]
+        for slot in 1...16 {
+            guard let bytes = try? FB01MIDI.request(
+                .configuration(slot),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 1.25
+            ),
+                  let name = try? configurationName(fromDump: bytes),
+                  !name.isEmpty else {
+                continue
+            }
+            names[slot] = name
+        }
+        return ConfigurationFetchNameLookup(storedNames: names)
+    }
+
+    nonisolated private static func configurationName(fromDump bytes: [UInt8]) throws -> String? {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            if case let .configurationDump(_, _, packet) = message {
+                let configuration = try FB01ConfigurationData(bytes: packet.payload)
+                return configuration.name.isEmpty ? "Untitled" : configuration.name
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func storedConfigurationPayload(from bytes: [UInt8], slot: Int) throws -> FB01ConfigurationData? {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            if case let .configurationDump(_, number, packet) = message, number == slot {
+                return try FB01ConfigurationData(bytes: packet.payload)
+            }
+        }
+        return nil
+    }
+
+    private static func chooseDeviceVoiceCopySelection(nameLookup: VoiceDocumentFetchNameLookup) -> DeviceVoiceCopySelection? {
+        let alert = NSAlert()
+        alert.messageText = "Copy Voice to Slot"
+        alert.informativeText = "Fetch one voice currently on the FB-01, then store it unchanged into a writable Bank 1 or Bank 2 slot. The destination slot will be overwritten."
+        alert.addButton(withTitle: "Copy and Overwrite")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        alert.accessoryView = DeviceVoiceCopyAccessory(nameLookup: nameLookup)
+
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let accessory = alert.accessoryView as? DeviceVoiceCopyAccessory else {
+            return nil
+        }
+        return accessory.selection
+    }
+
+    nonisolated private static func fetchDeviceVoice(
+        bank: Int,
+        voiceNumber: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) throws -> FB01VoiceData {
+        let bytes = try FB01MIDI.request(
+            .voiceBank(bank),
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            timeout: 15
+        )
+        let bankData = try voiceBankData(from: bytes, expectedBankNumber: bank)
+        guard bankData.voices.indices.contains(voiceNumber) else {
+            throw FB01SysExError.valueOutOfRange(
+                name: "voiceNumber",
+                value: voiceNumber,
+                range: 0...(FB01VoiceBankData.voiceCount - 1)
+            )
+        }
+        return bankData.voices[voiceNumber].voice
+    }
+
+    nonisolated private static func fetchRAMVoiceNamesForDeviceCopy(
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) -> VoiceDocumentFetchNameLookup {
+        var namesByBank: [Int: [String]] = [:]
+        for bank in 1...2 {
+            guard let bytes = try? FB01MIDI.request(
+                .voiceBank(bank),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 5
+            ),
+                  let names = try? voiceNames(fromVoiceBankDump: bytes, expectedBank: bank) else {
+                continue
+            }
+            namesByBank[bank] = names
+        }
+        return VoiceDocumentFetchNameLookup(ramBankNames: namesByBank)
+    }
+
+    nonisolated private static func voiceNames(fromVoiceBankDump bytes: [UInt8], expectedBank: Int) throws -> [String]? {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            if case let .voiceBankDumpData(_, fetchedBank, _, data, _) = message, fetchedBank == expectedBank - 1 {
+                let bankData = try FB01VoiceBankData(bank: fetchedBank, data: data)
+                return bankData.voices.map { summary in
+                    summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
+                }
+            }
+        }
+        return nil
+    }
+
     private func storeVoicePayloadByBankImage(_ voice: FB01VoiceData, systemChannel: Int, options: VoiceDocumentStoreOptions) {
         guard !isBusy else { return }
 
@@ -4076,56 +4650,16 @@ final class DocumentModel: ObservableObject {
 
         Task {
             do {
-                let backupDirectory = try ensureDefaultBackupDirectory()
-                let backupURL = backupDirectory.appendingPathComponent(
-                    backupFileName(prefix: "bank-\(bankNumber)-before-voice-\(voiceNumber)")
+                let backupFileName = try await storeVoicePayloadByBankImage(
+                    voice,
+                    systemChannel: systemChannel,
+                    options: options,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    destinationName: destinationName,
+                    statusPrefix: "Writing Bank \(bankNumber) Voice \(voiceNumber)"
                 )
-                let originalBytes = try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.request(
-                        .voiceBank(bankNumber),
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: systemChannel,
-                        timeout: 15
-                    )
-                }.value
-                let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
-                try await Task.detached(priority: .userInitiated) {
-                    try originalArtifact.writeSysEx(to: backupURL)
-                }.value
-
-                var readback = try voiceBankData(from: originalBytes, expectedBankNumber: bankNumber)
-                let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
-                try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-                }.value
-                try await Task.sleep(for: .milliseconds(300))
-
-                var pass = 0
-                while readback.voices[options.voiceNumber].voice.bytes != voice.bytes {
-                    pass += 1
-                    guard pass <= 60 else {
-                        throw FB01AppError.message("Bank \(bankNumber) Voice \(voiceNumber) did not verify after 60 write passes.")
-                    }
-
-                    statusMessage = "Writing Bank \(bankNumber) Voice \(voiceNumber), pass \(pass); verifying after send..."
-                    let editedBank = try readback.replacingVoices([voiceNumber: voice])
-                    let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
-                    let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
-                        try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
-                        try await Task.sleep(for: .milliseconds(1500))
-                        return try FB01MIDI.request(
-                            .voiceBank(bankNumber),
-                            sourceIndex: sourceIndex,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel,
-                            timeout: 15
-                        )
-                    }.value
-                    readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: bankNumber)
-                }
-
-                statusMessage = "FB-01 verified Bank \(bankNumber) Voice \(voiceNumber) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
+                statusMessage = "FB-01 verified Bank \(bankNumber) Voice \(voiceNumber) on \(destinationName). Backup saved to \(backupFileName)."
                 errorMessage = nil
             } catch {
                 statusMessage = nil
@@ -4134,6 +4668,71 @@ final class DocumentModel: ObservableObject {
 
             isFetchingFromDevice = false
         }
+    }
+
+    private func storeVoicePayloadByBankImage(
+        _ voice: FB01VoiceData,
+        systemChannel: Int,
+        options: VoiceDocumentStoreOptions,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        destinationName: String,
+        statusPrefix: String
+    ) async throws -> String {
+        let bankNumber = options.bank + 1
+        let voiceNumber = options.voiceNumber + 1
+        let backupDirectory = try ensureDefaultBackupDirectory()
+        let backupURL = backupDirectory.appendingPathComponent(
+            backupFileName(prefix: "bank-\(bankNumber)-before-voice-\(voiceNumber)")
+        )
+        statusMessage = "\(statusPrefix): backing up Bank \(bankNumber) on \(destinationName)..."
+        let originalBytes = try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.request(
+                .voiceBank(bankNumber),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 15
+            )
+        }.value
+        let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
+        try await Task.detached(priority: .userInitiated) {
+            try originalArtifact.writeSysEx(to: backupURL)
+        }.value
+
+        var readback = try voiceBankData(from: originalBytes, expectedBankNumber: bankNumber)
+        statusMessage = "\(statusPrefix): turning FB-01 Protect OFF..."
+        let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
+        try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+        }.value
+        try await Task.sleep(for: .milliseconds(300))
+
+        var pass = 0
+        while readback.voices[options.voiceNumber].voice.bytes != voice.bytes {
+            pass += 1
+            guard pass <= 60 else {
+                throw FB01AppError.message("Bank \(bankNumber) Voice \(voiceNumber) did not verify after 60 write passes.")
+            }
+
+            statusMessage = "\(statusPrefix): write pass \(pass), verifying after send..."
+            let editedBank = try readback.replacingVoices([voiceNumber: voice])
+            let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
+            let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
+                try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+                try await Task.sleep(for: .milliseconds(1500))
+                return try FB01MIDI.request(
+                    .voiceBank(bankNumber),
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    timeout: 15
+                )
+            }.value
+            readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: bankNumber)
+        }
+
+        return backupURL.lastPathComponent
     }
 
     func playVoiceTestNotes(voice: FB01VoiceData, systemChannel: Int) {
@@ -6767,7 +7366,6 @@ struct VoiceDocumentWindow: View {
                 SummaryPanel(rows: [
                     KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
                     KeyValueRow("Feedback", "\(voice.feedbackLevel)"),
-                    KeyValueRow("Output", outputText),
                     KeyValueRow("User Code", "\(voice.userCode)"),
                 ])
 
@@ -6819,15 +7417,7 @@ struct VoiceDocumentWindow: View {
                     rightOutputEnabled: Binding(
                         get: { voice.rightOutputEnabled },
                         set: { newValue in document.updateVoice { voice in try voice.settingRightOutputEnabled(newValue) } }
-                    ),
-                    operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
-                        Binding(
-                            get: { voice.operatorEnabled[index] },
-                            set: { enabled in
-                                document.updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
-                            }
-                        )
-                    }
+                    )
                 )
 
                 AlgorithmSelectorView(selection: Binding(
@@ -6837,6 +7427,14 @@ struct VoiceDocumentWindow: View {
 
                 OperatorEditor(
                     operators: voice.operators,
+                    operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
+                        Binding(
+                            get: { voice.operatorEnabled[index] },
+                            set: { enabled in
+                                document.updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
+                            }
+                        )
+                    },
                     selectedOperatorIndex: Binding(
                         get: { document.selectedOperatorIndex },
                         set: { document.selectedOperatorIndex = $0 }
@@ -6913,10 +7511,6 @@ struct VoiceDocumentWindow: View {
             isEdited: document.isEdited,
             isBusy: document.isBusy
         ))
-    }
-
-    private var outputText: String {
-        "Left \(voice.leftOutputEnabled ? "On" : "Off"), Right \(voice.rightOutputEnabled ? "On" : "Off")"
     }
 
     private func setName(_ value: String) {
@@ -7376,15 +7970,8 @@ struct ConfigurationEditorControls: View {
 
                     VStack(alignment: .leading, spacing: 6) {
                         label("Waveform")
-                        Picker("", selection: $lfoWaveform) {
-                            Text("Saw").tag(0)
-                            Text("Square").tag(1)
-                            Text("Triangle").tag(2)
-                            Text("Random").tag(3)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 260)
+                        WaveformPicker(selection: $lfoWaveform)
+                            .frame(width: 340)
                     }
                 }
                 .padding(.top, 4)
@@ -8016,7 +8603,6 @@ struct VoiceDetailView: View {
 
             SummaryPanel(rows: [
                 KeyValueRow("Feedback", "\(editableVoice.feedbackLevel)"),
-                KeyValueRow("Output", outputText),
                 KeyValueRow("User Code", "\(editableVoice.userCode)"),
             ])
 
@@ -8068,13 +8654,7 @@ struct VoiceDetailView: View {
                 rightOutputEnabled: Binding(
                     get: { editableVoice.rightOutputEnabled },
                     set: { setRightOutputEnabled($0) }
-                ),
-                operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
-                    Binding(
-                        get: { editableVoice.operatorEnabled[index] },
-                        set: { setOperatorEnabled(index: index, enabled: $0) }
-                    )
-                }
+                )
             )
 
             AlgorithmSelectorView(selection: Binding(
@@ -8084,6 +8664,12 @@ struct VoiceDetailView: View {
 
             OperatorEditor(
                 operators: editableVoice.operators,
+                operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
+                    Binding(
+                        get: { editableVoice.operatorEnabled[index] },
+                        set: { setOperatorEnabled(index: index, enabled: $0) }
+                    )
+                },
                 selectedOperatorIndex: $selectedOperatorIndex,
                 updateOperator: updateOperator
             )
@@ -8108,10 +8694,6 @@ struct VoiceDetailView: View {
         .onChange(of: editableVoice.name) { _, newName in
             nameText = newName
         }
-    }
-
-    private var outputText: String {
-        "Left \(editableVoice.leftOutputEnabled ? "On" : "Off"), Right \(editableVoice.rightOutputEnabled ? "On" : "Off")"
     }
 
     private func resetVoice() {
@@ -8251,7 +8833,6 @@ struct VoiceEditorControls: View {
     @Binding var transpose: Int
     @Binding var leftOutputEnabled: Bool
     @Binding var rightOutputEnabled: Bool
-    var operatorEnabled: [Binding<Bool>]
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -8298,15 +8879,8 @@ struct VoiceEditorControls: View {
 
                     GridRow {
                         label("Waveform")
-                        Picker("", selection: $lfoWaveform) {
-                            Text("Saw").tag(0)
-                            Text("Square").tag(1)
-                            Text("Triangle").tag(2)
-                            Text("Random").tag(3)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 260)
+                        WaveformPicker(selection: $lfoWaveform)
+                            .frame(width: 340)
                     }
 
                     GridRow {
@@ -8352,25 +8926,16 @@ struct VoiceEditorControls: View {
             GroupBox {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                     GridRow {
-                        label("Output")
+                        label("Stereo")
                         HStack(spacing: 12) {
                             Toggle("Left", isOn: $leftOutputEnabled)
                             Toggle("Right", isOn: $rightOutputEnabled)
                         }
                     }
-
-                    GridRow {
-                        label("Operators")
-                        HStack(spacing: 12) {
-                            ForEach(Array(operatorEnabled.enumerated()), id: \.offset) { index, binding in
-                                Toggle("\(index + 1)", isOn: binding)
-                            }
-                        }
-                    }
                 }
                 .padding(.top, 4)
             } label: {
-                sectionTitle("Output and Operators")
+                sectionTitle("Stereo Output")
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
@@ -8384,6 +8949,106 @@ struct VoiceEditorControls: View {
 
     private func sectionTitle(_ text: String) -> some View {
         SectionTitle(text)
+    }
+}
+
+struct WaveformPicker: View {
+    @Binding var selection: Int
+
+    var body: some View {
+        Picker("", selection: $selection) {
+            waveformOption("Sawtooth", waveform: .sawtooth).tag(0)
+            waveformOption("Square", waveform: .square).tag(1)
+            waveformOption("Triangle", waveform: .triangle).tag(2)
+            waveformOption("Random", waveform: .random).tag(3)
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+    }
+
+    private func waveformOption(_ title: String, waveform: WaveformShape.Kind) -> some View {
+        VStack(spacing: 3) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+            WaveformShape(kind: waveform)
+                .stroke(Color.primary, style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+                .frame(width: 44, height: 16)
+                .padding(.bottom, 1)
+        }
+        .frame(minWidth: 72)
+    }
+}
+
+struct WaveformShape: Shape {
+    enum Kind {
+        case sawtooth
+        case square
+        case triangle
+        case random
+    }
+
+    var kind: Kind
+
+    func path(in rect: CGRect) -> Path {
+        let inset = rect.insetBy(dx: 3, dy: 3)
+        let top = inset.minY
+        let mid = inset.midY
+        let bottom = inset.maxY
+        let left = inset.minX
+        let right = inset.maxX
+        let quarter = inset.width / 4
+        let third = inset.width / 3
+        var path = Path()
+
+        switch kind {
+        case .sawtooth:
+            path.move(to: CGPoint(x: left, y: bottom))
+            path.addLine(to: CGPoint(x: left + third, y: top))
+            path.addLine(to: CGPoint(x: left + third, y: bottom))
+            path.addLine(to: CGPoint(x: left + 2 * third, y: top))
+            path.addLine(to: CGPoint(x: left + 2 * third, y: bottom))
+            path.addLine(to: CGPoint(x: right, y: top))
+        case .square:
+            path.move(to: CGPoint(x: left, y: bottom))
+            path.addLine(to: CGPoint(x: left, y: top))
+            path.addLine(to: CGPoint(x: left + quarter, y: top))
+            path.addLine(to: CGPoint(x: left + quarter, y: bottom))
+            path.addLine(to: CGPoint(x: left + 2 * quarter, y: bottom))
+            path.addLine(to: CGPoint(x: left + 2 * quarter, y: top))
+            path.addLine(to: CGPoint(x: left + 3 * quarter, y: top))
+            path.addLine(to: CGPoint(x: left + 3 * quarter, y: bottom))
+            path.addLine(to: CGPoint(x: right, y: bottom))
+        case .triangle:
+            path.move(to: CGPoint(x: left, y: bottom))
+            path.addLine(to: CGPoint(x: left + quarter, y: top))
+            path.addLine(to: CGPoint(x: left + 2 * quarter, y: bottom))
+            path.addLine(to: CGPoint(x: left + 3 * quarter, y: top))
+            path.addLine(to: CGPoint(x: right, y: bottom))
+        case .random:
+            path.move(to: CGPoint(x: left, y: mid))
+            path.addCurve(
+                to: CGPoint(x: left + quarter, y: top + 1),
+                control1: CGPoint(x: left + 5, y: bottom),
+                control2: CGPoint(x: left + quarter - 8, y: top)
+            )
+            path.addCurve(
+                to: CGPoint(x: left + 2 * quarter, y: bottom - 1),
+                control1: CGPoint(x: left + quarter + 8, y: top + 2),
+                control2: CGPoint(x: left + 2 * quarter - 8, y: bottom)
+            )
+            path.addCurve(
+                to: CGPoint(x: left + 3 * quarter, y: mid - 2),
+                control1: CGPoint(x: left + 2 * quarter + 8, y: bottom),
+                control2: CGPoint(x: left + 3 * quarter - 8, y: top + 2)
+            )
+            path.addCurve(
+                to: CGPoint(x: right, y: mid + 2),
+                control1: CGPoint(x: left + 3 * quarter + 6, y: bottom - 2),
+                control2: CGPoint(x: right - 7, y: top + 1)
+            )
+        }
+
+        return path
     }
 }
 
@@ -8682,6 +9347,7 @@ struct AlgorithmDiagramView: View {
 
 struct OperatorEditor: View {
     var operators: [FB01VoiceOperatorData]
+    var operatorEnabled: [Binding<Bool>]
     @Binding var selectedOperatorIndex: Int
     var updateOperator: (FB01VoiceOperatorData) -> Void
 
@@ -8710,6 +9376,7 @@ struct OperatorEditor: View {
                     if let selectedOperator {
                         OperatorInspector(
                             operatorData: selectedOperator,
+                            operatorEnabled: operatorEnabledBinding(for: selectedOperator.index),
                             updateOperator: updateOperator
                         )
                     }
@@ -8729,6 +9396,13 @@ struct OperatorEditor: View {
         operators.sorted {
             FB01VoiceData.operatorNumber(forDataIndex: $0.index) < FB01VoiceData.operatorNumber(forDataIndex: $1.index)
         }
+    }
+
+    private func operatorEnabledBinding(for index: Int) -> Binding<Bool> {
+        guard operatorEnabled.indices.contains(index) else {
+            return .constant(true)
+        }
+        return operatorEnabled[index]
     }
 }
 
@@ -8790,6 +9464,7 @@ struct OperatorSelectorButton: View {
 
 struct OperatorInspector: View {
     var operatorData: FB01VoiceOperatorData
+    @Binding var operatorEnabled: Bool
     var updateOperator: (FB01VoiceOperatorData) -> Void
 
     var body: some View {
@@ -8799,15 +9474,21 @@ struct OperatorInspector: View {
         ], alignment: .leading, spacing: 12) {
             OperatorControlGroup(title: "Level") {
                 operatorRolePicker
-                operatorLevelControl("Volume", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
-                operatorStepper("Velocity to TL", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
-                operatorStepper("TL Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
+                operatorLevelControl("Total Level", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
+                operatorStepper("Velocity to Total Level", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
+                operatorStepper("Total Level Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
             }
 
-            OperatorControlGroup(title: "Tuning") {
-                operatorStepper("Multiple", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
-                operatorStepper("Detune 1", value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
-                operatorStepper("Detune 2", value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Disable Operator", isOn: disabledBinding)
+                    .font(.body.weight(.semibold))
+                    .toggleStyle(.checkbox)
+
+                OperatorControlGroup(title: "Tuning") {
+                    operatorStepper("Multiple", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
+                    operatorStepper("Detune 1", value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
+                    operatorStepper("Detune 2", value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
+                }
             }
 
             OperatorControlGroup(title: "Envelope") {
@@ -8831,6 +9512,13 @@ struct OperatorInspector: View {
                 operatorStepper("Rate Scaling", value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
             }
         }
+    }
+
+    private var disabledBinding: Binding<Bool> {
+        Binding(
+            get: { !operatorEnabled },
+            set: { operatorEnabled = !$0 }
+        )
     }
 
     private var operatorRolePicker: some View {
@@ -9298,7 +9986,7 @@ private extension FB01KeyCodeReceiveMode {
 private extension Int {
     var lfoWaveformDisplayName: String {
         switch self {
-        case 0: "Saw"
+        case 0: "Sawtooth"
         case 1: "Square"
         case 2: "Triangle"
         case 3: "Random"
