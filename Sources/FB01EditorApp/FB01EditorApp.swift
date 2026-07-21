@@ -3753,6 +3753,11 @@ final class DocumentModel: ObservableObject {
             )
             let targetTitle = "Bank \(selection.targetBank) Voice \(selection.targetVoiceNumber + 1)"
             statusMessage = "Fetching \(sourceTitle) from FB-01..."
+            let copyProgressPanel = EditorProgressPanel(
+                title: "Copying Voice",
+                message: "The voice is being copied. Please wait.\nFetching \(sourceTitle) from the FB-01..."
+            )
+            copyProgressPanel.show()
 
             do {
                 let voice = try await Task.detached(priority: .userInitiated) {
@@ -3766,6 +3771,7 @@ final class DocumentModel: ObservableObject {
                 }.value
 
                 statusMessage = "Copying \(sourceTitle) to \(targetTitle)..."
+                copyProgressPanel.update(message: "The voice is being copied. Please wait.\nWriting \(targetTitle) and verifying by readback...")
                 let backupFileName = try await storeVoicePayloadByBankImage(
                     voice,
                     systemChannel: systemChannel,
@@ -3780,6 +3786,7 @@ final class DocumentModel: ObservableObject {
                 )
                 statusMessage = "FB-01 copied \(sourceTitle) to \(targetTitle) on \(destinationName). Backup saved to \(backupFileName)."
                 errorMessage = nil
+                copyProgressPanel.dismiss()
                 showCopyComplete(
                     itemKind: "Voice",
                     sourceTitle: sourceTitle,
@@ -3788,6 +3795,7 @@ final class DocumentModel: ObservableObject {
                     backupFileName: backupFileName
                 )
             } catch {
+                copyProgressPanel.dismiss()
                 statusMessage = nil
                 errorMessage = "Copy voice to slot failed: \(error). Backup may not have completed, Protect may still be ON, or the FB-01 may not have accepted the bank write."
             }
@@ -3832,6 +3840,11 @@ final class DocumentModel: ObservableObject {
             let sourceTitle = nameLookup.menuTitle(slot: selection.sourceSlot + 1)
             let targetTitle = "Configuration \(selection.targetSlot + 1)"
             statusMessage = "Fetching \(sourceTitle) from FB-01..."
+            let copyProgressPanel = EditorProgressPanel(
+                title: "Copying Configuration",
+                message: "The configuration is being copied. Please wait.\nFetching \(sourceTitle) from the FB-01..."
+            )
+            copyProgressPanel.show()
 
             do {
                 let configuration = try await Task.detached(priority: .userInitiated) {
@@ -3844,6 +3857,7 @@ final class DocumentModel: ObservableObject {
                 }.value
 
                 statusMessage = "Copying \(sourceTitle) to \(targetTitle)..."
+                copyProgressPanel.update(message: "The configuration is being copied. Please wait.\nWriting \(targetTitle) and verifying by readback...")
                 let backupFileName = try await storeConfigurationPayloadForDeviceCopy(
                     configuration,
                     systemChannel: systemChannel,
@@ -3855,6 +3869,7 @@ final class DocumentModel: ObservableObject {
                 )
                 statusMessage = "FB-01 copied \(sourceTitle) to \(targetTitle) on \(destinationName). Backup saved to \(backupFileName)."
                 errorMessage = nil
+                copyProgressPanel.dismiss()
                 showCopyComplete(
                     itemKind: "Configuration",
                     sourceTitle: sourceTitle,
@@ -3863,6 +3878,7 @@ final class DocumentModel: ObservableObject {
                     backupFileName: backupFileName
                 )
             } catch {
+                copyProgressPanel.dismiss()
                 statusMessage = nil
                 errorMessage = "Copy configuration to slot failed: \(error). Backup may not have completed, Protect may still be ON, or the FB-01 may not have accepted the store."
             }
@@ -9350,16 +9366,16 @@ struct AlgorithmDiagramView: View {
             ]
         case 3:
             return [
-                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: false, x: 0.26, y: 0.23),
-                Node(id: "3", operatorNumber: 3, isCarrier: false, hasFeedback: false, x: 0.26, y: 0.43),
-                Node(id: "2", operatorNumber: 2, isCarrier: false, hasFeedback: true, x: 0.74, y: 0.43),
+                Node(id: "3", operatorNumber: 3, isCarrier: false, hasFeedback: false, x: 0.26, y: 0.23),
+                Node(id: "2", operatorNumber: 2, isCarrier: false, hasFeedback: false, x: 0.26, y: 0.43),
+                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: true, x: 0.74, y: 0.43),
                 Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.5, y: 0.74),
             ]
         case 4:
             return [
-                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: true, x: 0.26, y: 0.23),
-                Node(id: "3", operatorNumber: 3, isCarrier: false, hasFeedback: false, x: 0.26, y: 0.43),
-                Node(id: "2", operatorNumber: 2, isCarrier: false, hasFeedback: false, x: 0.74, y: 0.43),
+                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: true, x: 0.74, y: 0.23),
+                Node(id: "2", operatorNumber: 2, isCarrier: false, hasFeedback: false, x: 0.26, y: 0.43),
+                Node(id: "3", operatorNumber: 3, isCarrier: false, hasFeedback: false, x: 0.74, y: 0.43),
                 Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.5, y: 0.74),
             ]
         case 5:
@@ -9410,16 +9426,16 @@ struct AlgorithmDiagramView: View {
             ]
         case 3:
             return [
-                Edge(id: "4-3", from: CGPoint(x: 0.26, y: 0.31), to: CGPoint(x: 0.26, y: 0.37)),
-                Edge(id: "3-sum", from: CGPoint(x: 0.26, y: 0.51), to: CGPoint(x: 0.43, y: 0.58)),
-                Edge(id: "2-sum", from: CGPoint(x: 0.74, y: 0.51), to: CGPoint(x: 0.57, y: 0.58)),
+                Edge(id: "3-2", from: CGPoint(x: 0.26, y: 0.31), to: CGPoint(x: 0.26, y: 0.37)),
+                Edge(id: "2-sum", from: CGPoint(x: 0.26, y: 0.51), to: CGPoint(x: 0.43, y: 0.58)),
+                Edge(id: "4-sum", from: CGPoint(x: 0.74, y: 0.51), to: CGPoint(x: 0.57, y: 0.58)),
                 Edge(id: "sum-1", from: CGPoint(x: 0.5, y: 0.64), to: CGPoint(x: 0.5, y: 0.68)),
             ]
         case 4:
             return [
-                Edge(id: "4-3", from: CGPoint(x: 0.26, y: 0.31), to: CGPoint(x: 0.26, y: 0.37)),
-                Edge(id: "3-sum", from: CGPoint(x: 0.26, y: 0.51), to: CGPoint(x: 0.43, y: 0.58)),
-                Edge(id: "2-sum", from: CGPoint(x: 0.74, y: 0.51), to: CGPoint(x: 0.57, y: 0.58)),
+                Edge(id: "4-3", from: CGPoint(x: 0.74, y: 0.31), to: CGPoint(x: 0.74, y: 0.37)),
+                Edge(id: "2-sum", from: CGPoint(x: 0.26, y: 0.51), to: CGPoint(x: 0.43, y: 0.58)),
+                Edge(id: "3-sum", from: CGPoint(x: 0.74, y: 0.51), to: CGPoint(x: 0.57, y: 0.58)),
                 Edge(id: "sum-1", from: CGPoint(x: 0.5, y: 0.64), to: CGPoint(x: 0.5, y: 0.68)),
             ]
         case 5:
