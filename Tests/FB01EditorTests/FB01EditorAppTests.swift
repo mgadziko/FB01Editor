@@ -88,6 +88,62 @@ import Testing
     #expect(configuration.title == "CHANGED (Working)")
 }
 
+@MainActor
+@Test func voiceDocumentMapsOxygenC1ThroughC6ToCurrentOperatorEnvelope() throws {
+    let voiceData = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
+    let voice = VoiceDocumentModel(voice: voiceData, systemChannel: 0)
+    let device = DocumentModel()
+    voice.selectedOperatorIndex = 2
+
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x5B, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x5D, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x1A, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x1E, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x1B, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x1D, 127], device: device))
+
+    let operatorData = try #require(voice.voice.operators.first { $0.index == 2 })
+    #expect(operatorData.attackRate == 31)
+    #expect(operatorData.velocitySensitivityForAttackRate == 7)
+    #expect(operatorData.decay1Rate == 15)
+    #expect(operatorData.decay2Rate == 31)
+    #expect(operatorData.sustainLevel == 15)
+    #expect(operatorData.releaseRate == 15)
+
+    let unaffectedOperator = try #require(voice.voice.operators.first { $0.index == 1 })
+    #expect(unaffectedOperator.attackRate == 0)
+    #expect(unaffectedOperator.releaseRate == 0)
+}
+
+@MainActor
+@Test func voiceAndConfigurationDocumentReplacementResetsSavedBaseline() throws {
+    var originalVoice = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
+    originalVoice = try originalVoice.settingName("ORIG")
+    var replacementVoice = try originalVoice.settingName("NEW")
+    replacementVoice = try replacementVoice.replacingOperator(replacementVoice.operators[0].settingAttackRate(12))
+
+    let voice = VoiceDocumentModel(voice: originalVoice, systemChannel: 0)
+    voice.voice = replacementVoice
+    voice.savedVoice = replacementVoice
+    #expect(!voice.isEdited)
+
+    voice.updateVoice { try $0.settingName("EDIT") }
+    #expect(voice.isEdited)
+
+    var originalConfiguration = try FB01ConfigurationData(bytes: Array(repeating: 0x00, count: FB01ConfigurationData.byteCount))
+    originalConfiguration = try originalConfiguration.settingName("ORIG")
+    var replacementConfiguration = try originalConfiguration.settingName("NEW")
+    replacementConfiguration = try replacementConfiguration.settingLFOSpeed(99)
+
+    let configuration = ConfigurationDocumentModel(configuration: originalConfiguration, systemChannel: 0)
+    configuration.configuration = replacementConfiguration
+    configuration.savedConfiguration = replacementConfiguration
+    #expect(!configuration.isEdited)
+
+    configuration.updateConfiguration { try $0.settingName("EDIT") }
+    #expect(configuration.isEdited)
+}
+
 @Test func factoryVoiceNameLookupUsesROMBankNames() {
     #expect(FB01FactoryVoiceNames.namesByBank.keys.sorted() == [3, 4, 5, 6, 7])
     #expect(FB01FactoryVoiceNames.namesByBank.values.allSatisfy { $0.count == FB01VoiceBankData.voiceCount })

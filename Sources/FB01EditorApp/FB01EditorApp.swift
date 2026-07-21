@@ -908,6 +908,70 @@ private final class DoneDialogController: NSObject {
     }
 }
 
+private enum ExternalVoiceOperatorControl: Int {
+    case attackRate = 91
+    case velocityToAttack = 93
+    case decay1Rate = 26
+    case decay2Rate = 30
+    case sustainLevel = 27
+    case releaseRate = 29
+
+    init?(controller: Int) {
+        self.init(rawValue: controller)
+    }
+
+    var displayName: String {
+        switch self {
+        case .attackRate:
+            return "Attack Rate"
+        case .velocityToAttack:
+            return "Velocity to Attack"
+        case .decay1Rate:
+            return "Decay 1 Rate"
+        case .decay2Rate:
+            return "Decay 2 Rate"
+        case .sustainLevel:
+            return "Sustain Level"
+        case .releaseRate:
+            return "Release Rate"
+        }
+    }
+
+    var controlLabel: String {
+        switch self {
+        case .attackRate:
+            return "C1"
+        case .velocityToAttack:
+            return "C2"
+        case .decay1Rate:
+            return "C3"
+        case .decay2Rate:
+            return "C4"
+        case .sustainLevel:
+            return "C5"
+        case .releaseRate:
+            return "C6"
+        }
+    }
+
+    func value(from operatorData: FB01VoiceOperatorData) -> Int {
+        switch self {
+        case .attackRate:
+            return operatorData.attackRate
+        case .velocityToAttack:
+            return operatorData.velocitySensitivityForAttackRate
+        case .decay1Rate:
+            return operatorData.decay1Rate
+        case .decay2Rate:
+            return operatorData.decay2Rate
+        case .sustainLevel:
+            return operatorData.sustainLevel
+        case .releaseRate:
+            return operatorData.releaseRate
+        }
+    }
+}
+
 @MainActor
 final class VoiceDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
@@ -918,6 +982,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var errorMessage: String?
     @Published var statusMessage: String?
     @Published var isBusy = false
+    @Published var selectedOperatorIndex = FB01VoiceData.dataIndex(forOperatorNumber: 1)
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
 
@@ -1021,6 +1086,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         do {
             let (importedVoice, importedSystemChannel) = try Self.readVoice(from: url)
             voice = importedVoice
+            savedVoice = importedVoice
             systemChannel = importedSystemChannel
             fileURL = url
             rememberEditorLoadDirectory(for: url)
@@ -1073,6 +1139,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     try Self.fetchVoice(source: source, sourceIndex: sourceIndex, destinationIndex: destinationIndex, systemChannel: systemChannel)
                 }.value
                 voice = result.voice
+                savedVoice = result.voice
                 self.systemChannel = result.systemChannel
                 fileURL = nil
                 statusMessage = "Fetched \(source.title(nameLookup: nameLookup)) into this document."
@@ -1093,6 +1160,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return
         }
         voice = payload.voice
+        savedVoice = payload.voice
         systemChannel = payload.systemChannel
         fileURL = nil
         preparedKeyboardVoiceSignature = nil
@@ -1229,6 +1297,94 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             errorMessage = "Keyboard note failed: \(error)"
             statusMessage = nil
         }
+    }
+
+    func receiveExternalKeyboardMessage(_ message: [UInt8], device: DocumentModel) -> Bool {
+        guard let status = message.first, (0x80...0xEF).contains(status) else {
+            return false
+        }
+
+        let event = status & 0xF0
+        if event == 0xB0, message.count == 3, handleExternalControlChange(controller: Int(message[1]), value: Int(message[2])) {
+            device.externalKeyboardStatus = statusMessage ?? "Voice control changed"
+            return true
+        }
+
+        let isVolumeControl = event == 0xB0 && message.count == 3 && message[1] == 7
+        if isVolumeControl {
+            return false
+        }
+
+        let channel = UInt8(min(max(device.keyboardChannel, 0), 15))
+        let rewritten = [event | channel] + message.dropFirst()
+        let isNoteOn = event == 0x90 && message.count > 2 && message[2] > 0
+
+        do {
+            if isNoteOn {
+                let preparationMessages = try keyboardPreparationMessages(midiChannel: Int(channel))
+                for preparationMessage in preparationMessages {
+                    try FB01MIDI.sendImmediate(preparationMessage, destinationIndex: device.selectedDestinationIndex)
+                }
+                if !preparationMessages.isEmpty {
+                    Thread.sleep(forTimeInterval: keyboardPreparationSettleDelay)
+                }
+            }
+            try FB01MIDI.sendImmediate(rewritten, destinationIndex: device.selectedDestinationIndex)
+
+            if isNoteOn, message.count > 1 {
+                statusMessage = "Keyboard input sent note \(message[1]) on channel \(Int(channel) + 1) to \(device.selectedDestinationName)."
+            } else if event == 0xB0, message.count > 2 {
+                statusMessage = "Keyboard input forwarded CC \(message[1]) value \(message[2]) to \(device.selectedDestinationName)."
+            } else {
+                statusMessage = "Keyboard input forwarding to \(device.selectedDestinationName)."
+            }
+            device.externalKeyboardStatus = statusMessage ?? "Keyboard input forwarding"
+            errorMessage = nil
+        } catch {
+            errorMessage = "Keyboard input failed: \(error)"
+            statusMessage = nil
+        }
+        return true
+    }
+
+    private func handleExternalControlChange(controller: Int, value: Int) -> Bool {
+        guard let mapping = ExternalVoiceOperatorControl(controller: controller) else {
+            return false
+        }
+
+        guard let operatorData = voice.operators.first(where: { $0.index == selectedOperatorIndex }) ?? voice.operators.first else {
+            return true
+        }
+
+        do {
+            let updatedOperator: FB01VoiceOperatorData
+            switch mapping {
+            case .attackRate:
+                updatedOperator = try operatorData.settingAttackRate(Self.scaledControlValue(value, maxValue: 31))
+            case .velocityToAttack:
+                updatedOperator = try operatorData.settingVelocitySensitivityForAttackRate(Self.scaledControlValue(value, maxValue: 7))
+            case .decay1Rate:
+                updatedOperator = try operatorData.settingDecay1Rate(Self.scaledControlValue(value, maxValue: 15))
+            case .decay2Rate:
+                updatedOperator = try operatorData.settingDecay2Rate(Self.scaledControlValue(value, maxValue: 31))
+            case .sustainLevel:
+                updatedOperator = try operatorData.settingSustainLevel(Self.scaledControlValue(value, maxValue: 15))
+            case .releaseRate:
+                updatedOperator = try operatorData.settingReleaseRate(Self.scaledControlValue(value, maxValue: 15))
+            }
+
+            updateVoice { try $0.replacingOperator(updatedOperator) }
+            statusMessage = "\(mapping.controlLabel) CC \(controller) set Operator \(updatedOperator.index + 1) \(mapping.displayName) to \(mapping.value(from: updatedOperator))."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Control mapping failed: \(error)"
+            statusMessage = nil
+        }
+        return true
+    }
+
+    private static func scaledControlValue(_ value: Int, maxValue: Int) -> Int {
+        Int((Double(min(max(value, 0), 127)) / 127.0 * Double(maxValue)).rounded())
     }
 
     private func save(to url: URL) {
@@ -1666,6 +1822,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         do {
             let (importedConfiguration, importedSystemChannel) = try Self.readConfiguration(from: url)
             configuration = importedConfiguration
+            savedConfiguration = importedConfiguration
             systemChannel = importedSystemChannel
             fileURL = url
             rememberEditorLoadDirectory(for: url)
@@ -1727,6 +1884,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                     return try Self.extractConfiguration(from: artifact)
                 }.value
                 configuration = result.0
+                savedConfiguration = result.0
                 self.systemChannel = result.1
                 fileURL = nil
                 statusMessage = options.isCurrent
@@ -1749,6 +1907,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
             return
         }
         configuration = payload.configuration
+        savedConfiguration = payload.configuration
         systemChannel = payload.systemChannel
         fileURL = nil
         statusMessage = "Imported selected library configuration into this document."
@@ -2280,6 +2439,11 @@ struct AboutBoxView: View {
                     .font(.body)
                     .padding(.bottom, 14)
 
+                Text("Yamaha FB-01 programming is pretty complicated. Forest FB-01 Editor helps you see the forest through all the trees.")
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 14)
+
                 Text("©2026 Mark Gadzikowski. All Rights Reserved Worldwide.")
                     .font(.body.weight(.semibold))
                     .padding(.bottom, 2)
@@ -2306,7 +2470,7 @@ struct AboutBoxView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 16)
         }
-        .frame(width: 552, height: 270)
+        .frame(width: 552, height: 320)
     }
 }
 
@@ -2360,11 +2524,13 @@ final class DocumentModel: ObservableObject {
     @Published var keyboardVelocity = 100
     @Published var keyboardChannel = 0
     @Published var keyboardStartNote = 36
+    @Published var externalKeyboardPressedNotes: Set<Int> = []
 
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
     private var externalKeyboardMonitor: FB01MIDILiveInputMonitor?
+    private var externalKeyboardDocumentHandler: (([UInt8]) -> Bool)?
     private var externalVolumeTask: Task<Void, Never>?
 
     private enum DefaultsKey {
@@ -2588,6 +2754,9 @@ final class DocumentModel: ObservableObject {
 
     func setExternalKeyboardEnabled(_ enabled: Bool) {
         externalKeyboardEnabled = enabled
+        if !enabled {
+            externalKeyboardPressedNotes.removeAll()
+        }
         UserDefaults.standard.set(enabled, forKey: DefaultsKey.externalKeyboardEnabled)
         restartExternalKeyboardMonitor()
     }
@@ -4523,6 +4692,11 @@ final class DocumentModel: ObservableObject {
         guard let status = message.first, (0x80...0xEF).contains(status) else {
             return
         }
+        updateExternalKeyboardPressedNotes(from: message)
+
+        if let externalKeyboardDocumentHandler, externalKeyboardDocumentHandler(message) {
+            return
+        }
 
         let event = status & 0xF0
         let channel = UInt8(min(max(keyboardChannel, 0), 15))
@@ -4557,6 +4731,75 @@ final class DocumentModel: ObservableObject {
             externalKeyboardStatus = "Input error"
             errorMessage = "MIDI input failed: \(error)"
             statusMessage = nil
+        }
+    }
+
+    func sendKeyboardNoteWithoutVoicePreparation(_ note: Int, isOn: Bool) {
+        let boundedNote = min(max(note, 0), 127)
+        let channel = UInt8(min(max(keyboardChannel, 0), 15))
+        let velocity = UInt8(min(max(keyboardVelocity, 1), 127))
+
+        do {
+            try FB01MIDI.sendImmediate([
+                (isOn ? 0x90 : 0x80) | channel,
+                UInt8(boundedNote),
+                isOn ? velocity : 0,
+            ], destinationIndex: selectedDestinationIndex)
+            if isOn {
+                statusMessage = "Keyboard sent note \(boundedNote) on channel \(Int(channel) + 1) to \(selectedDestinationName)."
+                errorMessage = nil
+            }
+        } catch {
+            errorMessage = "Keyboard note failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    func receiveExternalKeyboardPerformanceMessage(_ message: [UInt8]) -> Bool {
+        guard let status = message.first, (0x80...0xEF).contains(status) else {
+            return false
+        }
+        let event = status & 0xF0
+        let isVolumeControl = event == 0xB0 && message.count == 3 && message[1] == 7
+        if isVolumeControl {
+            return false
+        }
+
+        let channel = UInt8(min(max(keyboardChannel, 0), 15))
+        let rewritten = [event | channel] + message.dropFirst()
+        do {
+            try FB01MIDI.sendImmediate(rewritten, destinationIndex: selectedDestinationIndex)
+            if event == 0x90, message.count > 2, message[2] > 0 {
+                externalKeyboardStatus = "Input sent note \(message[1]) on channel \(Int(channel) + 1)"
+            } else if event == 0xB0, message.count > 2 {
+                externalKeyboardStatus = "Input forwarded CC \(message[1]) value \(message[2])"
+            } else {
+                externalKeyboardStatus = "Input forwarding to \(selectedDestinationName)"
+            }
+            errorMessage = nil
+        } catch {
+            externalKeyboardStatus = "Input error"
+            errorMessage = "MIDI input failed: \(error)"
+            statusMessage = nil
+        }
+        return true
+    }
+
+    func setExternalKeyboardDocumentHandler(_ handler: (([UInt8]) -> Bool)?) {
+        externalKeyboardDocumentHandler = handler
+    }
+
+    private func updateExternalKeyboardPressedNotes(from message: [UInt8]) {
+        guard message.count > 2, let status = message.first else {
+            return
+        }
+
+        let event = status & 0xF0
+        let note = Int(message[1])
+        if event == 0x90, message[2] > 0 {
+            externalKeyboardPressedNotes.insert(note)
+        } else if event == 0x80 || (event == 0x90 && message[2] == 0) {
+            externalKeyboardPressedNotes.remove(note)
         }
     }
 
@@ -5435,6 +5678,10 @@ struct ToolbarView: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            Text("MIDI In from FB-01")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
             Menu {
                 ForEach(document.midiSources, id: \.index) { source in
                     Button {
@@ -5447,6 +5694,10 @@ struct ToolbarView: View {
                 Label(document.selectedSourceName, systemImage: "arrow.down.circle")
             }
             .disabled(document.midiSources.isEmpty || document.isBusy)
+
+            Text("MIDI Out to FB-01")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
 
             Menu {
                 ForEach(document.midiDestinations, id: \.index) { destination in
@@ -5514,78 +5765,97 @@ struct LiveKeyboardView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 7) {
-                SectionTitle("Live Keyboard")
-                Text(document.hasKeyboardVoiceContext ? "Current voice" : "MIDI notes only")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 10) {
-                    Stepper(value: Binding(
-                        get: { document.keyboardChannel + 1 },
-                        set: { document.setKeyboardChannel($0 - 1) }
-                    ), in: 1...16) {
-                        Text("Ch \(document.keyboardChannel + 1)")
-                            .monospacedDigit()
-                    }
-
-                    Stepper(value: Binding(
-                        get: { document.keyboardVelocity },
-                        set: { document.setKeyboardVelocity($0) }
-                    ), in: 1...127) {
-                        Text("Vel \(document.keyboardVelocity)")
-                            .monospacedDigit()
-                    }
-
-                    Stepper(value: Binding(
-                        get: { document.keyboardStartNote / 12 },
-                        set: { document.setKeyboardStartNote($0 * 12) }
-                    ), in: 0...5) {
-                        Text("Octave \(document.keyboardStartNote / 12)")
-                            .monospacedDigit()
-                    }
-
-                }
-                .font(.caption)
-
-                HStack(spacing: 8) {
-                    Toggle("MIDI Input", isOn: Binding(
-                        get: { document.externalKeyboardEnabled },
-                        set: { document.setExternalKeyboardEnabled($0) }
-                    ))
-                    .toggleStyle(.checkbox)
-
-                    Menu {
-                        ForEach(document.midiSources, id: \.index) { source in
-                            Button {
-                                document.selectKeyboardSource(source)
-                            } label: {
-                                endpointLabel(source, selected: source.index == document.selectedKeyboardSourceIndex)
-                            }
-                        }
-                    } label: {
-                        Text(document.selectedKeyboardSourceName)
-                            .lineLimit(1)
-                    }
-                    .disabled(document.midiSources.isEmpty || !document.externalKeyboardEnabled)
-                }
-                .font(.caption)
-
-                Text(document.externalKeyboardStatus)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            LiveKeyboardMIDIControlsView(
+                document: document,
+                title: document.selectedVoiceDocumentPayload().map { "Live Keyboard - \($0.voice.name)" } ?? "Live Keyboard",
+                subtitle: document.hasKeyboardVoiceContext ? "Current voice" : "MIDI notes only"
+            )
             .frame(width: 320, alignment: .leading)
 
             PianoKeyboardRepresentable(
                 startNote: document.keyboardStartNote,
                 octaveCount: 5,
+                highlightedNotes: document.externalKeyboardPressedNotes,
                 noteOn: { document.sendKeyboardNote($0, isOn: true) },
                 noteOff: { document.sendKeyboardNote($0, isOn: false) }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+struct LiveKeyboardMIDIControlsView: View {
+    @ObservedObject var document: DocumentModel
+    var title = "Live Keyboard"
+    var subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            SectionTitle(title)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Stepper(value: Binding(
+                    get: { document.keyboardChannel + 1 },
+                    set: { document.setKeyboardChannel($0 - 1) }
+                ), in: 1...16) {
+                    Text("Ch \(document.keyboardChannel + 1)")
+                        .monospacedDigit()
+                }
+                .frame(width: 82, alignment: .leading)
+
+                Stepper(value: Binding(
+                    get: { document.keyboardVelocity },
+                    set: { document.setKeyboardVelocity($0) }
+                ), in: 1...127) {
+                    Text("Vel \(document.keyboardVelocity)")
+                        .monospacedDigit()
+                }
+                .frame(width: 98, alignment: .leading)
+
+                Stepper(value: Binding(
+                    get: { document.keyboardStartNote / 12 },
+                    set: { document.setKeyboardStartNote($0 * 12) }
+                ), in: 0...5) {
+                    Text("Octave \(document.keyboardStartNote / 12)")
+                        .monospacedDigit()
+                }
+                .frame(width: 126, alignment: .leading)
+            }
+            .font(.caption)
+
+            HStack(spacing: 8) {
+                Toggle("MIDI In from External Keyboard", isOn: Binding(
+                    get: { document.externalKeyboardEnabled },
+                    set: { document.setExternalKeyboardEnabled($0) }
+                ))
+                .toggleStyle(.checkbox)
+
+                Menu {
+                    ForEach(document.midiSources, id: \.index) { source in
+                        Button {
+                            document.selectKeyboardSource(source)
+                        } label: {
+                            endpointLabel(source, selected: source.index == document.selectedKeyboardSourceIndex)
+                        }
+                    }
+                } label: {
+                    Text(document.selectedKeyboardSourceName)
+                        .lineLimit(1)
+                }
+                .frame(minWidth: 180, alignment: .leading)
+                .disabled(document.midiSources.isEmpty || !document.externalKeyboardEnabled)
+            }
+            .font(.caption)
+
+            Text(document.externalKeyboardStatus)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func endpointLabel(_ endpoint: FB01MIDIEndpoint, selected: Bool) -> some View {
@@ -5597,6 +5867,7 @@ struct LiveKeyboardView: View {
 struct PianoKeyboardRepresentable: NSViewRepresentable {
     var startNote: Int
     var octaveCount: Int
+    var highlightedNotes: Set<Int> = []
     var noteOn: (Int) -> Void
     var noteOff: (Int) -> Void
 
@@ -5608,6 +5879,7 @@ struct PianoKeyboardRepresentable: NSViewRepresentable {
         let view = PianoKeyboardNSView()
         view.startNote = startNote
         view.octaveCount = octaveCount
+        view.highlightedNotes = highlightedNotes
         view.noteOn = context.coordinator.noteOn
         view.noteOff = context.coordinator.noteOff
         return view
@@ -5618,6 +5890,7 @@ struct PianoKeyboardRepresentable: NSViewRepresentable {
         context.coordinator.noteOff = noteOff
         nsView.startNote = startNote
         nsView.octaveCount = octaveCount
+        nsView.highlightedNotes = highlightedNotes
         nsView.noteOn = context.coordinator.noteOn
         nsView.noteOff = context.coordinator.noteOff
     }
@@ -5636,6 +5909,11 @@ struct PianoKeyboardRepresentable: NSViewRepresentable {
 final class PianoKeyboardNSView: NSView {
     var noteOn: (Int) -> Void = { _ in }
     var noteOff: (Int) -> Void = { _ in }
+    var highlightedNotes: Set<Int> = [] {
+        didSet {
+            needsDisplay = true
+        }
+    }
     var startNote = 36 {
         didSet {
             let clampedStartNote = min(max(startNote, 0), 127)
@@ -5687,7 +5965,7 @@ final class PianoKeyboardNSView: NSView {
 
         for key in whiteKeys {
             let rect = whiteKeyRect(index: key.whiteIndex)
-            (activeNote == key.note ? NSColor.systemBlue.withAlphaComponent(0.18) : NSColor.white).setFill()
+            (isHighlighted(key.note) ? NSColor.systemBlue : NSColor.white).setFill()
             rect.fill()
             NSColor.separatorColor.setStroke()
             NSBezierPath(rect: rect).stroke()
@@ -5695,7 +5973,7 @@ final class PianoKeyboardNSView: NSView {
 
         for key in blackKeys {
             let rect = blackKeyRect(afterWhiteIndex: key.afterWhiteIndex)
-            (activeNote == key.note ? NSColor.systemBlue : NSColor.black).setFill()
+            (isHighlighted(key.note) ? NSColor.systemBlue : NSColor.black).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
         }
     }
@@ -5719,6 +5997,10 @@ final class PianoKeyboardNSView: NSView {
 
     private var whiteKeyCount: Int {
         octaveCount * 7 + 1
+    }
+
+    private func isHighlighted(_ note: Int) -> Bool {
+        activeNote == note || highlightedNotes.contains(note)
     }
 
     private var whiteKeyWidth: CGFloat {
@@ -6262,6 +6544,83 @@ struct DocumentWindowCloseGuard: NSViewRepresentable {
     }
 }
 
+struct WindowActivationObserver: NSViewRepresentable {
+    var onBecomeKey: () -> Void
+    var onResignKey: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onBecomeKey: onBecomeKey, onResignKey: onResignKey)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let window = view.window {
+                context.coordinator.attach(to: window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onBecomeKey = onBecomeKey
+        context.coordinator.onResignKey = onResignKey
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                context.coordinator.attach(to: window)
+            }
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var onBecomeKey: () -> Void
+        var onResignKey: () -> Void
+        private weak var window: NSWindow?
+
+        init(onBecomeKey: @escaping () -> Void, onResignKey: @escaping () -> Void) {
+            self.onBecomeKey = onBecomeKey
+            self.onResignKey = onResignKey
+            super.init()
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        @MainActor
+        func attach(to window: NSWindow) {
+            guard self.window !== window else {
+                return
+            }
+            NotificationCenter.default.removeObserver(self)
+            self.window = window
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleBecomeKey),
+                name: NSWindow.didBecomeKeyNotification,
+                object: window
+            )
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleResignKey),
+                name: NSWindow.didResignKeyNotification,
+                object: window
+            )
+            if window.isKeyWindow {
+                onBecomeKey()
+            }
+        }
+
+        @objc private func handleBecomeKey() {
+            onBecomeKey()
+        }
+
+        @objc private func handleResignKey() {
+            onResignKey()
+        }
+    }
+}
+
 struct DocumentMIDIContextView: View {
     @ObservedObject var device: DocumentModel
     var documentSystemChannel: Int
@@ -6289,47 +6648,16 @@ struct VoiceDocumentLiveKeyboardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                SectionTitle("Live Keyboard")
-                Text("Document voice")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Picker("Ch", selection: Binding(
-                    get: { device.keyboardChannel + 1 },
-                    set: { device.setKeyboardChannel($0 - 1) }
-                )) {
-                    ForEach(1...16, id: \.self) { channel in
-                        Text("\(channel)").tag(channel)
-                    }
-                }
-                .frame(width: 84)
-
-                Stepper(value: Binding(
-                    get: { device.keyboardVelocity },
-                    set: { device.setKeyboardVelocity($0) }
-                ), in: 1...127) {
-                    Text("Vel \(device.keyboardVelocity)")
-                        .monospacedDigit()
-                }
-                .frame(width: 130)
-
-                Stepper(value: Binding(
-                    get: { device.keyboardStartNote / 12 },
-                    set: { device.setKeyboardStartNote($0 * 12) }
-                ), in: 0...5) {
-                    Text("Octave \(device.keyboardStartNote / 12)")
-                        .monospacedDigit()
-                }
-                .frame(width: 140)
-
-            }
+            LiveKeyboardMIDIControlsView(
+                document: device,
+                title: document.voice.name.isEmpty ? "Live Keyboard" : "Live Keyboard - \(document.voice.name)",
+                subtitle: "Document voice"
+            )
 
             PianoKeyboardRepresentable(
                 startNote: device.keyboardStartNote,
                 octaveCount: 5,
+                highlightedNotes: device.externalKeyboardPressedNotes,
                 noteOn: { document.sendKeyboardNote($0, isOn: true, device: device) },
                 noteOff: { document.sendKeyboardNote($0, isOn: false, device: device) }
             )
@@ -6339,6 +6667,70 @@ struct VoiceDocumentLiveKeyboardView: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
             )
+        }
+        .background(WindowActivationObserver(
+            onBecomeKey: {
+                registerExternalKeyboardHandler()
+            },
+            onResignKey: {
+                // Keep the last active document handler until another document takes over or this window closes.
+            }
+        ))
+        .onAppear {
+            registerExternalKeyboardHandler()
+        }
+        .onDisappear {
+            device.setExternalKeyboardDocumentHandler(nil)
+        }
+    }
+
+    private func registerExternalKeyboardHandler() {
+        device.setExternalKeyboardDocumentHandler { [weak document, weak device] message in
+            guard let document, let device else {
+                return false
+            }
+            return document.receiveExternalKeyboardMessage(message, device: device)
+        }
+    }
+}
+
+struct ConfigurationDocumentLiveKeyboardView: View {
+    @ObservedObject var device: DocumentModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LiveKeyboardMIDIControlsView(
+                document: device,
+                title: "Live Keyboard",
+                subtitle: "Configuration performance"
+            )
+
+            PianoKeyboardRepresentable(
+                startNote: device.keyboardStartNote,
+                octaveCount: 5,
+                highlightedNotes: device.externalKeyboardPressedNotes,
+                noteOn: { device.sendKeyboardNoteWithoutVoicePreparation($0, isOn: true) },
+                noteOff: { device.sendKeyboardNoteWithoutVoicePreparation($0, isOn: false) }
+            )
+            .frame(height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
+        }
+        .background(WindowActivationObserver(
+            onBecomeKey: {
+                device.setExternalKeyboardDocumentHandler { [weak device] message in
+                    device?.receiveExternalKeyboardPerformanceMessage(message) ?? false
+                }
+            },
+            onResignKey: {
+                // Keep the last active document handler until another document takes over or this window closes.
+            }
+        ))
+        .onDisappear {
+            device.setExternalKeyboardDocumentHandler(nil)
         }
     }
 }
@@ -6383,10 +6775,6 @@ struct VoiceDocumentWindow: View {
                     name: Binding(
                         get: { voice.name },
                         set: { setName($0) }
-                    ),
-                    algorithm: Binding(
-                        get: { voice.algorithm + 1 },
-                        set: { newValue in document.updateVoice { voice in try voice.settingAlgorithm(newValue - 1) } }
                     ),
                     feedback: Binding(
                         get: { voice.feedbackLevel },
@@ -6442,8 +6830,17 @@ struct VoiceDocumentWindow: View {
                     }
                 )
 
+                AlgorithmSelectorView(selection: Binding(
+                    get: { voice.algorithm + 1 },
+                    set: { newValue in document.updateVoice { voice in try voice.settingAlgorithmAndOperatorRoles(newValue - 1) } }
+                ))
+
                 OperatorEditor(
                     operators: voice.operators,
+                    selectedOperatorIndex: Binding(
+                        get: { document.selectedOperatorIndex },
+                        set: { document.selectedOperatorIndex = $0 }
+                    ),
                     updateOperator: { operatorData in
                         document.updateVoice { try $0.replacingOperator(operatorData) }
                     }
@@ -6602,6 +6999,8 @@ struct ConfigurationDocumentWindow: View {
                         document.updateConfiguration { try $0.replacingInstrument(instrument) }
                     }
                 )
+
+                ConfigurationDocumentLiveKeyboardView(device: device)
 
                 DocumentStatusFooter(errorMessage: document.errorMessage, statusMessage: document.statusMessage, isBusy: document.isBusy)
             }
@@ -6962,8 +7361,8 @@ struct ConfigurationEditorControls: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
 
             GroupBox {
-                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-                    GridRow {
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
                         label("Key-Code")
                         Picker("", selection: $keyCodeReceiveMode) {
                             Text("All").tag(FB01KeyCodeReceiveMode.all)
@@ -6972,10 +7371,10 @@ struct ConfigurationEditorControls: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.segmented)
-                        .frame(width: 180)
+                        .frame(width: 190)
                     }
 
-                    GridRow {
+                    VStack(alignment: .leading, spacing: 6) {
                         label("Waveform")
                         Picker("", selection: $lfoWaveform) {
                             Text("Saw").tag(0)
@@ -6992,7 +7391,7 @@ struct ConfigurationEditorControls: View {
             } label: {
                 SectionTitle("Receive and Waveform")
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(minWidth: 300, maxWidth: .infinity, alignment: .topLeading)
 
             GroupBox {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
@@ -7515,6 +7914,7 @@ struct VoiceDetailView: View {
     @State private var nameText: String
     @State private var editError: String?
     @State private var exportError: String?
+    @State private var selectedOperatorIndex = FB01VoiceData.dataIndex(forOperatorNumber: 1)
 
     init(document: DocumentModel, sourceID: LibrarySource.ID, systemChannel: Int, summary: FB01VoiceSummary, bankVoices: [FB01VoiceSummary] = []) {
         self.document = document
@@ -7625,10 +8025,6 @@ struct VoiceDetailView: View {
                     get: { nameText },
                     set: { setName($0) }
                 ),
-                algorithm: Binding(
-                    get: { editableVoice.algorithm + 1 },
-                    set: { setAlgorithm($0 - 1) }
-                ),
                 feedback: Binding(
                     get: { editableVoice.feedbackLevel },
                     set: { setFeedback($0) }
@@ -7681,8 +8077,14 @@ struct VoiceDetailView: View {
                 }
             )
 
+            AlgorithmSelectorView(selection: Binding(
+                get: { editableVoice.algorithm + 1 },
+                set: { setAlgorithm($0 - 1) }
+            ))
+
             OperatorEditor(
                 operators: editableVoice.operators,
+                selectedOperatorIndex: $selectedOperatorIndex,
                 updateOperator: updateOperator
             )
 
@@ -7739,7 +8141,7 @@ struct VoiceDetailView: View {
     }
 
     private func setAlgorithm(_ value: Int) {
-        updateVoice { try $0.settingAlgorithm(value) }
+        updateVoice { try $0.settingAlgorithmAndOperatorRoles(value) }
     }
 
     private func setFeedback(_ value: Int) {
@@ -7838,7 +8240,6 @@ struct VoiceDetailView: View {
 
 struct VoiceEditorControls: View {
     @Binding var name: String
-    @Binding var algorithm: Int
     @Binding var feedback: Int
     @Binding var lfoSpeed: Int
     @Binding var lfoWaveform: Int
@@ -7861,14 +8262,6 @@ struct VoiceEditorControls: View {
                         TextField("Name", text: $name)
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 180)
-                    }
-
-                    GridRow {
-                        label("Algorithm")
-                        Stepper(value: $algorithm, in: 1...8) {
-                            Text("\(algorithm)")
-                                .monospacedDigit()
-                        }
                     }
 
                     GridRow {
@@ -7994,10 +8387,303 @@ struct VoiceEditorControls: View {
     }
 }
 
+struct AlgorithmSelectorView: View {
+    @Binding var selection: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SectionTitle("Algorithms")
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(1...5, id: \.self) { algorithm in
+                        algorithmButton(algorithm, cardWidth: 148, diagramWidth: 126)
+                    }
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(6...8, id: \.self) { algorithm in
+                        algorithmButton(algorithm, cardWidth: 242, diagramWidth: 220)
+                    }
+                }
+            }
+        }
+    }
+
+    private func algorithmButton(_ algorithm: Int, cardWidth: CGFloat, diagramWidth: CGFloat) -> some View {
+        Button {
+            selection = algorithm
+        } label: {
+            VStack(spacing: 7) {
+                AlgorithmDiagramView(algorithm: algorithm, isSelected: selection == algorithm)
+                    .frame(width: diagramWidth, height: 156)
+
+                HStack(spacing: 5) {
+                    Image(systemName: selection == algorithm ? "largecircle.fill.circle" : "circle")
+                        .imageScale(.small)
+                    Text("\(algorithm)")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(selection == algorithm ? .blue : .secondary)
+            }
+            .padding(9)
+            .frame(width: cardWidth)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(selection == algorithm ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(selection == algorithm ? Color.blue : Color.secondary.opacity(0.18), lineWidth: selection == algorithm ? 1.5 : 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Algorithm \(algorithm)")
+    }
+}
+
+struct AlgorithmDiagramView: View {
+    var algorithm: Int
+    var isSelected: Bool
+
+    private struct Node: Identifiable {
+        var id: String
+        var operatorNumber: Int
+        var isCarrier: Bool
+        var hasFeedback: Bool
+        var x: CGFloat
+        var y: CGFloat
+    }
+
+    private struct Edge: Identifiable {
+        var id: String
+        var from: CGPoint
+        var to: CGPoint
+    }
+
+    private struct SumNode: Identifiable {
+        var id: String
+        var x: CGFloat
+        var y: CGFloat
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let nodes = Self.nodes(for: algorithm)
+            let edges = Self.edges(for: algorithm)
+            let sumNodes = Self.sumNodes(for: algorithm)
+            let strokeColor = isSelected ? Color.blue : Color.primary.opacity(0.82)
+            let modulatorFill = isSelected ? Color.blue.opacity(0.10) : Color(nsColor: .textBackgroundColor)
+            let carrierFill = isSelected ? Color.blue.opacity(0.18) : Color.green.opacity(0.16)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+
+                ForEach(edges) { edge in
+                    arrow(edge, in: size, color: strokeColor)
+                }
+
+                ForEach(sumNodes) { sum in
+                    let center = point(CGPoint(x: sum.x, y: sum.y), in: size)
+                    ZStack {
+                        Circle()
+                            .fill(modulatorFill)
+                            .overlay(Circle().stroke(strokeColor.opacity(0.65), lineWidth: 1.2))
+                        Text("+")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    .frame(width: 18, height: 18)
+                    .position(center)
+                }
+
+                ForEach(nodes) { node in
+                    operatorNode(
+                        node,
+                        size: size,
+                        strokeColor: strokeColor,
+                        fillColor: node.isCarrier ? carrierFill : modulatorFill
+                    )
+                }
+            }
+        }
+    }
+
+    private func operatorNode(_ node: Node, size: CGSize, strokeColor: Color, fillColor: Color) -> some View {
+        let center = point(CGPoint(x: node.x, y: node.y), in: size)
+        return Text("OP\(node.operatorNumber)\(node.hasFeedback ? "↻" : "")")
+            .font(.caption.weight(.semibold))
+            .monospacedDigit()
+            .foregroundStyle(.primary)
+            .minimumScaleFactor(0.72)
+            .lineLimit(1)
+            .frame(width: nodeWidth(for: node), height: 24)
+            .background(RoundedRectangle(cornerRadius: 4).fill(fillColor))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(strokeColor.opacity(0.7), lineWidth: 1.2))
+            .position(center)
+    }
+
+    private func nodeWidth(for node: Node) -> CGFloat {
+        node.hasFeedback ? 56 : 48
+    }
+
+    private func point(_ normalized: CGPoint, in size: CGSize) -> CGPoint {
+        CGPoint(x: normalized.x * size.width, y: normalized.y * size.height)
+    }
+
+    private func arrow(_ edge: Edge, in size: CGSize, color: Color) -> some View {
+        let start = point(edge.from, in: size)
+        let end = point(edge.to, in: size)
+        let angle = atan2(end.y - start.y, end.x - start.x)
+        let arrowLength: CGFloat = 7
+        let arrowSpread: CGFloat = 0.55
+        let left = CGPoint(
+            x: end.x - arrowLength * cos(angle - arrowSpread),
+            y: end.y - arrowLength * sin(angle - arrowSpread)
+        )
+        let right = CGPoint(
+            x: end.x - arrowLength * cos(angle + arrowSpread),
+            y: end.y - arrowLength * sin(angle + arrowSpread)
+        )
+
+        return Path { path in
+            path.move(to: start)
+            path.addLine(to: end)
+            path.move(to: left)
+            path.addLine(to: end)
+            path.addLine(to: right)
+        }
+        .stroke(color.opacity(0.82), style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+    }
+
+    private static func nodes(for algorithm: Int) -> [Node] {
+        switch algorithm {
+        case 1:
+            return [
+                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: true, x: 0.5, y: 0.22),
+                Node(id: "3", operatorNumber: 3, isCarrier: false, hasFeedback: false, x: 0.5, y: 0.40),
+                Node(id: "2", operatorNumber: 2, isCarrier: false, hasFeedback: false, x: 0.5, y: 0.58),
+                Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.5, y: 0.76),
+            ]
+        case 2:
+            return [
+                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: true, x: 0.26, y: 0.24),
+                Node(id: "3", operatorNumber: 3, isCarrier: false, hasFeedback: false, x: 0.74, y: 0.24),
+                Node(id: "2", operatorNumber: 2, isCarrier: false, hasFeedback: false, x: 0.5, y: 0.50),
+                Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.5, y: 0.75),
+            ]
+        case 3:
+            return [
+                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: false, x: 0.26, y: 0.23),
+                Node(id: "3", operatorNumber: 3, isCarrier: false, hasFeedback: false, x: 0.26, y: 0.43),
+                Node(id: "2", operatorNumber: 2, isCarrier: false, hasFeedback: true, x: 0.74, y: 0.43),
+                Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.5, y: 0.74),
+            ]
+        case 4:
+            return [
+                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: true, x: 0.26, y: 0.23),
+                Node(id: "3", operatorNumber: 3, isCarrier: false, hasFeedback: false, x: 0.26, y: 0.43),
+                Node(id: "2", operatorNumber: 2, isCarrier: false, hasFeedback: false, x: 0.74, y: 0.43),
+                Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.5, y: 0.74),
+            ]
+        case 5:
+            return [
+                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: true, x: 0.26, y: 0.33),
+                Node(id: "3", operatorNumber: 3, isCarrier: true, hasFeedback: false, x: 0.26, y: 0.58),
+                Node(id: "2", operatorNumber: 2, isCarrier: false, hasFeedback: false, x: 0.74, y: 0.33),
+                Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.74, y: 0.58),
+            ]
+        case 6:
+            return [
+                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: true, x: 0.5, y: 0.30),
+                Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.16, y: 0.62),
+                Node(id: "2", operatorNumber: 2, isCarrier: true, hasFeedback: false, x: 0.5, y: 0.62),
+                Node(id: "3", operatorNumber: 3, isCarrier: true, hasFeedback: false, x: 0.84, y: 0.62),
+            ]
+        case 7:
+            return [
+                Node(id: "4", operatorNumber: 4, isCarrier: false, hasFeedback: true, x: 0.16, y: 0.33),
+                Node(id: "3", operatorNumber: 3, isCarrier: true, hasFeedback: false, x: 0.16, y: 0.62),
+                Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.5, y: 0.62),
+                Node(id: "2", operatorNumber: 2, isCarrier: true, hasFeedback: false, x: 0.84, y: 0.62),
+            ]
+        default:
+            return [
+                Node(id: "4", operatorNumber: 4, isCarrier: true, hasFeedback: false, x: 0.14, y: 0.58),
+                Node(id: "3", operatorNumber: 3, isCarrier: true, hasFeedback: false, x: 0.38, y: 0.58),
+                Node(id: "2", operatorNumber: 2, isCarrier: true, hasFeedback: false, x: 0.62, y: 0.58),
+                Node(id: "1", operatorNumber: 1, isCarrier: true, hasFeedback: false, x: 0.86, y: 0.58),
+            ]
+        }
+    }
+
+    private static func edges(for algorithm: Int) -> [Edge] {
+        switch algorithm {
+        case 1:
+            return [
+                Edge(id: "4-3", from: CGPoint(x: 0.5, y: 0.30), to: CGPoint(x: 0.5, y: 0.34)),
+                Edge(id: "3-2", from: CGPoint(x: 0.5, y: 0.48), to: CGPoint(x: 0.5, y: 0.52)),
+                Edge(id: "2-1", from: CGPoint(x: 0.5, y: 0.66), to: CGPoint(x: 0.5, y: 0.70)),
+            ]
+        case 2:
+            return [
+                Edge(id: "4-sum", from: CGPoint(x: 0.26, y: 0.32), to: CGPoint(x: 0.43, y: 0.39)),
+                Edge(id: "3-sum", from: CGPoint(x: 0.74, y: 0.32), to: CGPoint(x: 0.57, y: 0.39)),
+                Edge(id: "sum-2", from: CGPoint(x: 0.5, y: 0.45), to: CGPoint(x: 0.5, y: 0.44)),
+                Edge(id: "2-1", from: CGPoint(x: 0.5, y: 0.58), to: CGPoint(x: 0.5, y: 0.69)),
+            ]
+        case 3:
+            return [
+                Edge(id: "4-3", from: CGPoint(x: 0.26, y: 0.31), to: CGPoint(x: 0.26, y: 0.37)),
+                Edge(id: "3-sum", from: CGPoint(x: 0.26, y: 0.51), to: CGPoint(x: 0.43, y: 0.58)),
+                Edge(id: "2-sum", from: CGPoint(x: 0.74, y: 0.51), to: CGPoint(x: 0.57, y: 0.58)),
+                Edge(id: "sum-1", from: CGPoint(x: 0.5, y: 0.64), to: CGPoint(x: 0.5, y: 0.68)),
+            ]
+        case 4:
+            return [
+                Edge(id: "4-3", from: CGPoint(x: 0.26, y: 0.31), to: CGPoint(x: 0.26, y: 0.37)),
+                Edge(id: "3-sum", from: CGPoint(x: 0.26, y: 0.51), to: CGPoint(x: 0.43, y: 0.58)),
+                Edge(id: "2-sum", from: CGPoint(x: 0.74, y: 0.51), to: CGPoint(x: 0.57, y: 0.58)),
+                Edge(id: "sum-1", from: CGPoint(x: 0.5, y: 0.64), to: CGPoint(x: 0.5, y: 0.68)),
+            ]
+        case 5:
+            return [
+                Edge(id: "4-3", from: CGPoint(x: 0.26, y: 0.41), to: CGPoint(x: 0.26, y: 0.52)),
+                Edge(id: "2-1", from: CGPoint(x: 0.74, y: 0.41), to: CGPoint(x: 0.74, y: 0.52)),
+            ]
+        case 6:
+            return [
+                Edge(id: "4-1", from: CGPoint(x: 0.38, y: 0.38), to: CGPoint(x: 0.16, y: 0.54)),
+                Edge(id: "4-2", from: CGPoint(x: 0.5, y: 0.38), to: CGPoint(x: 0.5, y: 0.54)),
+                Edge(id: "4-3", from: CGPoint(x: 0.62, y: 0.38), to: CGPoint(x: 0.84, y: 0.54)),
+            ]
+        case 7:
+            return [
+                Edge(id: "4-3", from: CGPoint(x: 0.16, y: 0.41), to: CGPoint(x: 0.16, y: 0.54)),
+            ]
+        default:
+            return []
+        }
+    }
+
+    private static func sumNodes(for algorithm: Int) -> [SumNode] {
+        switch algorithm {
+        case 2:
+            return [SumNode(id: "sum", x: 0.5, y: 0.41)]
+        case 3, 4:
+            return [SumNode(id: "sum", x: 0.5, y: 0.60)]
+        default:
+            return []
+        }
+    }
+}
+
 struct OperatorEditor: View {
     var operators: [FB01VoiceOperatorData]
+    @Binding var selectedOperatorIndex: Int
     var updateOperator: (FB01VoiceOperatorData) -> Void
-    @State private var selectedOperatorIndex = 0
 
     private var selectedOperator: FB01VoiceOperatorData? {
         operators.first { $0.index == selectedOperatorIndex } ?? operators.first
@@ -8009,7 +8695,7 @@ struct OperatorEditor: View {
 
             HStack(alignment: .top, spacing: 14) {
                 VStack(spacing: 8) {
-                    ForEach(operators, id: \.index) { op in
+                    ForEach(displayOrderedOperators, id: \.index) { op in
                         OperatorSelectorButton(
                             operatorData: op,
                             isSelected: op.index == selectedOperatorIndex
@@ -8035,7 +8721,13 @@ struct OperatorEditor: View {
             guard !newOperators.contains(where: { $0.index == selectedOperatorIndex }) else {
                 return
             }
-            selectedOperatorIndex = newOperators.first?.index ?? 0
+            selectedOperatorIndex = displayOrderedOperators.first?.index ?? FB01VoiceData.dataIndex(forOperatorNumber: 1)
+        }
+    }
+
+    private var displayOrderedOperators: [FB01VoiceOperatorData] {
+        operators.sorted {
+            FB01VoiceData.operatorNumber(forDataIndex: $0.index) < FB01VoiceData.operatorNumber(forDataIndex: $1.index)
         }
     }
 }
@@ -8048,13 +8740,10 @@ struct OperatorSelectorButton: View {
     var body: some View {
         Button(action: select) {
             VStack(alignment: .leading, spacing: 7) {
-                HStack {
-                    Text("Operator \(operatorData.index + 1)")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Operator \(FB01VoiceData.operatorNumber(forDataIndex: operatorData.index))")
                         .font(.body.weight(.semibold))
-                    Spacer()
-                    Text(operatorData.carrier ? "Carrier" : "Mod")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    roleLabel
                 }
 
                 Text("TL \(operatorData.totalLevel), Mul \(operatorData.multiple)")
@@ -8085,6 +8774,18 @@ struct OperatorSelectorButton: View {
         }
         .buttonStyle(.plain)
     }
+
+    private var roleLabel: some View {
+        Text(operatorData.carrier ? "Carrier" : "Modulator")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(operatorData.carrier ? Color.accentColor : .secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(operatorData.carrier ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.12))
+            )
+    }
 }
 
 struct OperatorInspector: View {
@@ -8097,7 +8798,7 @@ struct OperatorInspector: View {
             GridItem(.flexible(minimum: 220), spacing: 12),
         ], alignment: .leading, spacing: 12) {
             OperatorControlGroup(title: "Level") {
-                operatorToggle("Carrier", binding: carrierBinding)
+                operatorRolePicker
                 operatorLevelControl("Volume", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
                 operatorStepper("Velocity to TL", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
                 operatorStepper("TL Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
@@ -8132,15 +8833,25 @@ struct OperatorInspector: View {
         }
     }
 
-    private var carrierBinding: Binding<Bool> {
-        Binding(
-            get: { operatorData.carrier },
-            set: { value in
-                if let updated = try? operatorData.settingCarrier(value) {
-                    updateOperator(updated)
-                }
-            }
-        )
+    private var operatorRolePicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Role")
+                .foregroundStyle(.secondary)
+            Text(operatorData.carrier ? "Carrier" : "Modulator")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(operatorData.carrier ? Color.accentColor : .primary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(operatorData.carrier ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(operatorData.carrier ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.20), lineWidth: 1)
+                )
+        }
     }
 
     private var keyboardLevelScalingTypeBit0Binding: Binding<Bool> {

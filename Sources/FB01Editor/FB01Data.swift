@@ -57,6 +57,16 @@ public struct FB01VoiceData: Equatable, Sendable {
         return try FB01VoiceData(bytes: copy)
     }
 
+    public func settingAlgorithmAndOperatorRoles(_ value: Int) throws -> FB01VoiceData {
+        let edited = try settingAlgorithm(value)
+        var updated = edited
+        for op in edited.operators {
+            let isCarrier = Self.carrierOperatorIndexes(forAlgorithm: value).contains(op.index)
+            updated = try updated.replacingOperator(op.settingCarrier(isCarrier))
+        }
+        return updated
+    }
+
     public func settingAmplitudeModulationDepth(_ value: Int) throws -> FB01VoiceData {
         let depth = try FB01.validate(value, name: "amplitudeModulationDepth", range: 0...127)
         var copy = bytes
@@ -167,6 +177,31 @@ public struct FB01VoiceData: Equatable, Sendable {
             let offset = 0x10 + index * Self.operatorBlockByteCount
             return FB01VoiceOperatorData(index: index, bytes: Array(bytes[offset..<(offset + Self.operatorBlockByteCount)]))
         }
+    }
+
+    public static func carrierOperatorIndexes(forAlgorithm algorithm: Int) -> Set<Int> {
+        let carrierOperatorNumbers: Set<Int>
+        switch algorithm {
+        case 0, 1, 2, 3:
+            carrierOperatorNumbers = [1]
+        case 4:
+            carrierOperatorNumbers = [1, 3]
+        case 5, 6:
+            carrierOperatorNumbers = [1, 2, 3]
+        case 7:
+            carrierOperatorNumbers = [1, 2, 3, 4]
+        default:
+            return []
+        }
+        return Set(carrierOperatorNumbers.map { dataIndex(forOperatorNumber: $0) })
+    }
+
+    public static func operatorNumber(forDataIndex index: Int) -> Int {
+        operatorCount - index
+    }
+
+    public static func dataIndex(forOperatorNumber operatorNumber: Int) -> Int {
+        operatorCount - operatorNumber
     }
 
     public func replacingOperator(_ operatorData: FB01VoiceOperatorData) throws -> FB01VoiceData {

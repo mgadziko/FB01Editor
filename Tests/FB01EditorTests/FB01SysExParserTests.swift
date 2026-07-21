@@ -399,6 +399,47 @@ import Testing
     #expect(try FB01Artifact(sysexBytes: exported.sysexBytes) == exported)
 }
 
+@Test func operatorDisplayNumbersMapToReverseStoredDataOrder() throws {
+    #expect(FB01VoiceData.operatorNumber(forDataIndex: 0) == 4)
+    #expect(FB01VoiceData.operatorNumber(forDataIndex: 1) == 3)
+    #expect(FB01VoiceData.operatorNumber(forDataIndex: 2) == 2)
+    #expect(FB01VoiceData.operatorNumber(forDataIndex: 3) == 1)
+
+    #expect(FB01VoiceData.dataIndex(forOperatorNumber: 1) == 3)
+    #expect(FB01VoiceData.dataIndex(forOperatorNumber: 2) == 2)
+    #expect(FB01VoiceData.dataIndex(forOperatorNumber: 3) == 1)
+    #expect(FB01VoiceData.dataIndex(forOperatorNumber: 4) == 0)
+}
+
+@Test func settingAlgorithmAlsoAppliesUserFacingCarrierRoles() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-3",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let artifact = try FB01Artifact.readSysEx(from: fixtureURL)
+
+    guard case let .voiceBankDumpData(_, bank, _, data, _) = artifact.messages[0] else {
+        Issue.record("Expected captured voice bank dump")
+        return
+    }
+
+    let voiceBank = try FB01VoiceBankData(bank: bank, data: data)
+    let brass = voiceBank.voices[0].voice
+
+    let algorithm3 = try brass.settingAlgorithmAndOperatorRoles(2)
+    #expect(algorithm3.algorithm == 2)
+    #expect(carrierOperatorNumbers(in: algorithm3) == [1])
+
+    let algorithm5 = try brass.settingAlgorithmAndOperatorRoles(4)
+    #expect(algorithm5.algorithm == 4)
+    #expect(carrierOperatorNumbers(in: algorithm5) == [1, 3])
+
+    let algorithm8 = try brass.settingAlgorithmAndOperatorRoles(7)
+    #expect(algorithm8.algorithm == 7)
+    #expect(carrierOperatorNumbers(in: algorithm8) == [1, 2, 3, 4])
+}
+
 @Test func editsVoiceDataAndExportsEditedSingleVoiceArtifact() throws {
     let fixtureURL = Bundle.module.url(
         forResource: "voice-bank-3",
@@ -491,6 +532,13 @@ import Testing
 
     #expect(try FB01.nibbleDecode(packet.payload) == edited.bytes)
     #expect(try FB01Artifact(sysexBytes: exported.sysexBytes) == exported)
+}
+
+private func carrierOperatorNumbers(in voice: FB01VoiceData) -> [Int] {
+    voice.operators
+        .filter(\.carrier)
+        .map { FB01VoiceData.operatorNumber(forDataIndex: $0.index) }
+        .sorted()
 }
 
 @Test func editsVoiceBankDataAndRoundTripsRebuiltBankArtifact() throws {
