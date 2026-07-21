@@ -578,19 +578,21 @@ final class EditorDocumentWorkspace: ObservableObject {
     }
 
     func confirmApplicationTermination() -> NSApplication.TerminateReply {
-        let editedVoices = voiceDocuments.values
-            .filter(\.isEdited)
-            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-        let editedConfigurations = configurationDocuments.values
-            .filter(\.isEdited)
-            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        let editedVoices = voiceDocuments
+            .filter { $0.value.isEdited }
+            .sorted { $0.value.title.localizedStandardCompare($1.value.title) == .orderedAscending }
+        let editedConfigurations = configurationDocuments
+            .filter { $0.value.isEdited }
+            .sorted { $0.value.title.localizedStandardCompare($1.value.title) == .orderedAscending }
 
-        for document in editedVoices {
+        for (id, document) in editedVoices {
+            bringDocumentWindowToFront(identifier: Self.voiceWindowIdentifier(for: id))
             guard confirmTermination(for: document.title, save: { document.save() }, isEdited: { document.isEdited }) else {
                 return .terminateCancel
             }
         }
-        for document in editedConfigurations {
+        for (id, document) in editedConfigurations {
+            bringDocumentWindowToFront(identifier: Self.configurationWindowIdentifier(for: id))
             guard confirmTermination(for: document.title, save: { document.save() }, isEdited: { document.isEdited }) else {
                 return .terminateCancel
             }
@@ -616,6 +618,22 @@ final class EditorDocumentWorkspace: ObservableObject {
         default:
             return false
         }
+    }
+
+    static func voiceWindowIdentifier(for id: UUID) -> String {
+        "voice-document-\(id.uuidString)"
+    }
+
+    static func configurationWindowIdentifier(for id: UUID) -> String {
+        "configuration-document-\(id.uuidString)"
+    }
+
+    private func bringDocumentWindowToFront(identifier: String) {
+        guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue == identifier }) else {
+            return
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
@@ -5632,6 +5650,40 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func configurationInstrumentVoiceName(_ instrument: FB01InstrumentConfiguration) -> String? {
+        voiceName(bank: instrument.voiceBank, voiceNumber: instrument.voiceNumber)
+    }
+
+    private func voiceName(bank: Int, voiceNumber: Int) -> String? {
+        let candidateNumbers = candidateVoiceNumbers(fromStoredNumber: voiceNumber)
+
+        if (1...2).contains(bank) {
+            for number in candidateNumbers {
+                if let voice = knownVoice(bank: bank - 1, number: number), !voice.name.isEmpty {
+                    return voice.name
+                }
+            }
+            return nil
+        }
+
+        for number in candidateNumbers {
+            if let name = FB01FactoryVoiceNames.name(bank: bank, voiceNumber: number), !name.isEmpty {
+                return name
+            }
+        }
+        return nil
+    }
+
+    private func candidateVoiceNumbers(fromStoredNumber storedNumber: Int) -> [Int] {
+        var candidates: [Int] = []
+        for number in [storedNumber, storedNumber + 1] where (1...FB01VoiceBankData.voiceCount).contains(number) {
+            if !candidates.contains(number) {
+                candidates.append(number)
+            }
+        }
+        return candidates
+    }
+
     private func confirmEditedVoiceSlotOverwrite(operation: VoiceSlotOperation, source: LibrarySource, target: VoiceSlotTarget) -> Bool {
         let action = switch operation {
         case .copy: "Copy"
@@ -7052,13 +7104,14 @@ struct MissingEditorDocumentView: View {
 }
 
 struct DocumentWindowCloseGuard: NSViewRepresentable {
+    var windowIdentifier: String
     var isEdited: () -> Bool
     var title: () -> String
     var save: () -> Void
     var onClose: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(isEdited: isEdited, title: title, save: save, onClose: onClose)
+        Coordinator(windowIdentifier: windowIdentifier, isEdited: isEdited, title: title, save: save, onClose: onClose)
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -7072,6 +7125,7 @@ struct DocumentWindowCloseGuard: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.windowIdentifier = windowIdentifier
         context.coordinator.isEdited = isEdited
         context.coordinator.title = title
         context.coordinator.save = save
@@ -7085,6 +7139,7 @@ struct DocumentWindowCloseGuard: NSViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, NSWindowDelegate {
+        var windowIdentifier: String
         var isEdited: () -> Bool
         var title: () -> String
         var save: () -> Void
@@ -7092,7 +7147,8 @@ struct DocumentWindowCloseGuard: NSViewRepresentable {
         private weak var previousDelegate: NSWindowDelegate?
         private weak var window: NSWindow?
 
-        init(isEdited: @escaping () -> Bool, title: @escaping () -> String, save: @escaping () -> Void, onClose: @escaping () -> Void) {
+        init(windowIdentifier: String, isEdited: @escaping () -> Bool, title: @escaping () -> String, save: @escaping () -> Void, onClose: @escaping () -> Void) {
+            self.windowIdentifier = windowIdentifier
             self.isEdited = isEdited
             self.title = title
             self.save = save
@@ -7100,6 +7156,7 @@ struct DocumentWindowCloseGuard: NSViewRepresentable {
         }
 
         func attach(to window: NSWindow) {
+            window.identifier = NSUserInterfaceItemIdentifier(windowIdentifier)
             guard self.window !== window else {
                 return
             }
@@ -7488,6 +7545,7 @@ struct VoiceDocumentWindow: View {
             }
         }
         .background(DocumentWindowCloseGuard(
+            windowIdentifier: EditorDocumentWorkspace.voiceWindowIdentifier(for: document.id),
             isEdited: { document.isEdited },
             title: { document.title },
             save: { document.save() },
@@ -7589,6 +7647,7 @@ struct ConfigurationDocumentWindow: View {
 
                 ConfigurationInstrumentEditor(
                     instruments: configuration.instruments,
+                    voiceName: { device.configurationInstrumentVoiceName($0) },
                     updateInstrument: { instrument in
                         document.updateConfiguration { try $0.replacingInstrument(instrument) }
                     }
@@ -7638,6 +7697,7 @@ struct ConfigurationDocumentWindow: View {
             }
         }
         .background(DocumentWindowCloseGuard(
+            windowIdentifier: EditorDocumentWorkspace.configurationWindowIdentifier(for: document.id),
             isEdited: { document.isEdited },
             title: { document.title },
             save: { document.save() },
@@ -7852,6 +7912,7 @@ struct ConfigurationDetailView: View {
 
                 ConfigurationInstrumentEditor(
                     instruments: editableConfiguration.instruments,
+                    voiceName: { document.configurationInstrumentVoiceName($0) },
                     updateInstrument: updateInstrument
                 )
             }
@@ -7932,84 +7993,110 @@ struct ConfigurationEditorControls: View {
     @Binding var lfoWaveform: Int
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            GroupBox {
-                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-                    GridRow {
-                        label("Name")
-                        TextField("Name", text: $name)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 180)
-                    }
-
-                    GridRow {
-                        label("Combine")
-                        Toggle("", isOn: $combineModeEnabled)
-                            .labelsHidden()
-                    }
-                }
-                .padding(.top, 4)
-            } label: {
-                SectionTitle("Identity")
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                identityControls
+                receiveAndWaveformControls
+                lfoAndModulationControls
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
 
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        label("Key-Code")
-                        Picker("", selection: $keyCodeReceiveMode) {
-                            Text("All").tag(FB01KeyCodeReceiveMode.all)
-                            Text("Even").tag(FB01KeyCodeReceiveMode.even)
-                            Text("Odd").tag(FB01KeyCodeReceiveMode.odd)
-                        }
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 16) {
+                    identityControls
+                    receiveAndWaveformControls
+                }
+                lfoAndModulationControls
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                identityControls
+                receiveAndWaveformControls
+                lfoAndModulationControls
+            }
+        }
+    }
+
+    private var identityControls: some View {
+        GroupBox {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                GridRow {
+                    label("Name")
+                    TextField("Name", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 180)
+                }
+
+                GridRow {
+                    label("Combine")
+                    Toggle("", isOn: $combineModeEnabled)
                         .labelsHidden()
-                        .pickerStyle(.segmented)
-                        .frame(width: 190)
-                    }
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            SectionTitle("Identity")
+        }
+        .frame(minWidth: 250, maxWidth: 280, alignment: .topLeading)
+    }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        label("Waveform")
-                        WaveformPicker(selection: $lfoWaveform)
-                            .frame(width: 340)
+    private var receiveAndWaveformControls: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    label("Key-Code")
+                    Picker("", selection: $keyCodeReceiveMode) {
+                        Text("All").tag(FB01KeyCodeReceiveMode.all)
+                        Text("Even").tag(FB01KeyCodeReceiveMode.even)
+                        Text("Odd").tag(FB01KeyCodeReceiveMode.odd)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 190)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    label("Waveform")
+                    WaveformPicker(selection: $lfoWaveform)
+                        .frame(width: 340)
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            SectionTitle("Receive and Waveform")
+        }
+        .frame(minWidth: 370, maxWidth: 390, alignment: .topLeading)
+    }
+
+    private var lfoAndModulationControls: some View {
+        GroupBox {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                GridRow {
+                    label("LFO Speed")
+                    Stepper(value: $lfoSpeed, in: 0...127) {
+                        Text("\(lfoSpeed)")
+                            .monospacedDigit()
                     }
                 }
-                .padding(.top, 4)
-            } label: {
-                SectionTitle("Receive and Waveform")
-            }
-            .frame(minWidth: 300, maxWidth: .infinity, alignment: .topLeading)
 
-            GroupBox {
-                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-                    GridRow {
-                        label("LFO Speed")
-                        Stepper(value: $lfoSpeed, in: 0...127) {
-                            Text("\(lfoSpeed)")
+                GridRow {
+                    label("Depth")
+                    HStack(spacing: 16) {
+                        Stepper(value: $amplitudeModulationDepth, in: 0...127) {
+                            Text("AMD \(amplitudeModulationDepth)")
+                                .monospacedDigit()
+                        }
+                        Stepper(value: $pitchModulationDepth, in: 0...127) {
+                            Text("PMD \(pitchModulationDepth)")
                                 .monospacedDigit()
                         }
                     }
-
-                    GridRow {
-                        label("Depth")
-                        HStack(spacing: 16) {
-                            Stepper(value: $amplitudeModulationDepth, in: 0...127) {
-                                Text("AMD \(amplitudeModulationDepth)")
-                                    .monospacedDigit()
-                            }
-                            Stepper(value: $pitchModulationDepth, in: 0...127) {
-                                Text("PMD \(pitchModulationDepth)")
-                                    .monospacedDigit()
-                            }
-                        }
-                    }
                 }
-                .padding(.top, 4)
-            } label: {
-                SectionTitle("LFO and Modulation")
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.top, 4)
+        } label: {
+            SectionTitle("LFO and Modulation")
         }
+        .frame(minWidth: 290, maxWidth: 330, alignment: .topLeading)
     }
 
     private func label(_ text: String) -> some View {
@@ -8021,6 +8108,7 @@ struct ConfigurationEditorControls: View {
 
 struct ConfigurationInstrumentEditor: View {
     var instruments: [FB01InstrumentConfiguration]
+    var voiceName: (FB01InstrumentConfiguration) -> String?
     var updateInstrument: (FB01InstrumentConfiguration) -> Void
     @State private var selectedInstrumentIndex = 0
 
@@ -8037,6 +8125,7 @@ struct ConfigurationInstrumentEditor: View {
                     ForEach(instruments, id: \.index) { instrument in
                         ConfigurationInstrumentSelectorButton(
                             instrument: instrument,
+                            voiceName: voiceName(instrument),
                             isSelected: instrument.index == selectedInstrumentIndex
                         ) {
                             selectedInstrumentIndex = instrument.index
@@ -8067,6 +8156,7 @@ struct ConfigurationInstrumentEditor: View {
 
 struct ConfigurationInstrumentSelectorButton: View {
     var instrument: FB01InstrumentConfiguration
+    var voiceName: String?
     var isSelected: Bool
     var select: () -> Void
 
@@ -8085,6 +8175,18 @@ struct ConfigurationInstrumentSelectorButton: View {
                 Text("MIDI \(instrument.midiChannel + 1), Voice \(instrument.voiceBank)/\(instrument.voiceNumber)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if let voiceName, !voiceName.isEmpty {
+                    Text(voiceName)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                } else {
+                    Text("Voice name unavailable")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
 
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
@@ -8924,14 +9026,21 @@ struct VoiceEditorControls: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
 
             GroupBox {
-                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-                    GridRow {
-                        label("Stereo")
-                        HStack(spacing: 12) {
-                            Toggle("Left", isOn: $leftOutputEnabled)
-                            Toggle("Right", isOn: $rightOutputEnabled)
+                VStack(alignment: .leading, spacing: 8) {
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                        GridRow {
+                            label("Assignment")
+                            VStack(alignment: .leading, spacing: 6) {
+                                Toggle("Left", isOn: $leftOutputEnabled)
+                                Toggle("Right", isOn: $rightOutputEnabled)
+                            }
                         }
                     }
+
+                    Text("Stored with the voice; send or store the voice to hear assignment changes on the FB-01.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.top, 4)
             } label: {
