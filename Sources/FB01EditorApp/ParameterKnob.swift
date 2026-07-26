@@ -86,6 +86,93 @@ struct ReadOnlyLEDValue: View {
     }
 }
 
+struct RockerSwitch: View {
+    var label: String
+    @Binding var isOn: Bool
+    var width: CGFloat = 58
+    var height: CGFloat = 68
+
+    var body: some View {
+        Button {
+            isOn.toggle()
+        } label: {
+            VStack(spacing: 5) {
+                RockerSwitchFace(isOn: isOn)
+                    .frame(width: width * 0.72, height: height)
+
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.75)
+                    .frame(width: width, height: 28, alignment: .top)
+            }
+            .frame(width: width)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn ? "On" : "Off")
+        .help("\(label): \(isOn ? "On" : "Off")")
+    }
+}
+
+private struct RockerSwitchFace: View {
+    var isOn: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let bezel = RoundedRectangle(cornerRadius: min(size.width, size.height) * 0.16)
+            let upperRect = CGRect(x: 4, y: 4, width: size.width - 8, height: size.height * 0.52 - 4)
+            let lowerRect = CGRect(x: 4, y: size.height * 0.48, width: size.width - 8, height: size.height * 0.52 - 4)
+
+            ZStack {
+                bezel
+                    .fill(Color(red: 0.05, green: 0.06, blue: 0.06))
+                    .overlay(bezel.stroke(Color.white.opacity(0.16), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.65), radius: 3, x: 0, y: 2)
+
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isOn ? Color(red: 0.03, green: 0.56, blue: 0.24) : Color(red: 0.07, green: 0.13, blue: 0.09))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(isOn ? Color.green.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1)
+                    )
+                    .shadow(color: isOn ? Color.green.opacity(0.70) : .clear, radius: 7)
+                    .frame(width: upperRect.width, height: upperRect.height)
+                    .position(x: upperRect.midX, y: upperRect.midY)
+
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isOn ? Color(red: 0.02, green: 0.08, blue: 0.04) : Color(red: 0.04, green: 0.05, blue: 0.05))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 5)
+                            .stroke(Color.white.opacity(isOn ? 0.05 : 0.15), lineWidth: 1)
+                    )
+                    .frame(width: lowerRect.width, height: lowerRect.height)
+                    .position(x: lowerRect.midX, y: lowerRect.midY)
+
+                if isOn {
+                    Circle()
+                        .stroke(Color.white.opacity(0.76), lineWidth: 2)
+                        .frame(width: size.width * 0.22, height: size.width * 0.22)
+                        .position(x: upperRect.midX, y: upperRect.midY + upperRect.height * 0.05)
+
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Color.white.opacity(0.32))
+                        .frame(width: upperRect.width * 0.62, height: 4)
+                        .position(x: upperRect.midX, y: upperRect.minY + 9)
+                }
+
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.white.opacity(isOn ? 0.12 : 0.22))
+                    .frame(width: lowerRect.width * 0.48, height: 3)
+                    .position(x: lowerRect.midX, y: lowerRect.midY - lowerRect.height * 0.10)
+            }
+        }
+    }
+}
+
 private struct KnobFace: View {
     var normalizedValue: Double
 

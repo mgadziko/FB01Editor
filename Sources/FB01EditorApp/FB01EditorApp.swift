@@ -6688,11 +6688,10 @@ struct LiveKeyboardMIDIControlsView: View {
             .font(.caption)
 
             HStack(spacing: 8) {
-                Toggle("MIDI In from External Keyboard", isOn: Binding(
+                RockerSwitch(label: "External Keyboard", isOn: Binding(
                     get: { document.externalKeyboardEnabled },
                     set: { document.setExternalKeyboardEnabled($0) }
-                ))
-                .toggleStyle(.checkbox)
+                ), width: 72, height: 56)
 
                 Menu {
                     ForEach(document.midiSources, id: \.index) { source in
@@ -7285,11 +7284,10 @@ struct SystemSettingsView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        Toggle("Memory Protect", isOn: Binding(
+                        RockerSwitch(label: "Memory Protect", isOn: Binding(
                             get: { document.systemMemoryProtectEnabled },
                             set: { document.setMemoryProtect($0) }
                         ))
-                        .toggleStyle(.switch)
 
                         Text("Protect ON blocks stored voices and configurations. Store operations set Protect OFF before writing.")
                             .font(.caption)
@@ -8412,8 +8410,7 @@ struct ConfigurationEditorControls: View {
 
                 GridRow {
                     label("Combine")
-                    Toggle("", isOn: $combineModeEnabled)
-                        .labelsHidden()
+                    RockerSwitch(label: "Combine", isOn: $combineModeEnabled, width: 62, height: 58)
                 }
             }
             .padding(.top, 4)
@@ -8614,8 +8611,7 @@ struct ConfigurationInstrumentInspector: View {
                     instrumentKnob("Level", value: instrument.outputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
                     instrumentKnob("Pan", value: instrument.pan, range: 0...127) { try instrument.settingPan($0) }
                 }
-                Toggle("LFO Enabled", isOn: lfoEnabledBinding)
-                    .toggleStyle(.checkbox)
+                RockerSwitch(label: "LFO Enabled", isOn: lfoEnabledBinding)
                 Picker("PMD", selection: pmdBinding) {
                     Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
                     Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
@@ -9342,8 +9338,7 @@ struct VoiceEditorControls: View {
 
                         GridRow {
                             label("LFO Sync")
-                            Toggle("", isOn: $lfoSyncEnabled)
-                                .labelsHidden()
+                            RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58)
                         }
                     }
                 }
@@ -9358,9 +9353,9 @@ struct VoiceEditorControls: View {
                     Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                         GridRow {
                             label("Assignment")
-                            VStack(alignment: .leading, spacing: 6) {
-                                Toggle("Left", isOn: $leftOutputEnabled)
-                                Toggle("Right", isOn: $rightOutputEnabled)
+                            HStack(alignment: .top, spacing: 12) {
+                                RockerSwitch(label: "Left", isOn: $leftOutputEnabled, width: 58, height: 62)
+                                RockerSwitch(label: "Right", isOn: $rightOutputEnabled, width: 58, height: 62)
                             }
                         }
                     }
@@ -9577,7 +9572,7 @@ struct AlgorithmDiagramView: View {
             let sumNodes = Self.sumNodes(for: algorithm)
             let strokeColor = isSelected ? Color.blue : Color.primary.opacity(0.82)
             let modulatorFill = isSelected ? Color.blue.opacity(0.10) : Color(nsColor: .textBackgroundColor)
-            let carrierFill = isSelected ? Color.blue.opacity(0.18) : Color.green.opacity(0.16)
+            let carrierFill = isSelected ? Color(red: 0.22, green: 0.98, blue: 0.34).opacity(0.42) : Color(red: 0.18, green: 0.92, blue: 0.26).opacity(0.34)
 
             ZStack {
                 RoundedRectangle(cornerRadius: 4)
@@ -9919,9 +9914,7 @@ struct OperatorInspector: View {
             }
 
             VStack(alignment: .leading, spacing: 12) {
-                Toggle("Disable Operator", isOn: disabledBinding)
-                    .font(.body.weight(.semibold))
-                    .toggleStyle(.checkbox)
+                RockerSwitch(label: "Disable Operator", isOn: disabledBinding)
 
                 OperatorControlGroup(title: "Tuning") {
                     HStack(alignment: .top, spacing: 12) {
@@ -10052,8 +10045,7 @@ struct OperatorInspector: View {
     }
 
     private func operatorToggle(_ label: String, binding: Binding<Bool>) -> some View {
-        Toggle(label, isOn: binding)
-            .toggleStyle(.checkbox)
+        RockerSwitch(label: label, isOn: binding)
     }
 }
 
