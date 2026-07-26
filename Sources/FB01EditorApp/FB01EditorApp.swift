@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import FB01Editor
 import SwiftUI
 import UniformTypeIdentifiers
@@ -200,6 +201,15 @@ private final class DeviceVoiceCopyAccessory: NSView {
 
 private let keyboardPreparationStaleAfter: TimeInterval = 10
 private let keyboardPreparationSettleDelay: TimeInterval = 0.30
+private let voiceBankNameFetchTimeout: TimeInterval = 25
+
+private enum FB01InstrumentParameter {
+    static let noteCount = 0x00
+    static let midiChannel = 0x01
+    static let highKeyLimit = 0x02
+    static let lowKeyLimit = 0x03
+    static let outputLevel = 0x08
+}
 
 private func voiceBankLoadMessage(bank: FB01VoiceBankData, systemChannel: Int) throws -> [UInt8] {
     try FB01SysExMessage.voiceBankDumpData(
@@ -226,27 +236,52 @@ private func voiceBankData(from bytes: [UInt8], expectedBankNumber: Int) throws 
     throw FB01AppError.message("Response did not contain Bank \(expectedBankNumber)")
 }
 
-private func keyboardAuditionPreparationMessages(systemChannel: Int, midiChannel: Int) throws -> [[UInt8]] {
-    [
+func keyboardAuditionPreparationMessages(systemChannel: Int, midiChannel: Int) throws -> [[UInt8]] {
+    var messages: [[UInt8]] = []
+
+    for instrument in 1..<FB01ConfigurationData.instrumentCount {
+        messages.append(try FB01SysExMessage.command(.instrumentParameterChange(
+            systemChannel: systemChannel,
+            instrument: instrument,
+            parameter: FB01InstrumentParameter.noteCount,
+            value: .oneByte(0)
+        )).bytes)
+    }
+
+    messages += [
         try FB01SysExMessage.command(.instrumentParameterChange(
             systemChannel: systemChannel,
             instrument: 0,
-            parameter: 0x00,
+            parameter: FB01InstrumentParameter.noteCount,
             value: .oneByte(8)
         )).bytes,
         try FB01SysExMessage.command(.instrumentParameterChange(
             systemChannel: systemChannel,
             instrument: 0,
-            parameter: 0x01,
+            parameter: FB01InstrumentParameter.midiChannel,
             value: .oneByte(UInt8(min(max(midiChannel, 0), 15)))
         )).bytes,
         try FB01SysExMessage.command(.instrumentParameterChange(
             systemChannel: systemChannel,
             instrument: 0,
-            parameter: 0x08,
+            parameter: FB01InstrumentParameter.highKeyLimit,
+            value: .oneByte(127)
+        )).bytes,
+        try FB01SysExMessage.command(.instrumentParameterChange(
+            systemChannel: systemChannel,
+            instrument: 0,
+            parameter: FB01InstrumentParameter.lowKeyLimit,
+            value: .oneByte(0)
+        )).bytes,
+        try FB01SysExMessage.command(.instrumentParameterChange(
+            systemChannel: systemChannel,
+            instrument: 0,
+            parameter: FB01InstrumentParameter.outputLevel,
             value: .oneByte(127)
         )).bytes,
     ]
+
+    return messages
 }
 
 private func backupFileName(prefix: String, timestamp: Date = Date()) -> String {
@@ -530,18 +565,20 @@ struct EditorDocumentCommands: View {
 final class EditorDocumentWorkspace: ObservableObject {
     @Published private(set) var voiceDocuments: [UUID: VoiceDocumentModel] = [:]
     @Published private(set) var configurationDocuments: [UUID: ConfigurationDocumentModel] = [:]
+    private var voiceDocumentObservers: [UUID: AnyCancellable] = [:]
+    private var configurationDocumentObservers: [UUID: AnyCancellable] = [:]
 
     func createVoiceDocument(voice: FB01VoiceData = EditorDocumentTemplates.voice(), systemChannel: Int = 0, statusMessage: String? = nil) -> UUID {
         let document = VoiceDocumentModel(voice: voice, systemChannel: systemChannel)
         document.statusMessage = statusMessage
-        voiceDocuments[document.id] = document
+        insertVoiceDocument(document)
         return document.id
     }
 
     func createConfigurationDocument(configuration: FB01ConfigurationData = EditorDocumentTemplates.configuration(), systemChannel: Int = 0, statusMessage: String? = nil) -> UUID {
         let document = ConfigurationDocumentModel(configuration: configuration, systemChannel: systemChannel)
         document.statusMessage = statusMessage
-        configurationDocuments[document.id] = document
+        insertConfigurationDocument(document)
         return document.id
     }
 
@@ -549,7 +586,7 @@ final class EditorDocumentWorkspace: ObservableObject {
         guard let loaded = VoiceDocumentModel.loadFromDisk() else {
             return nil
         }
-        voiceDocuments[loaded.id] = loaded
+        insertVoiceDocument(loaded)
         return loaded.id
     }
 
@@ -557,7 +594,7 @@ final class EditorDocumentWorkspace: ObservableObject {
         guard let loaded = ConfigurationDocumentModel.loadFromDisk() else {
             return nil
         }
-        configurationDocuments[loaded.id] = loaded
+        insertConfigurationDocument(loaded)
         return loaded.id
     }
 
@@ -571,10 +608,26 @@ final class EditorDocumentWorkspace: ObservableObject {
 
     func closeVoiceDocument(id: UUID) {
         voiceDocuments[id] = nil
+        voiceDocumentObservers[id] = nil
     }
 
     func closeConfigurationDocument(id: UUID) {
         configurationDocuments[id] = nil
+        configurationDocumentObservers[id] = nil
+    }
+
+    private func insertVoiceDocument(_ document: VoiceDocumentModel) {
+        voiceDocumentObservers[document.id] = document.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        voiceDocuments[document.id] = document
+    }
+
+    private func insertConfigurationDocument(_ document: ConfigurationDocumentModel) {
+        configurationDocumentObservers[document.id] = document.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        configurationDocuments[document.id] = document
     }
 
     func confirmApplicationTermination() -> NSApplication.TerminateReply {
@@ -783,6 +836,24 @@ struct VoiceDocumentFetchNameLookup: Sendable {
 
     var ramBankNames: [Int: [String]]
 
+    var loadedBankTitles: String {
+        let loaded = ramBankNames.keys.sorted().map { "Bank \($0)" }
+        return loaded.isEmpty ? "no RAM banks" : loaded.joined(separator: ", ")
+    }
+
+    func statusTitle(for location: VoiceDocumentFetchLocation) -> String {
+        switch location {
+        case .bank(let bank) where bank <= 2:
+            return ramBankNames[bank] == nil
+                ? "RAM names not loaded for Bank \(bank)"
+                : "RAM names loaded for Bank \(bank)"
+        case .bank:
+            return "Factory ROM names built in"
+        case .voiceRAM1:
+            return "Voice RAM names are not named by the fetch list"
+        }
+    }
+
     func name(location: VoiceDocumentFetchLocation, voiceNumber: Int) -> String? {
         switch location {
         case .bank(let bank) where bank <= 2:
@@ -800,6 +871,9 @@ struct VoiceDocumentFetchNameLookup: Sendable {
 
     func voiceMenuTitle(location: VoiceDocumentFetchLocation, voiceNumber: Int) -> String {
         guard let name = name(location: location, voiceNumber: voiceNumber), !name.isEmpty else {
+            if case .bank(let bank) = location, bank <= 2 {
+                return String(format: "%02d RAM name not loaded", voiceNumber)
+            }
             return "Voice \(voiceNumber)"
         }
         return String(format: "%02d %@", voiceNumber, name)
@@ -1186,6 +1260,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var selectedOperatorIndex = FB01VoiceData.dataIndex(forOperatorNumber: 1)
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
+    private var keyboardPreparationTask: Task<Void, Never>?
 
     init(voice: FB01VoiceData, systemChannel: Int, fileURL: URL? = nil) {
         self.voice = voice
@@ -1214,7 +1289,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
         do {
-            voice = try edit(voice)
+            let editedVoice = try edit(voice)
+            guard editedVoice != voice else { return }
+            voice = editedVoice
             preparedKeyboardVoiceSignature = nil
             preparedKeyboardVoiceDate = nil
             errorMessage = nil
@@ -1222,6 +1299,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         } catch {
             errorMessage = "Edit failed: \(error)"
         }
+    }
+
+    func setName(_ value: String) {
+        let limited = String(value.prefix(FB01VoiceData.nameLength))
+        guard limited != voice.name else { return }
+        updateVoice { try $0.settingName(limited) }
     }
 
     func save() {
@@ -1234,9 +1317,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func saveAs() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.sysex]
+        panel.allowedContentTypes = UTType.fb01VoiceFileTypes
         panel.directoryURL = preferredEditorSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeEditorFileName(voice.name, fallback: "voice")).syx"
+        panel.nameFieldStringValue = "\(safeEditorFileName(voice.name, fallback: "voice")).fb01voice"
         panel.message = "Save this voice document to a voice file."
         panel.prompt = "Save Voice to File"
 
@@ -1249,7 +1332,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     static func loadFromDisk() -> VoiceDocumentModel? {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.sysex, .data]
+        panel.allowedContentTypes = UTType.fb01ReadableVoiceFileTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
@@ -1273,7 +1356,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.sysex, .data]
+        panel.allowedContentTypes = UTType.fb01ReadableVoiceFileTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
@@ -1306,11 +1389,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let systemChannel = device.systemChannel
 
         isBusy = true
-        statusMessage = "Reading Bank 1 and Bank 2 voice names from FB-01..."
+        let systemChannelName = "System channel \(systemChannel + 1)"
+        statusMessage = "Reading Bank 1 and Bank 2 voice names from FB-01 on \(systemChannelName)..."
         errorMessage = nil
         let progressPanel = EditorProgressPanel(
             title: "Reading Voice Names",
-            message: "Reading Bank 1 and Bank 2 from the FB-01 so the Fetch dialog can show current RAM voice names."
+            message: "Reading Bank 1 and Bank 2 from the FB-01 on \(systemChannelName) so the Fetch dialog can show current RAM voice names."
         )
         progressPanel.show()
 
@@ -1323,18 +1407,20 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 )
             }.value
             progressPanel.dismiss()
+            statusMessage = "Voice name prefetch loaded \(nameLookup.loadedBankTitles) on \(systemChannelName)."
 
             guard let source = Self.chooseFetchSource(
                 title: "Fetch Voice from Device into Current Document",
                 actionTitle: "Fetch",
-                nameLookup: nameLookup
+                nameLookup: nameLookup,
+                systemChannel: systemChannel
             ) else {
                 statusMessage = nil
                 isBusy = false
                 return
             }
 
-            statusMessage = "Fetching voice from FB-01; waiting for device response..."
+            statusMessage = "Fetching voice from FB-01 on \(systemChannelName); waiting for device response..."
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try Self.fetchVoice(source: source, sourceIndex: sourceIndex, destinationIndex: destinationIndex, systemChannel: systemChannel)
@@ -1343,10 +1429,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 savedVoice = result.voice
                 self.systemChannel = result.systemChannel
                 fileURL = nil
-                statusMessage = "Fetched \(source.title(nameLookup: nameLookup)) into this document."
+                let fetchedName = result.voice.name.isEmpty ? "Untitled" : result.voice.name
+                statusMessage = "Fetched \(fetchedName) from \(source.title(nameLookup: nameLookup)) into this document."
                 errorMessage = nil
             } catch {
-                errorMessage = "Fetch failed: \(error)"
+                errorMessage = "Fetch failed on \(systemChannelName): \(error)"
                 statusMessage = nil
             }
             isBusy = false
@@ -1500,6 +1587,48 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
+    func scheduleKeyboardVoicePreparation(device: DocumentModel, delayNanoseconds: UInt64 = 150_000_000) {
+        keyboardPreparationTask?.cancel()
+
+        let destinationIndex = device.selectedDestinationIndex
+        let channel = min(max(device.keyboardChannel, 0), 15)
+
+        do {
+            let signature = keyboardPreparationSignature(midiChannel: channel)
+            guard needsKeyboardPreparation(signature: signature) else {
+                return
+            }
+
+            let messages = try buildKeyboardPreparationMessages(midiChannel: channel)
+            keyboardPreparationTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                    try Task.checkCancellation()
+                    try await Task.detached(priority: .userInitiated) {
+                        for message in messages {
+                            try FB01MIDI.sendImmediate(message, destinationIndex: destinationIndex)
+                        }
+                    }.value
+                    try await Task.sleep(nanoseconds: UInt64(keyboardPreparationSettleDelay * 1_000_000_000))
+                    try Task.checkCancellation()
+                    await MainActor.run {
+                        self?.markKeyboardPrepared(signature: signature)
+                    }
+                } catch is CancellationError {
+                    return
+                } catch {
+                    await MainActor.run {
+                        self?.errorMessage = "Keyboard voice preparation failed: \(error)"
+                        self?.statusMessage = nil
+                    }
+                }
+            }
+        } catch {
+            errorMessage = "Keyboard voice preparation failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
     func receiveExternalKeyboardMessage(_ message: [UInt8], device: DocumentModel) -> Bool {
         guard let status = message.first, (0x80...0xEF).contains(status) else {
             return false
@@ -1604,15 +1733,32 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     private func keyboardPreparationMessages(midiChannel: Int) throws -> [[UInt8]] {
-        let signature = "\(midiChannel)-\(voice.bytes)"
-        guard preparedKeyboardVoiceSignature != signature || isKeyboardPreparationStale else {
+        let signature = keyboardPreparationSignature(midiChannel: midiChannel)
+        guard needsKeyboardPreparation(signature: signature) else {
             return []
         }
 
+        let messages = try buildKeyboardPreparationMessages(midiChannel: midiChannel)
+        markKeyboardPrepared(signature: signature)
+        return messages
+    }
+
+    private func buildKeyboardPreparationMessages(midiChannel: Int) throws -> [[UInt8]] {
         let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
+        return [try artifact.sysexBytes] + (try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel))
+    }
+
+    private func keyboardPreparationSignature(midiChannel: Int) -> String {
+        "\(midiChannel)-\(voice.bytes)"
+    }
+
+    private func needsKeyboardPreparation(signature: String) -> Bool {
+        preparedKeyboardVoiceSignature != signature || isKeyboardPreparationStale
+    }
+
+    private func markKeyboardPrepared(signature: String) {
         preparedKeyboardVoiceSignature = signature
         preparedKeyboardVoiceDate = Date()
-        return [try artifact.sysexBytes] + (try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel))
     }
 
     private var isKeyboardPreparationStale: Bool {
@@ -1691,7 +1837,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    private static func chooseFetchSource(title: String, actionTitle: String, nameLookup: VoiceDocumentFetchNameLookup = .empty) -> VoiceDocumentFetchSource? {
+    private static func chooseFetchSource(
+        title: String,
+        actionTitle: String,
+        nameLookup: VoiceDocumentFetchNameLookup = .empty,
+        systemChannel: Int? = nil
+    ) -> VoiceDocumentFetchSource? {
         let sourcePopup = NSPopUpButton(frame: .zero, pullsDown: false)
         sourcePopup.addItem(withTitle: "Current Instrument Voice")
         sourcePopup.addItem(withTitle: "Stored Voice Slot")
@@ -1709,6 +1860,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         let voicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        let nameStatusLabel = NSTextField(labelWithString: "")
+        nameStatusLabel.textColor = .secondaryLabelColor
+        nameStatusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
 
         let controller = VoiceFetchDialogController()
         controller.sourcePopup = sourcePopup
@@ -1724,6 +1878,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 voicePopup.addItem(withTitle: nameLookup.voiceMenuTitle(location: location, voiceNumber: voiceNumber))
             }
             voicePopup.selectItem(at: min(selectedVoice, FB01VoiceBankData.voiceCount - 1))
+            if let selectedTitle = voicePopup.selectedItem?.title {
+                voicePopup.setTitle(selectedTitle)
+            }
+            let channelSuffix = systemChannel.map { " - System channel \($0 + 1)" } ?? ""
+            nameStatusLabel.stringValue = "\(nameLookup.statusTitle(for: location))\(channelSuffix)"
         }
 
         let panel = NSPanel(
@@ -1765,6 +1924,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         addRow(label: "Instrument:", popup: instrumentPopup, y: 160)
         addRow(label: "Bank:", popup: bankPopup, y: 122)
         addRow(label: "Voice:", popup: voicePopup, y: 84)
+
+        nameStatusLabel.frame = NSRect(x: 196, y: 66, width: 300, height: 16)
+        content.addSubview(nameStatusLabel)
 
         let warningLabel = NSTextField(wrappingLabelWithString: "Stored voice fetch reads the whole selected bank internally, then opens only the chosen voice document. Store remains limited to writable Banks 1-2.")
         warningLabel.textColor = .secondaryLabelColor
@@ -1890,9 +2052,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
                 systemChannel: systemChannel,
-                timeout: 5
+                timeout: voiceBankNameFetchTimeout
             ),
-                  let names = try? voiceNames(fromVoiceBankDump: bytes, expectedBank: bank) else {
+                  let names = try? voiceNames(fromVoiceBankDump: bytes, expectedBankNumber: bank) else {
                 continue
             }
             namesByBank[bank] = names
@@ -1900,17 +2062,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         return VoiceDocumentFetchNameLookup(ramBankNames: namesByBank)
     }
 
-    nonisolated private static func voiceNames(fromVoiceBankDump bytes: [UInt8], expectedBank: Int) throws -> [String]? {
-        let artifact = try FB01Artifact(sysexBytes: bytes)
-        for message in artifact.messages {
-            if case let .voiceBankDumpData(_, fetchedBank, _, data, _) = message, fetchedBank == expectedBank - 1 {
-                let bankData = try FB01VoiceBankData(bank: fetchedBank, data: data)
-                return bankData.voices.map { summary in
-                    summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
-                }
-            }
+    nonisolated private static func voiceNames(fromVoiceBankDump bytes: [UInt8], expectedBankNumber: Int) throws -> [String] {
+        let bankData = try voiceBankData(from: bytes, expectedBankNumber: expectedBankNumber)
+        return bankData.voices.map { summary in
+            summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
         }
-        return nil
     }
 }
 
@@ -1952,12 +2108,20 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     func updateConfiguration(_ edit: (FB01ConfigurationData) throws -> FB01ConfigurationData) {
         do {
-            configuration = try edit(configuration)
+            let editedConfiguration = try edit(configuration)
+            guard editedConfiguration != configuration else { return }
+            configuration = editedConfiguration
             errorMessage = nil
             statusMessage = nil
         } catch {
             errorMessage = "Edit failed: \(error)"
         }
+    }
+
+    func setName(_ value: String) {
+        let limited = String(value.prefix(FB01ConfigurationData.nameLength))
+        guard limited != configuration.name else { return }
+        updateConfiguration { try $0.settingName(limited) }
     }
 
     func save() {
@@ -1970,9 +2134,9 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     func saveAs() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.sysex]
+        panel.allowedContentTypes = UTType.fb01ConfigurationFileTypes
         panel.directoryURL = preferredEditorSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeEditorFileName(configuration.name, fallback: "configuration")).syx"
+        panel.nameFieldStringValue = "\(safeEditorFileName(configuration.name, fallback: "configuration")).fb01config"
         panel.message = "Save this configuration document to a configuration file."
         panel.prompt = "Save Configuration to File"
 
@@ -1985,7 +2149,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     static func loadFromDisk() -> ConfigurationDocumentModel? {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.sysex, .data]
+        panel.allowedContentTypes = UTType.fb01ReadableConfigurationFileTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
@@ -2009,7 +2173,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.sysex, .data]
+        panel.allowedContentTypes = UTType.fb01ReadableConfigurationFileTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
@@ -2430,7 +2594,7 @@ struct FB01EditorApplication: App {
 
     var body: some Scene {
         WindowGroup("Forest FB-01 Editor") {
-            ContentView(document: document)
+            ContentView(document: document, workspace: documentWorkspace)
                 .frame(minWidth: 840, minHeight: 540)
                 .onAppear {
                     appDelegate.document = document
@@ -3041,7 +3205,7 @@ final class DocumentModel: ObservableObject {
 
     func openSysEx() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.sysex, .data]
+        panel.allowedContentTypes = UTType.fb01ReadableFileTypes
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.directoryURL = preferredLoadDirectoryURL()
@@ -3397,9 +3561,9 @@ final class DocumentModel: ObservableObject {
         }
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.sysex]
+        panel.allowedContentTypes = UTType.fb01ConfigurationFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).syx"
+        panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).fb01config"
         panel.message = "Save this configuration to a configuration file."
         panel.prompt = "Save Configuration to File"
 
@@ -3453,9 +3617,9 @@ final class DocumentModel: ObservableObject {
         }
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.sysex]
+        panel.allowedContentTypes = allowedContentTypes(for: selectedSource.artifact.kind)
         panel.directoryURL = preferredSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeFileName(selectedSource.title)).syx"
+        panel.nameFieldStringValue = "\(safeFileName(selectedSource.title)).\(preferredFileExtension(for: selectedSource.artifact.kind))"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -3484,11 +3648,11 @@ final class DocumentModel: ObservableObject {
         }
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.sysex]
+        panel.allowedContentTypes = [.fb01ConfigurationBank, .sysex]
         panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = configurationSources.count == 20
-            ? "fb01-configurations-1-20.syx"
-            : "fb01-configurations.syx"
+            ? "fb01-configurations-1-20.fb01configbank"
+            : "fb01-configurations.fb01configbank"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -3521,9 +3685,9 @@ final class DocumentModel: ObservableObject {
         }
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.sysex]
+        panel.allowedContentTypes = [.fb01VoiceBank, .sysex]
         panel.directoryURL = preferredSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeFileName(sources[index].title))-edited.syx"
+        panel.nameFieldStringValue = "\(safeFileName(sources[index].title))-edited.fb01voicebank"
         panel.message = "Save the edited voice bank as a SysEx file."
         panel.prompt = "Save Edited Bank"
 
@@ -4647,9 +4811,9 @@ final class DocumentModel: ObservableObject {
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
                 systemChannel: systemChannel,
-                timeout: 5
+                timeout: voiceBankNameFetchTimeout
             ),
-                  let names = try? voiceNames(fromVoiceBankDump: bytes, expectedBank: bank) else {
+                  let names = try? voiceNames(fromVoiceBankDump: bytes, expectedBankNumber: bank) else {
                 continue
             }
             namesByBank[bank] = names
@@ -4657,17 +4821,11 @@ final class DocumentModel: ObservableObject {
         return VoiceDocumentFetchNameLookup(ramBankNames: namesByBank)
     }
 
-    nonisolated private static func voiceNames(fromVoiceBankDump bytes: [UInt8], expectedBank: Int) throws -> [String]? {
-        let artifact = try FB01Artifact(sysexBytes: bytes)
-        for message in artifact.messages {
-            if case let .voiceBankDumpData(_, fetchedBank, _, data, _) = message, fetchedBank == expectedBank - 1 {
-                let bankData = try FB01VoiceBankData(bank: fetchedBank, data: data)
-                return bankData.voices.map { summary in
-                    summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
-                }
-            }
+    nonisolated private static func voiceNames(fromVoiceBankDump bytes: [UInt8], expectedBankNumber: Int) throws -> [String] {
+        let bankData = try voiceBankData(from: bytes, expectedBankNumber: expectedBankNumber)
+        return bankData.voices.map { summary in
+            summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
         }
-        return nil
     }
 
     private func storeVoicePayloadByBankImage(_ voice: FB01VoiceData, systemChannel: Int, options: VoiceDocumentStoreOptions) {
@@ -4955,9 +5113,9 @@ final class DocumentModel: ObservableObject {
             }
 
             let panel = NSSavePanel()
-            panel.allowedContentTypes = [.sysex]
+            panel.allowedContentTypes = allowedContentTypes(for: sources[index].artifact.kind)
             panel.directoryURL = preferredSaveDirectoryURL()
-            panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).syx"
+            panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).\(preferredFileExtension(for: sources[index].artifact.kind))"
             panel.message = "Save edited source before quitting."
 
             guard panel.runModal() == .OK, let url = panel.url else {
@@ -6296,10 +6454,58 @@ struct LibrarySource: Identifiable, Equatable {
 
 private extension UTType {
     static let sysex = UTType(filenameExtension: "syx")!
+    static let fb01SingleVoice = UTType(filenameExtension: "fb01voice")!
+    static let fb01SingleConfiguration = UTType(filenameExtension: "fb01config")!
+    static let fb01VoiceBank = UTType(filenameExtension: "fb01voicebank")!
+    static let fb01ConfigurationBank = UTType(filenameExtension: "fb01configbank")!
+
+    static let fb01VoiceFileTypes: [UTType] = [.fb01SingleVoice, .sysex]
+    static let fb01ConfigurationFileTypes: [UTType] = [.fb01SingleConfiguration, .sysex]
+    static let fb01ReadableVoiceFileTypes: [UTType] = [.fb01SingleVoice, .fb01VoiceBank, .sysex, .data]
+    static let fb01ReadableConfigurationFileTypes: [UTType] = [.fb01SingleConfiguration, .fb01ConfigurationBank, .sysex, .data]
+    static let fb01ReadableFileTypes: [UTType] = [
+        .fb01SingleVoice,
+        .fb01SingleConfiguration,
+        .fb01VoiceBank,
+        .fb01ConfigurationBank,
+        .sysex,
+        .data,
+    ]
+}
+
+private func preferredFileExtension(for kind: FB01ArtifactKind) -> String {
+    switch kind {
+    case .singleVoice:
+        return "fb01voice"
+    case .voiceBank:
+        return "fb01voicebank"
+    case .currentConfiguration, .storedConfiguration:
+        return "fb01config"
+    case .configurationSet:
+        return "fb01configbank"
+    case .unitID, .rawSysEx:
+        return "syx"
+    }
+}
+
+private func allowedContentTypes(for kind: FB01ArtifactKind) -> [UTType] {
+    switch kind {
+    case .singleVoice:
+        return UTType.fb01VoiceFileTypes
+    case .voiceBank:
+        return [.fb01VoiceBank, .sysex]
+    case .currentConfiguration, .storedConfiguration:
+        return UTType.fb01ConfigurationFileTypes
+    case .configurationSet:
+        return [.fb01ConfigurationBank, .sysex]
+    case .unitID, .rawSysEx:
+        return [.sysex, .data]
+    }
 }
 
 struct ContentView: View {
     @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
 
     var body: some View {
         VStack(spacing: 0) {
@@ -6307,7 +6513,7 @@ struct ContentView: View {
 
             Divider()
 
-            LibraryView(document: document)
+            StatusWindowView(document: document, workspace: workspace)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Divider()
@@ -6389,7 +6595,7 @@ struct ToolbarView: View {
             Divider()
                 .frame(height: 20)
 
-            Text(document.selectedTitle ?? "No Source")
+            Text("Global Status")
                 .font(.headline)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -6719,8 +6925,9 @@ final class PianoKeyboardNSView: NSView {
 
         stopActiveNote()
         activeNote = note
-        noteOn(note)
         needsDisplay = true
+        displayIfNeeded()
+        noteOn(note)
     }
 
     private func stopActiveNote() {
@@ -6728,9 +6935,10 @@ final class PianoKeyboardNSView: NSView {
             return
         }
 
-        noteOff(activeNote)
         self.activeNote = nil
         needsDisplay = true
+        displayIfNeeded()
+        noteOff(activeNote)
     }
 
     private func note(at point: CGPoint) -> Int? {
@@ -6747,8 +6955,10 @@ final class PianoKeyboardNSView: NSView {
     }
 }
 
-struct LibraryView: View {
+struct StatusWindowView: View {
     @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         HStack(spacing: 0) {
@@ -6763,10 +6973,10 @@ struct LibraryView: View {
                             .padding(.top, 2)
 
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("System")
+                            Text("Global Status")
                                 .font(.body.weight(.medium))
                                 .lineLimit(1)
-                            Text("Protect and output")
+                            Text("MIDI and document overview")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -6785,7 +6995,54 @@ struct LibraryView: View {
                 .buttonStyle(.plain)
 
                 HStack(spacing: 6) {
-                    Text("Library Workspace")
+                    Text("Open Documents")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(workspace.voiceDocuments.count + workspace.configurationDocuments.count)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+
+                ScrollView {
+                    LazyVStack(spacing: 4) {
+                        ForEach(openVoiceDocuments, id: \.id) { item in
+                            documentButton(
+                                title: item.title,
+                                subtitle: "Voice document",
+                                systemImage: "waveform",
+                                isEdited: item.isEdited
+                            ) {
+                                openWindow(id: "voice-document", value: item.id)
+                            }
+                        }
+
+                        ForEach(openConfigurationDocuments, id: \.id) { item in
+                            documentButton(
+                                title: item.title,
+                                subtitle: "Configuration document",
+                                systemImage: "doc.text",
+                                isEdited: item.isEdited
+                            ) {
+                                openWindow(id: "configuration-document", value: item.id)
+                            }
+                        }
+
+                        if workspace.voiceDocuments.isEmpty && workspace.configurationDocuments.isEmpty {
+                            Text("No voice or configuration documents are open.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+                .frame(maxHeight: 240)
+
+                HStack(spacing: 6) {
+                    Text("Library Items")
                         .font(.headline)
 
                     Spacer()
@@ -6868,104 +7125,229 @@ struct LibraryView: View {
 
             Divider()
 
-            if document.sidebarSelection == .system {
-                SystemSettingsView(document: document)
-            } else if let source = document.selectedSource {
-                ArtifactView(document: document, source: source)
-            } else {
-                EmptyStateView()
-            }
+            GlobalStatusView(document: document, workspace: workspace)
         }
+    }
+
+    private var openVoiceDocuments: [VoiceDocumentModel] {
+        workspace.voiceDocuments.values.sorted {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+    }
+
+    private var openConfigurationDocuments: [ConfigurationDocumentModel] {
+        workspace.configurationDocuments.values.sorted {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+    }
+
+    private func documentButton(
+        title: String,
+        subtitle: String,
+        systemImage: String,
+        isEdited: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
+                    .frame(width: 14, height: 16)
+                    .padding(.top, 2)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 5) {
+                        Text(title.replacingOccurrences(of: " *", with: ""))
+                            .font(.body.weight(.medium))
+                            .lineLimit(1)
+                        if isEdited {
+                            Text("Edited")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct GlobalStatusView: View {
+    @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("Status Window")
+                    .font(.title2.weight(.semibold))
+
+                HStack(alignment: .top, spacing: 14) {
+                    statusCard(title: "FB-01 Connection", rows: [
+                        KeyValueRow("MIDI In", document.selectedSourceName),
+                        KeyValueRow("MIDI Out", document.selectedDestinationName),
+                        KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
+                        KeyValueRow("MIDI Sources", "\(document.midiSources.count)"),
+                        KeyValueRow("MIDI Destinations", "\(document.midiDestinations.count)"),
+                    ])
+
+                    statusCard(title: "External Keyboard", rows: [
+                        KeyValueRow("Enabled", document.externalKeyboardEnabled ? "On" : "Off"),
+                        KeyValueRow("MIDI In", document.selectedKeyboardSourceName),
+                        KeyValueRow("Status", document.externalKeyboardStatus),
+                        KeyValueRow("Channel", "\(document.keyboardChannel + 1)"),
+                        KeyValueRow("Velocity", "\(document.keyboardVelocity)"),
+                    ])
+                }
+
+                HStack(alignment: .top, spacing: 14) {
+                    statusCard(title: "Open Documents", rows: [
+                        KeyValueRow("Voice Documents", "\(workspace.voiceDocuments.count)"),
+                        KeyValueRow("Configuration Documents", "\(workspace.configurationDocuments.count)"),
+                        KeyValueRow("Edited Documents", "\(editedDocumentCount)"),
+                    ])
+
+                    statusCard(title: "Library Workspace", rows: [
+                        KeyValueRow("Library Items", "\(document.sources.count)"),
+                        KeyValueRow("Edited Library Items", "\(document.selectedEditedSourceCount)"),
+                        KeyValueRow("Selected Item", document.selectedSource?.title ?? "None"),
+                    ])
+                }
+
+                SystemSettingsView(document: document, showsSummary: false)
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var editedDocumentCount: Int {
+        workspace.voiceDocuments.values.filter(\.isEdited).count
+            + workspace.configurationDocuments.values.filter(\.isEdited).count
+    }
+
+    private func statusCard(title: String, rows: [KeyValueRow]) -> some View {
+        GroupBox {
+            SummaryPanel(rows: rows)
+                .padding(.top, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            SectionTitle(title)
+        }
+        .frame(minWidth: 300, maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
 struct SystemSettingsView: View {
     @ObservedObject var document: DocumentModel
+    var showsSummary = true
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+        Group {
+            if showsSummary {
+                ScrollView {
+                    content
+                        .padding(18)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                content
+            }
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            if showsSummary {
                 SummaryPanel(rows: [
                     KeyValueRow("Destination", document.selectedDestinationName),
                     KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
                     KeyValueRow("Protect", document.systemMemoryProtectEnabled ? "On" : "Off"),
                     KeyValueRow("Master Output", "\(document.systemMasterOutputLevel)"),
                 ])
-
-                HStack(alignment: .top, spacing: 14) {
-                    GroupBox {
-                        Picker("Channel", selection: Binding(
-                            get: { document.systemChannel },
-                            set: { document.setSystemChannel($0) }
-                        )) {
-                            ForEach(0..<16, id: \.self) { channel in
-                                Text("\(channel + 1)").tag(channel)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 170)
-                        .padding(.top, 4)
-                    } label: {
-                        SectionTitle("System Channel")
-                    }
-                    .frame(width: 220, alignment: .topLeading)
-
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Memory Protect", isOn: Binding(
-                                get: { document.systemMemoryProtectEnabled },
-                                set: { document.setMemoryProtect($0) }
-                            ))
-                            .toggleStyle(.switch)
-
-                            Text("Protect ON blocks stored voices and configurations. Store operations set Protect OFF before writing.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .padding(.top, 4)
-                    } label: {
-                        SectionTitle("Protect")
-                    }
-                    .frame(width: 300, alignment: .topLeading)
-
-                    GroupBox {
-                        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                            GridRow {
-                                Text("Level")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                                Slider(
-                                    value: Binding(
-                                        get: { Double(document.systemMasterOutputLevel) },
-                                        set: { document.systemMasterOutputLevel = Int($0.rounded()) }
-                                    ),
-                                    in: 0...127,
-                                    step: 1
-                                )
-                                .frame(width: 220)
-                                Text("\(document.systemMasterOutputLevel)")
-                                    .monospacedDigit()
-                                    .frame(width: 34, alignment: .trailing)
-                            }
-                        }
-                        .padding(.top, 4)
-
-                        Button {
-                            document.setMasterOutputLevel(document.systemMasterOutputLevel)
-                        } label: {
-                            Label("Send Output Level", systemImage: "speaker.wave.2")
-                        }
-                        .padding(.top, 10)
-                        .disabled(document.isBusy)
-                    } label: {
-                        SectionTitle("Master Output")
-                    }
-                    .frame(width: 360, alignment: .topLeading)
-                }
             }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(alignment: .top, spacing: 14) {
+                GroupBox {
+                    Picker("Channel", selection: Binding(
+                        get: { document.systemChannel },
+                        set: { document.setSystemChannel($0) }
+                    )) {
+                        ForEach(0..<16, id: \.self) { channel in
+                            Text("\(channel + 1)").tag(channel)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 170)
+                    .padding(.top, 4)
+                } label: {
+                    SectionTitle("System Channel")
+                }
+                .frame(width: 220, alignment: .topLeading)
+
+                GroupBox {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Toggle("Memory Protect", isOn: Binding(
+                            get: { document.systemMemoryProtectEnabled },
+                            set: { document.setMemoryProtect($0) }
+                        ))
+                        .toggleStyle(.switch)
+
+                        Text("Protect ON blocks stored voices and configurations. Store operations set Protect OFF before writing.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 4)
+                } label: {
+                    SectionTitle("Protect")
+                }
+                .frame(width: 300, alignment: .topLeading)
+
+                GroupBox {
+                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                        GridRow {
+                            Text("Level")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Slider(
+                                value: Binding(
+                                    get: { Double(document.systemMasterOutputLevel) },
+                                    set: { document.systemMasterOutputLevel = Int($0.rounded()) }
+                                ),
+                                in: 0...127,
+                                step: 1
+                            )
+                            .frame(width: 220)
+                            Text("\(document.systemMasterOutputLevel)")
+                                .monospacedDigit()
+                                .frame(width: 34, alignment: .trailing)
+                        }
+                    }
+                    .padding(.top, 4)
+
+                    Button {
+                        document.setMasterOutputLevel(document.systemMasterOutputLevel)
+                    } label: {
+                        Label("Send Output Level", systemImage: "speaker.wave.2")
+                    }
+                    .padding(.top, 10)
+                    .disabled(document.isBusy)
+                } label: {
+                    SectionTitle("Master Output")
+                }
+                .frame(width: 360, alignment: .topLeading)
+            }
         }
     }
 }
@@ -7343,6 +7725,7 @@ struct VoiceDocumentLiveKeyboardView: View {
         .background(WindowActivationObserver(
             onBecomeKey: {
                 registerExternalKeyboardHandler()
+                document.scheduleKeyboardVoicePreparation(device: device)
             },
             onResignKey: {
                 // Keep the last active document handler until another document takes over or this window closes.
@@ -7350,9 +7733,19 @@ struct VoiceDocumentLiveKeyboardView: View {
         ))
         .onAppear {
             registerExternalKeyboardHandler()
+            document.scheduleKeyboardVoicePreparation(device: device)
         }
         .onDisappear {
             device.setExternalKeyboardDocumentHandler(nil)
+        }
+        .onChange(of: document.voice) {
+            document.scheduleKeyboardVoicePreparation(device: device)
+        }
+        .onChange(of: device.keyboardChannel) {
+            document.scheduleKeyboardVoicePreparation(device: device)
+        }
+        .onChange(of: device.selectedDestinationIndex) {
+            document.scheduleKeyboardVoicePreparation(device: device)
         }
     }
 
@@ -7588,8 +7981,7 @@ struct VoiceDocumentWindow: View {
     }
 
     private func setName(_ value: String) {
-        let limited = String(value.prefix(FB01VoiceData.nameLength))
-        document.updateVoice { try $0.settingName(limited) }
+        document.setName(value)
     }
 }
 
@@ -7740,8 +8132,7 @@ struct ConfigurationDocumentWindow: View {
     }
 
     private func setName(_ value: String) {
-        let limited = String(value.prefix(FB01ConfigurationData.nameLength))
-        document.updateConfiguration { try $0.settingName(limited) }
+        document.setName(value)
     }
 }
 
@@ -8909,9 +9300,9 @@ struct VoiceDetailView: View {
 
     private func exportVoice() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.sysex]
+        panel.allowedContentTypes = UTType.fb01VoiceFileTypes
         panel.directoryURL = document.preferredSaveDirectoryURL()
-        panel.nameFieldStringValue = "voice-\(summary.number)-\(safeFileName(editableVoice.name)).syx"
+        panel.nameFieldStringValue = "voice-\(summary.number)-\(safeFileName(editableVoice.name)).fb01voice"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return

@@ -70,6 +70,21 @@ open "dist/Forest FB-01 Editor.app"
 
 The script creates an ad-hoc signed development bundle at `dist/Forest FB-01 Editor.app`.
 
+## Xcode Project
+
+The repo also includes a native Xcode project:
+
+```sh
+open "Forest FB-01 Editor.xcodeproj"
+```
+
+The primary app scheme is `Forest FB-01 Editor`. The project also contains targets for the shared `FB01Editor` library, `fb01-dump`, `fb01-gm-load`, and `FB01EditorTests`. A local `.xcode-derived/` folder is ignored for command-line Xcode builds:
+
+```sh
+xcodebuild -project "Forest FB-01 Editor.xcodeproj" -scheme "Forest FB-01 Editor" -configuration Debug -derivedDataPath .xcode-derived build CODE_SIGNING_ALLOWED=NO
+xcodebuild -project "Forest FB-01 Editor.xcodeproj" -scheme "Forest FB-01 Editor" -configuration Debug -derivedDataPath .xcode-derived test CODE_SIGNING_ALLOWED=NO
+```
+
 ## MIDI Capture And Safe Dump Requests
 
 The `fb01-dump` executable is the first CoreMIDI tool. Manual capture is receive-only:

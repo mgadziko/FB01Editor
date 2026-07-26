@@ -64,6 +64,24 @@ import Testing
 }
 
 @MainActor
+@Test func editorDocumentWorkspacePublishesChildDocumentTitleChanges() throws {
+    let workspace = EditorDocumentWorkspace()
+    let voiceID = workspace.createVoiceDocument()
+    let voice = try #require(workspace.voiceDocument(id: voiceID))
+
+    var observedChangeCount = 0
+    let observer = workspace.objectWillChange.sink {
+        observedChangeCount += 1
+    }
+
+    voice.updateVoice { try $0.settingName("Grand") }
+
+    #expect(voice.title == "Grand *")
+    #expect(observedChangeCount > 0)
+    observer.cancel()
+}
+
+@MainActor
 @Test func editorDocumentTitlesShowBusyAndUnsavedState() throws {
     var voiceData = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
     voiceData = try voiceData.settingName("TITLE")
@@ -115,6 +133,19 @@ import Testing
     #expect(unaffectedOperator.releaseRate == 0)
 }
 
+@Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {
+    let messages = try keyboardAuditionPreparationMessages(systemChannel: 0, midiChannel: 4)
+
+    #expect(messages.count == 12)
+    #expect(messages[0] == [0xF0, 0x43, 0x75, 0x00, 0x19, 0x00, 0x00, 0xF7])
+    #expect(messages[6] == [0xF0, 0x43, 0x75, 0x00, 0x1F, 0x00, 0x00, 0xF7])
+    #expect(messages[7] == [0xF0, 0x43, 0x75, 0x00, 0x18, 0x00, 0x08, 0xF7])
+    #expect(messages[8] == [0xF0, 0x43, 0x75, 0x00, 0x18, 0x01, 0x04, 0xF7])
+    #expect(messages[9] == [0xF0, 0x43, 0x75, 0x00, 0x18, 0x02, 0x7F, 0xF7])
+    #expect(messages[10] == [0xF0, 0x43, 0x75, 0x00, 0x18, 0x03, 0x00, 0xF7])
+    #expect(messages[11] == [0xF0, 0x43, 0x75, 0x00, 0x18, 0x08, 0x7F, 0xF7])
+}
+
 @MainActor
 @Test func voiceAndConfigurationDocumentReplacementResetsSavedBaseline() throws {
     var originalVoice = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
@@ -144,6 +175,19 @@ import Testing
     #expect(configuration.isEdited)
 }
 
+@MainActor
+@Test func configurationDocumentNameSetterIgnoresSemanticNoOpPaddingChanges() throws {
+    var configurationBytes = Array(repeating: UInt8(0), count: FB01ConfigurationData.byteCount)
+    configurationBytes.replaceSubrange(0..<6, with: Array("single".utf8))
+    let configurationData = try FB01ConfigurationData(bytes: configurationBytes)
+    let configuration = ConfigurationDocumentModel(configuration: configurationData, systemChannel: 0)
+
+    configuration.setName("single")
+
+    #expect(!configuration.isEdited)
+    #expect(configuration.configuration.bytes.prefix(FB01ConfigurationData.nameLength).elementsEqual(configurationBytes.prefix(FB01ConfigurationData.nameLength)))
+}
+
 @Test func factoryVoiceNameLookupUsesROMBankNames() {
     #expect(FB01FactoryVoiceNames.namesByBank.keys.sorted() == [3, 4, 5, 6, 7])
     #expect(FB01FactoryVoiceNames.namesByBank.values.allSatisfy { $0.count == FB01VoiceBankData.voiceCount })
@@ -168,6 +212,10 @@ import Testing
     #expect(lookup.voiceMenuTitle(location: .bank(1), voiceNumber: 1) == "01 RAMONE")
     #expect(lookup.voiceMenuTitle(location: .bank(3), voiceNumber: 1) == "01 Brass")
     #expect(lookup.voiceMenuTitle(location: .voiceRAM1, voiceNumber: 1) == "Voice 1")
+    #expect(VoiceDocumentFetchNameLookup.empty.voiceMenuTitle(location: .bank(1), voiceNumber: 9) == "09 RAM name not loaded")
+    #expect(lookup.statusTitle(for: .bank(1)) == "RAM names loaded for Bank 1")
+    #expect(lookup.statusTitle(for: .bank(2)) == "RAM names not loaded for Bank 2")
+    #expect(lookup.statusTitle(for: .bank(3)) == "Factory ROM names built in")
 }
 
 @Test func configurationFetchLookupUsesFactoryReadOnlyNames() {

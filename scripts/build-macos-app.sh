@@ -41,6 +41,7 @@ rm -rf "$STAGED_APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/$EXECUTABLE_NAME"
 cp "$ICON_PATH" "$RESOURCES_DIR/$ICON_FILE"
+cp "$ROOT_DIR"/Resources/*DocumentIcon.icns "$RESOURCES_DIR/"
 
 /usr/libexec/PlistBuddy -c "Clear dict" "$CONTENTS_DIR/Info.plist" >/dev/null 2>&1 || true
 /usr/libexec/PlistBuddy -c "Add :CFBundleName string $APP_NAME" "$CONTENTS_DIR/Info.plist"
@@ -54,6 +55,7 @@ cp "$ICON_PATH" "$RESOURCES_DIR/$ICON_FILE"
 /usr/libexec/PlistBuddy -c "Add :FB01EditorBuildTimestamp string $BUILD_TIMESTAMP" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 14.0" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSHighResolutionCapable bool true" "$CONTENTS_DIR/Info.plist"
+"$ROOT_DIR/scripts/stamp-document-types.sh" "$CONTENTS_DIR/Info.plist"
 
 printf "APPL????" > "$CONTENTS_DIR/PkgInfo"
 

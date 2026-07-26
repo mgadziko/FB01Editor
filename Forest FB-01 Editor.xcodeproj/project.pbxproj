@@ -1,0 +1,814 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		100000000000000000000001 /* FB01Artifact.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* FB01Artifact.swift */; };
+		100000000000000000000002 /* FB01Data.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* FB01Data.swift */; };
+		100000000000000000000003 /* FB01GeneralMIDI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* FB01GeneralMIDI.swift */; };
+		100000000000000000000004 /* FB01MIDI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* FB01MIDI.swift */; };
+		100000000000000000000005 /* FB01SysEx.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* FB01SysEx.swift */; };
+		100000000000000000000006 /* FB01SysExParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* FB01SysExParser.swift */; };
+		100000000000000000000007 /* EditorDocumentExtraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* EditorDocumentExtraction.swift */; };
+		100000000000000000000008 /* FB01EditorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* FB01EditorApp.swift */; };
+		100000000000000000000009 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* AppIcon.icns */; };
+		10000000000000000000000A /* libFB01Editor.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* libFB01Editor.a */; };
+		10000000000000000000000B /* fb01-dump main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000B /* main.swift */; };
+		10000000000000000000000C /* libFB01Editor.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* libFB01Editor.a */; };
+		10000000000000000000000D /* fb01-gm-load main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000C /* main.swift */; };
+		10000000000000000000000E /* libFB01Editor.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* libFB01Editor.a */; };
+		10000000000000000000000F /* FB01EditorAppTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000D /* FB01EditorAppTests.swift */; };
+		100000000000000000000010 /* FB01SysExParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* FB01SysExParserTests.swift */; };
+		100000000000000000000011 /* FB01SysExTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000F /* FB01SysExTests.swift */; };
+		100000000000000000000012 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000010 /* Fixtures */; };
+		100000000000000000000013 /* libFB01Editor.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000A /* libFB01Editor.a */; };
+		100000000000000000000014 /* XcodeBundleModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001A /* XcodeBundleModule.swift */; };
+		100000000000000000000015 /* SingleVoiceDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001B /* SingleVoiceDocumentIcon.icns */; };
+		100000000000000000000016 /* SingleConfigurationDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001C /* SingleConfigurationDocumentIcon.icns */; };
+		100000000000000000000017 /* VoiceBankDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001D /* VoiceBankDocumentIcon.icns */; };
+		100000000000000000000018 /* ConfigurationBankDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001E /* ConfigurationBankDocumentIcon.icns */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		300000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 400000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000001;
+			remoteInfo = FB01Editor;
+		};
+		300000000000000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 400000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000002;
+			remoteInfo = "Forest FB-01 Editor";
+		};
+		300000000000000000000003 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 400000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000001;
+			remoteInfo = FB01Editor;
+		};
+		300000000000000000000004 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 400000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000001;
+			remoteInfo = FB01Editor;
+		};
+		300000000000000000000005 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 400000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000001;
+			remoteInfo = FB01Editor;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		200000000000000000000001 /* FB01Artifact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01Artifact.swift; sourceTree = "<group>"; };
+		200000000000000000000002 /* FB01Data.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01Data.swift; sourceTree = "<group>"; };
+		200000000000000000000003 /* FB01GeneralMIDI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01GeneralMIDI.swift; sourceTree = "<group>"; };
+		200000000000000000000004 /* FB01MIDI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01MIDI.swift; sourceTree = "<group>"; };
+		200000000000000000000005 /* FB01SysEx.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01SysEx.swift; sourceTree = "<group>"; };
+		200000000000000000000006 /* FB01SysExParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01SysExParser.swift; sourceTree = "<group>"; };
+		200000000000000000000007 /* EditorDocumentExtraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentExtraction.swift; sourceTree = "<group>"; };
+		200000000000000000000008 /* FB01EditorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01EditorApp.swift; sourceTree = "<group>"; };
+		200000000000000000000009 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		20000000000000000000000A /* libFB01Editor.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libFB01Editor.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		20000000000000000000000B /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "fb01-dump main.swift"; path = main.swift; sourceTree = "<group>"; };
+		20000000000000000000000C /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "fb01-gm-load main.swift"; path = main.swift; sourceTree = "<group>"; };
+		20000000000000000000000D /* FB01EditorAppTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01EditorAppTests.swift; sourceTree = "<group>"; };
+		20000000000000000000000E /* FB01SysExParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01SysExParserTests.swift; sourceTree = "<group>"; };
+		20000000000000000000000F /* FB01SysExTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01SysExTests.swift; sourceTree = "<group>"; };
+		200000000000000000000010 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Fixtures; sourceTree = "<group>"; };
+		200000000000000000000011 /* Forest FB-01 Editor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Forest FB-01 Editor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000012 /* fb01-dump */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "fb01-dump"; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000013 /* fb01-gm-load */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "fb01-gm-load"; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000014 /* FB01EditorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FB01EditorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000015 /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
+		200000000000000000000016 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		200000000000000000000017 /* AppIcon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = AppIcon.png; sourceTree = "<group>"; };
+		200000000000000000000018 /* penguin.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = penguin.png; sourceTree = "<group>"; };
+		200000000000000000000019 /* penguin.svg */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = penguin.svg; sourceTree = "<group>"; };
+		20000000000000000000001A /* XcodeBundleModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XcodeBundleModule.swift; sourceTree = "<group>"; };
+		20000000000000000000001B /* SingleVoiceDocumentIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = SingleVoiceDocumentIcon.icns; sourceTree = "<group>"; };
+		20000000000000000000001C /* SingleConfigurationDocumentIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = SingleConfigurationDocumentIcon.icns; sourceTree = "<group>"; };
+		20000000000000000000001D /* VoiceBankDocumentIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = VoiceBankDocumentIcon.icns; sourceTree = "<group>"; };
+		20000000000000000000001E /* ConfigurationBankDocumentIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = ConfigurationBankDocumentIcon.icns; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		600000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000A /* libFB01Editor.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		600000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000C /* libFB01Editor.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		600000000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000E /* libFB01Editor.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		600000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000013 /* libFB01Editor.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		700000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000015 /* Package.swift */,
+				200000000000000000000016 /* README.md */,
+				700000000000000000000002 /* Sources */,
+				700000000000000000000008 /* Tests */,
+				70000000000000000000000A /* Resources */,
+				70000000000000000000000B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		700000000000000000000002 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				700000000000000000000003 /* FB01Editor */,
+				700000000000000000000004 /* FB01EditorApp */,
+				700000000000000000000005 /* fb01-dump */,
+				700000000000000000000006 /* fb01-gm-load */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		700000000000000000000003 /* FB01Editor */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000001 /* FB01Artifact.swift */,
+				200000000000000000000002 /* FB01Data.swift */,
+				200000000000000000000003 /* FB01GeneralMIDI.swift */,
+				200000000000000000000004 /* FB01MIDI.swift */,
+				200000000000000000000005 /* FB01SysEx.swift */,
+				200000000000000000000006 /* FB01SysExParser.swift */,
+			);
+			path = FB01Editor;
+			sourceTree = "<group>";
+		};
+		700000000000000000000004 /* FB01EditorApp */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000007 /* EditorDocumentExtraction.swift */,
+				200000000000000000000008 /* FB01EditorApp.swift */,
+			);
+			path = FB01EditorApp;
+			sourceTree = "<group>";
+		};
+		700000000000000000000005 /* fb01-dump */ = {
+			isa = PBXGroup;
+			children = (
+				20000000000000000000000B /* main.swift */,
+			);
+			path = "fb01-dump";
+			sourceTree = "<group>";
+		};
+		700000000000000000000006 /* fb01-gm-load */ = {
+			isa = PBXGroup;
+			children = (
+				20000000000000000000000C /* main.swift */,
+			);
+			path = "fb01-gm-load";
+			sourceTree = "<group>";
+		};
+		700000000000000000000008 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				700000000000000000000009 /* FB01EditorTests */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		700000000000000000000009 /* FB01EditorTests */ = {
+			isa = PBXGroup;
+			children = (
+				20000000000000000000000D /* FB01EditorAppTests.swift */,
+				20000000000000000000000E /* FB01SysExParserTests.swift */,
+				20000000000000000000000F /* FB01SysExTests.swift */,
+				20000000000000000000001A /* XcodeBundleModule.swift */,
+				200000000000000000000010 /* Fixtures */,
+			);
+			path = FB01EditorTests;
+			sourceTree = "<group>";
+		};
+		70000000000000000000000A /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000009 /* AppIcon.icns */,
+				200000000000000000000017 /* AppIcon.png */,
+				200000000000000000000018 /* penguin.png */,
+				200000000000000000000019 /* penguin.svg */,
+				20000000000000000000001B /* SingleVoiceDocumentIcon.icns */,
+				20000000000000000000001C /* SingleConfigurationDocumentIcon.icns */,
+				20000000000000000000001D /* VoiceBankDocumentIcon.icns */,
+				20000000000000000000001E /* ConfigurationBankDocumentIcon.icns */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		70000000000000000000000B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				20000000000000000000000A /* libFB01Editor.a */,
+				200000000000000000000011 /* Forest FB-01 Editor.app */,
+				200000000000000000000012 /* fb01-dump */,
+				200000000000000000000013 /* fb01-gm-load */,
+				200000000000000000000014 /* FB01EditorTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		500000000000000000000001 /* FB01Editor */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000010 /* Build configuration list for PBXNativeTarget "FB01Editor" */;
+			buildPhases = (
+				800000000000000000000001 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FB01Editor;
+			productName = FB01Editor;
+			productReference = 20000000000000000000000A /* libFB01Editor.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		500000000000000000000002 /* Forest FB-01 Editor */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000020 /* Build configuration list for PBXNativeTarget "Forest FB-01 Editor" */;
+			buildPhases = (
+				800000000000000000000002 /* Sources */,
+				600000000000000000000001 /* Frameworks */,
+				800000000000000000000003 /* Resources */,
+				800000000000000000000008 /* Stamp Build Timestamp */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				900000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = "Forest FB-01 Editor";
+			productName = "Forest FB-01 Editor";
+			productReference = 200000000000000000000011 /* Forest FB-01 Editor.app */;
+			productType = "com.apple.product-type.application";
+		};
+		500000000000000000000003 /* fb01-dump */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000030 /* Build configuration list for PBXNativeTarget "fb01-dump" */;
+			buildPhases = (
+				800000000000000000000004 /* Sources */,
+				600000000000000000000002 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				900000000000000000000003 /* PBXTargetDependency */,
+			);
+			name = "fb01-dump";
+			productName = "fb01-dump";
+			productReference = 200000000000000000000012 /* fb01-dump */;
+			productType = "com.apple.product-type.tool";
+		};
+		500000000000000000000004 /* fb01-gm-load */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000040 /* Build configuration list for PBXNativeTarget "fb01-gm-load" */;
+			buildPhases = (
+				800000000000000000000005 /* Sources */,
+				600000000000000000000003 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				900000000000000000000004 /* PBXTargetDependency */,
+			);
+			name = "fb01-gm-load";
+			productName = "fb01-gm-load";
+			productReference = 200000000000000000000013 /* fb01-gm-load */;
+			productType = "com.apple.product-type.tool";
+		};
+		500000000000000000000005 /* FB01EditorTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000050 /* Build configuration list for PBXNativeTarget "FB01EditorTests" */;
+			buildPhases = (
+				800000000000000000000006 /* Sources */,
+				600000000000000000000004 /* Frameworks */,
+				800000000000000000000007 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				900000000000000000000002 /* PBXTargetDependency */,
+				900000000000000000000005 /* PBXTargetDependency */,
+			);
+			name = FB01EditorTests;
+			productName = FB01EditorTests;
+			productReference = 200000000000000000000014 /* FB01EditorTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		400000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					500000000000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					500000000000000000000002 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					500000000000000000000003 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					500000000000000000000004 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					500000000000000000000005 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = 500000000000000000000002;
+					};
+				};
+			};
+			buildConfigurationList = 900000000000000000000000 /* Build configuration list for PBXProject "Forest FB-01 Editor" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 700000000000000000000001;
+			productRefGroup = 70000000000000000000000B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				500000000000000000000002 /* Forest FB-01 Editor */,
+				500000000000000000000001 /* FB01Editor */,
+				500000000000000000000003 /* fb01-dump */,
+				500000000000000000000004 /* fb01-gm-load */,
+				500000000000000000000005 /* FB01EditorTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		800000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000009 /* AppIcon.icns in Resources */,
+				100000000000000000000015 /* SingleVoiceDocumentIcon.icns in Resources */,
+				100000000000000000000016 /* SingleConfigurationDocumentIcon.icns in Resources */,
+				100000000000000000000017 /* VoiceBankDocumentIcon.icns in Resources */,
+				100000000000000000000018 /* ConfigurationBankDocumentIcon.icns in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		800000000000000000000007 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000012 /* Fixtures in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		800000000000000000000008 /* Stamp Build Timestamp */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Stamp Build Timestamp";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "BUILD_TIMESTAMP=\"$(date +%y%m%d-%H%M)\"\nPLIST=\"$TARGET_BUILD_DIR/$INFOPLIST_PATH\"\nif [ -f \"$PLIST\" ]; then\n  /usr/libexec/PlistBuddy -c \"Set :FB01EditorBuildTimestamp $BUILD_TIMESTAMP\" \"$PLIST\" >/dev/null 2>&1 || \\\n  /usr/libexec/PlistBuddy -c \"Add :FB01EditorBuildTimestamp string $BUILD_TIMESTAMP\" \"$PLIST\"\n  \"$SRCROOT/scripts/stamp-document-types.sh\" \"$PLIST\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		800000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000001 /* FB01Artifact.swift in Sources */,
+				100000000000000000000002 /* FB01Data.swift in Sources */,
+				100000000000000000000003 /* FB01GeneralMIDI.swift in Sources */,
+				100000000000000000000004 /* FB01MIDI.swift in Sources */,
+				100000000000000000000005 /* FB01SysEx.swift in Sources */,
+				100000000000000000000006 /* FB01SysExParser.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		800000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000007 /* EditorDocumentExtraction.swift in Sources */,
+				100000000000000000000008 /* FB01EditorApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		800000000000000000000004 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000B /* fb01-dump main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		800000000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000D /* fb01-gm-load main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		800000000000000000000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10000000000000000000000F /* FB01EditorAppTests.swift in Sources */,
+				100000000000000000000010 /* FB01SysExParserTests.swift in Sources */,
+				100000000000000000000011 /* FB01SysExTests.swift in Sources */,
+				100000000000000000000014 /* XcodeBundleModule.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		900000000000000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001 /* FB01Editor */; targetProxy = 300000000000000000000001 /* PBXContainerItemProxy */; };
+		900000000000000000000002 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000002 /* Forest FB-01 Editor */; targetProxy = 300000000000000000000002 /* PBXContainerItemProxy */; };
+		900000000000000000000003 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001 /* FB01Editor */; targetProxy = 300000000000000000000003 /* PBXContainerItemProxy */; };
+		900000000000000000000004 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001 /* FB01Editor */; targetProxy = 300000000000000000000004 /* PBXContainerItemProxy */; };
+		900000000000000000000005 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001 /* FB01Editor */; targetProxy = 300000000000000000000005 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A00000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				DEFINES_MODULE = YES;
+				PRODUCT_NAME = FB01Editor;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				DEFINES_MODULE = YES;
+				PRODUCT_NAME = FB01Editor;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGNING_ALLOWED = NO;
+				DEFINES_MODULE = YES;
+				EXECUTABLE_NAME = FB01EditorApp;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Forest FB-01 Editor";
+				INFOPLIST_KEY_CFBundleIconFile = AppIcon.icns;
+				INFOPLIST_KEY_CFBundleName = "Forest FB-01 Editor";
+				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
+				INFOPLIST_KEY_CFBundleVersion = 1;
+				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
+				INFOPLIST_KEY_NSHighResolutionCapable = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.gadzikowski.FB01Editor;
+				PRODUCT_MODULE_NAME = FB01EditorApp;
+				PRODUCT_NAME = "Forest FB-01 Editor";
+				SKIP_INSTALL = NO;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				CODE_SIGNING_ALLOWED = NO;
+				DEFINES_MODULE = YES;
+				EXECUTABLE_NAME = FB01EditorApp;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Forest FB-01 Editor";
+				INFOPLIST_KEY_CFBundleIconFile = AppIcon.icns;
+				INFOPLIST_KEY_CFBundleName = "Forest FB-01 Editor";
+				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
+				INFOPLIST_KEY_CFBundleVersion = 1;
+				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
+				INFOPLIST_KEY_NSHighResolutionCapable = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.gadzikowski.FB01Editor;
+				PRODUCT_MODULE_NAME = FB01EditorApp;
+				PRODUCT_NAME = "Forest FB-01 Editor";
+				SKIP_INSTALL = NO;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				PRODUCT_NAME = "fb01-dump";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				PRODUCT_NAME = "fb01-dump";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				PRODUCT_NAME = "fb01-gm-load";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A0000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGNING_ALLOWED = NO;
+				PRODUCT_NAME = "fb01-gm-load";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		A0000000000000000000000B /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gadzikowski.FB01EditorTests;
+				PRODUCT_NAME = FB01EditorTests;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Forest FB-01 Editor.app/Contents/MacOS/FB01EditorApp";
+			};
+			name = Debug;
+		};
+		A0000000000000000000000C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gadzikowski.FB01EditorTests;
+				PRODUCT_NAME = FB01EditorTests;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Forest FB-01 Editor.app/Contents/MacOS/FB01EditorApp";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		900000000000000000000000 /* Build configuration list for PBXProject "Forest FB-01 Editor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000001 /* Debug */,
+				A00000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000010 /* Build configuration list for PBXNativeTarget "FB01Editor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000003 /* Debug */,
+				A00000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000020 /* Build configuration list for PBXNativeTarget "Forest FB-01 Editor" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000005 /* Debug */,
+				A00000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000030 /* Build configuration list for PBXNativeTarget "fb01-dump" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000007 /* Debug */,
+				A00000000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000040 /* Build configuration list for PBXNativeTarget "fb01-gm-load" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000009 /* Debug */,
+				A0000000000000000000000A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000050 /* Build configuration list for PBXNativeTarget "FB01EditorTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0000000000000000000000B /* Debug */,
+				A0000000000000000000000C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 400000000000000000000001 /* Project object */;
+}

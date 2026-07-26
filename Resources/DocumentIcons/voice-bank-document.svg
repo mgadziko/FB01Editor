@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="none"/>
+  <rect x="176" y="92" width="672" height="840" rx="90" fill="#F7F7F7" stroke="#B8B8B8" stroke-width="18"/>
+  <path d="M702 932 L848 786 L702 786 Z" fill="#E0E0E0" stroke="#B3B3B3" stroke-width="12"/>
+  <text x="300" y="706" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="300" font-weight="800" fill="#008FFF">V</text>
+  <text x="512" y="618" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="300" font-weight="800" fill="#008FFF">V</text>
+  <text x="724" y="706" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="300" font-weight="800" fill="#008FFF">V</text>
+  <rect x="250" y="718" width="524" height="130" rx="18" fill="#050607"/>
+  <rect x="305" y="764" width="205" height="42" rx="8" fill="#FF7005"/>
+  <g fill="#333333">
+    <rect x="568" y="776" width="32" height="18" rx="4"/>
+    <rect x="622" y="776" width="32" height="18" rx="4"/>
+    <rect x="676" y="776" width="32" height="18" rx="4"/>
+    <rect x="568" y="740" width="32" height="18" rx="4"/>
+    <rect x="622" y="740" width="32" height="18" rx="4"/>
+    <rect x="676" y="740" width="32" height="18" rx="4"/>
+  </g>
+</svg>
