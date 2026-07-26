@@ -31,6 +31,7 @@
 		100000000000000000000016 /* SingleConfigurationDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001C /* SingleConfigurationDocumentIcon.icns */; };
 		100000000000000000000017 /* VoiceBankDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001D /* VoiceBankDocumentIcon.icns */; };
 		100000000000000000000018 /* ConfigurationBankDocumentIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001E /* ConfigurationBankDocumentIcon.icns */; };
+		100000000000000000000019 /* ParameterKnob.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001F /* ParameterKnob.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -102,6 +103,7 @@
 		20000000000000000000001C /* SingleConfigurationDocumentIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = SingleConfigurationDocumentIcon.icns; sourceTree = "<group>"; };
 		20000000000000000000001D /* VoiceBankDocumentIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = VoiceBankDocumentIcon.icns; sourceTree = "<group>"; };
 		20000000000000000000001E /* ConfigurationBankDocumentIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = ConfigurationBankDocumentIcon.icns; sourceTree = "<group>"; };
+		20000000000000000000001F /* ParameterKnob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParameterKnob.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +183,7 @@
 			children = (
 				200000000000000000000007 /* EditorDocumentExtraction.swift */,
 				200000000000000000000008 /* FB01EditorApp.swift */,
+				20000000000000000000001F /* ParameterKnob.swift */,
 			);
 			path = FB01EditorApp;
 			sourceTree = "<group>";
@@ -453,6 +456,7 @@
 			files = (
 				100000000000000000000007 /* EditorDocumentExtraction.swift in Sources */,
 				100000000000000000000008 /* FB01EditorApp.swift in Sources */,
+				100000000000000000000019 /* ParameterKnob.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

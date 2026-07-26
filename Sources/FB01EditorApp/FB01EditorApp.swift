@@ -6669,33 +6669,21 @@ struct LiveKeyboardMIDIControlsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: 10) {
-                Stepper(value: Binding(
+            HStack(alignment: .top, spacing: 10) {
+                ParameterKnob(label: "Channel", value: Binding(
                     get: { document.keyboardChannel + 1 },
                     set: { document.setKeyboardChannel($0 - 1) }
-                ), in: 1...16) {
-                    Text("Ch \(document.keyboardChannel + 1)")
-                        .monospacedDigit()
-                }
-                .frame(width: 82, alignment: .leading)
+                ), range: 1...16, width: 70, knobSize: 42)
 
-                Stepper(value: Binding(
+                ParameterKnob(label: "Velocity", value: Binding(
                     get: { document.keyboardVelocity },
                     set: { document.setKeyboardVelocity($0) }
-                ), in: 1...127) {
-                    Text("Vel \(document.keyboardVelocity)")
-                        .monospacedDigit()
-                }
-                .frame(width: 98, alignment: .leading)
+                ), range: 1...127, width: 74, knobSize: 42)
 
-                Stepper(value: Binding(
+                ParameterKnob(label: "Octave", value: Binding(
                     get: { document.keyboardStartNote / 12 },
                     set: { document.setKeyboardStartNote($0 * 12) }
-                ), in: 0...5) {
-                    Text("Octave \(document.keyboardStartNote / 12)")
-                        .monospacedDigit()
-                }
-                .frame(width: 126, alignment: .leading)
+                ), range: 0...5, width: 70, knobSize: 42)
             }
             .font(.caption)
 
@@ -7315,25 +7303,14 @@ struct SystemSettingsView: View {
                 .frame(width: 300, alignment: .topLeading)
 
                 GroupBox {
-                    Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
-                        GridRow {
-                            Text("Level")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Slider(
-                                value: Binding(
-                                    get: { Double(document.systemMasterOutputLevel) },
-                                    set: { document.systemMasterOutputLevel = Int($0.rounded()) }
-                                ),
-                                in: 0...127,
-                                step: 1
-                            )
-                            .frame(width: 220)
-                            Text("\(document.systemMasterOutputLevel)")
-                                .monospacedDigit()
-                                .frame(width: 34, alignment: .trailing)
-                        }
-                    }
+                    ParameterKnob(
+                        label: "Level",
+                        value: Binding(
+                            get: { document.systemMasterOutputLevel },
+                            set: { document.systemMasterOutputLevel = $0 }
+                        ),
+                        range: 0...127
+                    )
                     .padding(.top, 4)
 
                     Button {
@@ -8476,28 +8453,10 @@ struct ConfigurationEditorControls: View {
 
     private var lfoAndModulationControls: some View {
         GroupBox {
-            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-                GridRow {
-                    label("LFO Speed")
-                    Stepper(value: $lfoSpeed, in: 0...127) {
-                        Text("\(lfoSpeed)")
-                            .monospacedDigit()
-                    }
-                }
-
-                GridRow {
-                    label("Depth")
-                    HStack(spacing: 16) {
-                        Stepper(value: $amplitudeModulationDepth, in: 0...127) {
-                            Text("AMD \(amplitudeModulationDepth)")
-                                .monospacedDigit()
-                        }
-                        Stepper(value: $pitchModulationDepth, in: 0...127) {
-                            Text("PMD \(pitchModulationDepth)")
-                                .monospacedDigit()
-                        }
-                    }
-                }
+            HStack(alignment: .top, spacing: 12) {
+                ParameterKnob(label: "LFO Speed", value: $lfoSpeed, range: 0...127)
+                ParameterKnob(label: "AMD", value: $amplitudeModulationDepth, range: 0...127)
+                ParameterKnob(label: "PMD", value: $pitchModulationDepth, range: 0...127)
             }
             .padding(.top, 4)
         } label: {
@@ -8631,9 +8590,11 @@ struct ConfigurationInstrumentInspector: View {
             GridItem(.flexible(minimum: 220), spacing: 12),
         ], alignment: .leading, spacing: 12) {
             OperatorControlGroup(title: "MIDI and Voice") {
-                instrumentStepper("MIDI Channel", value: instrument.midiChannel + 1, range: 1...16) { try instrument.settingMIDIChannel($0 - 1) }
-                instrumentStepper("Voice Bank", value: instrument.voiceBank, range: 1...7) { try instrument.settingVoiceBank($0) }
-                instrumentStepper("Voice Number", value: instrument.voiceNumber, range: 0...95) { try instrument.settingVoiceNumber($0) }
+                HStack(alignment: .top, spacing: 12) {
+                    instrumentKnob("MIDI Channel", value: instrument.midiChannel + 1, range: 1...16) { try instrument.settingMIDIChannel($0 - 1) }
+                    instrumentKnob("Voice Bank", value: instrument.voiceBank, range: 1...7) { try instrument.settingVoiceBank($0) }
+                    instrumentKnob("Voice Number", value: instrument.voiceNumber, range: 0...95) { try instrument.settingVoiceNumber($0) }
+                }
                 Picker("Mode", selection: modeBinding) {
                     Text("Poly").tag(FB01MonoPolyMode.poly)
                     Text("Mono").tag(FB01MonoPolyMode.mono)
@@ -8641,14 +8602,18 @@ struct ConfigurationInstrumentInspector: View {
             }
 
             OperatorControlGroup(title: "Key Range") {
-                readOnlyValue("Active Notes", value: "\(instrument.noteCount)")
-                instrumentStepper("Low Key", value: instrument.lowKeyLimit, range: 0...127) { try instrument.settingLowKeyLimit($0) }
-                instrumentStepper("High Key", value: instrument.highKeyLimit, range: 0...127) { try instrument.settingHighKeyLimit($0) }
+                HStack(alignment: .top, spacing: 12) {
+                    readOnlyValue("Active Notes", value: "\(instrument.noteCount)")
+                    instrumentKnob("Low Key", value: instrument.lowKeyLimit, range: 0...127) { try instrument.settingLowKeyLimit($0) }
+                    instrumentKnob("High Key", value: instrument.highKeyLimit, range: 0...127) { try instrument.settingHighKeyLimit($0) }
+                }
             }
 
             OperatorControlGroup(title: "Output") {
-                instrumentStepper("Level", value: instrument.outputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
-                instrumentStepper("Pan", value: instrument.pan, range: 0...127) { try instrument.settingPan($0) }
+                HStack(alignment: .top, spacing: 12) {
+                    instrumentKnob("Level", value: instrument.outputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
+                    instrumentKnob("Pan", value: instrument.pan, range: 0...127) { try instrument.settingPan($0) }
+                }
                 Toggle("LFO Enabled", isOn: lfoEnabledBinding)
                     .toggleStyle(.checkbox)
                 Picker("PMD", selection: pmdBinding) {
@@ -8661,9 +8626,11 @@ struct ConfigurationInstrumentInspector: View {
             }
 
             OperatorControlGroup(title: "Performance") {
-                instrumentStepper("Octave", value: instrument.octaveTranspose, range: -2...2) { try instrument.settingOctaveTranspose($0) }
-                instrumentStepper("Portamento", value: instrument.portamentoTime, range: 0...127) { try instrument.settingPortamentoTime($0) }
-                instrumentStepper("Bend Range", value: instrument.pitchBendRange, range: 0...12) { try instrument.settingPitchBendRange($0) }
+                HStack(alignment: .top, spacing: 12) {
+                    instrumentKnob("Octave", value: instrument.octaveTranspose, range: -2...2) { try instrument.settingOctaveTranspose($0) }
+                    instrumentKnob("Portamento", value: instrument.portamentoTime, range: 0...127) { try instrument.settingPortamentoTime($0) }
+                    instrumentKnob("Bend Range", value: instrument.pitchBendRange, range: 0...12) { try instrument.settingPitchBendRange($0) }
+                }
             }
         }
     }
@@ -8701,39 +8668,28 @@ struct ConfigurationInstrumentInspector: View {
         )
     }
 
-    private func instrumentStepper(
+    private func instrumentKnob(
         _ label: String,
         value: Int,
         range: ClosedRange<Int>,
         update: @escaping (Int) throws -> FB01InstrumentConfiguration
     ) -> some View {
-        HStack {
-            Text(label)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Stepper(value: Binding(
+        ParameterKnob(
+            label: label,
+            value: Binding(
                 get: { value },
                 set: { newValue in
                     if let updated = try? update(newValue) {
                         updateInstrument(updated)
                     }
                 }
-            ), in: range) {
-                Text("\(value)")
-                    .frame(minWidth: 34, alignment: .trailing)
-                    .monospacedDigit()
-            }
-        }
+            ),
+            range: range
+        )
     }
 
     private func readOnlyValue(_ label: String, value: String) -> some View {
-        HStack {
-            Text(label)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Text(value)
-                .monospacedDigit()
-        }
+        ReadOnlyLEDValue(label: label, value: value)
     }
 }
 
@@ -9346,28 +9302,19 @@ struct VoiceEditorControls: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             GroupBox {
-                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-                    GridRow {
-                        label("Name")
-                        TextField("Name", text: $name)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 180)
-                    }
-
-                    GridRow {
-                        label("Feedback")
-                        Stepper(value: $feedback, in: 0...7) {
-                            Text("\(feedback)")
-                                .monospacedDigit()
+                VStack(alignment: .leading, spacing: 10) {
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                        GridRow {
+                            label("Name")
+                            TextField("Name", text: $name)
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 180)
                         }
                     }
 
-                    GridRow {
-                        label("Transpose")
-                        Stepper(value: $transpose, in: -128...127) {
-                            Text("\(transpose)")
-                                .monospacedDigit()
-                        }
+                    HStack(alignment: .top, spacing: 12) {
+                        ParameterKnob(label: "Feedback", value: $feedback, range: 0...7)
+                        ParameterKnob(label: "Transpose", value: $transpose, range: -128...127)
                     }
                 }
                 .padding(.top, 4)
@@ -9377,52 +9324,26 @@ struct VoiceEditorControls: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
 
             GroupBox {
-                Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
-                    GridRow {
-                        label("LFO Speed")
-                        Stepper(value: $lfoSpeed, in: 0...255) {
-                            Text("\(lfoSpeed)")
-                                .monospacedDigit()
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ParameterKnob(label: "LFO Speed", value: $lfoSpeed, range: 0...255)
+                        ParameterKnob(label: "AMD", value: $amplitudeModulationDepth, range: 0...127)
+                        ParameterKnob(label: "PMD", value: $pitchModulationDepth, range: 0...127)
+                        ParameterKnob(label: "AMS", value: $amplitudeModulationSensitivity, range: 0...3)
+                        ParameterKnob(label: "PMS", value: $pitchModulationSensitivity, range: 0...7)
+                    }
+
+                    Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                        GridRow {
+                            label("Waveform")
+                            WaveformPicker(selection: $lfoWaveform)
+                                .frame(width: 340)
                         }
-                    }
 
-                    GridRow {
-                        label("Waveform")
-                        WaveformPicker(selection: $lfoWaveform)
-                            .frame(width: 340)
-                    }
-
-                    GridRow {
-                        label("LFO Sync")
-                        Toggle("", isOn: $lfoSyncEnabled)
-                            .labelsHidden()
-                    }
-
-                    GridRow {
-                        label("Depth")
-                        HStack(spacing: 16) {
-                            Stepper(value: $amplitudeModulationDepth, in: 0...127) {
-                                Text("AMD \(amplitudeModulationDepth)")
-                                    .monospacedDigit()
-                            }
-                            Stepper(value: $pitchModulationDepth, in: 0...127) {
-                                Text("PMD \(pitchModulationDepth)")
-                                    .monospacedDigit()
-                            }
-                        }
-                    }
-
-                    GridRow {
-                        label("Sensitivity")
-                        HStack(spacing: 16) {
-                            Stepper(value: $amplitudeModulationSensitivity, in: 0...3) {
-                                Text("AMS \(amplitudeModulationSensitivity)")
-                                    .monospacedDigit()
-                            }
-                            Stepper(value: $pitchModulationSensitivity, in: 0...7) {
-                                Text("PMS \(pitchModulationSensitivity)")
-                                    .monospacedDigit()
-                            }
+                        GridRow {
+                            label("LFO Sync")
+                            Toggle("", isOn: $lfoSyncEnabled)
+                                .labelsHidden()
                         }
                     }
                 }
@@ -9990,9 +9911,11 @@ struct OperatorInspector: View {
         ], alignment: .leading, spacing: 12) {
             OperatorControlGroup(title: "Level") {
                 operatorRolePicker
-                operatorLevelControl("Total Level", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
-                operatorStepper("Velocity to Total Level", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
-                operatorStepper("Total Level Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
+                HStack(alignment: .top, spacing: 12) {
+                    operatorLevelControl("Total Level", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
+                    operatorKnob("Velocity to Total Level", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
+                    operatorKnob("Total Level Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
+                }
             }
 
             VStack(alignment: .leading, spacing: 12) {
@@ -10001,9 +9924,11 @@ struct OperatorInspector: View {
                     .toggleStyle(.checkbox)
 
                 OperatorControlGroup(title: "Tuning") {
-                    operatorStepper("Multiple", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
-                    operatorStepper("Detune 1", value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
-                    operatorStepper("Detune 2", value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
+                    HStack(alignment: .top, spacing: 12) {
+                        operatorKnob("Multiple", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
+                        operatorKnob("Detune 1", value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
+                        operatorKnob("Detune 2", value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
+                    }
                 }
             }
 
@@ -10013,19 +9938,25 @@ struct OperatorInspector: View {
                     updateOperator: updateOperator
                 )
                     .frame(height: 96)
-                operatorStepper("Attack Rate", value: operatorData.attackRate, range: 0...31) { try operatorData.settingAttackRate($0) }
-                operatorStepper("Velocity to Attack", value: operatorData.velocitySensitivityForAttackRate, range: 0...7) { try operatorData.settingVelocitySensitivityForAttackRate($0) }
-                operatorStepper("Decay 1 Rate", value: operatorData.decay1Rate, range: 0...15) { try operatorData.settingDecay1Rate($0) }
-                operatorStepper("Decay 2 Rate", value: operatorData.decay2Rate, range: 0...31) { try operatorData.settingDecay2Rate($0) }
-                operatorStepper("Sustain Level", value: operatorData.sustainLevel, range: 0...15) { try operatorData.settingSustainLevel($0) }
-                operatorStepper("Release Rate", value: operatorData.releaseRate, range: 0...15) { try operatorData.settingReleaseRate($0) }
+                LazyVGrid(columns: [
+                    GridItem(.adaptive(minimum: 82), spacing: 12),
+                ], alignment: .leading, spacing: 10) {
+                    operatorKnob("Attack Rate", value: operatorData.attackRate, range: 0...31) { try operatorData.settingAttackRate($0) }
+                    operatorKnob("Velocity to Attack", value: operatorData.velocitySensitivityForAttackRate, range: 0...7) { try operatorData.settingVelocitySensitivityForAttackRate($0) }
+                    operatorKnob("Decay 1 Rate", value: operatorData.decay1Rate, range: 0...15) { try operatorData.settingDecay1Rate($0) }
+                    operatorKnob("Decay 2 Rate", value: operatorData.decay2Rate, range: 0...31) { try operatorData.settingDecay2Rate($0) }
+                    operatorKnob("Sustain Level", value: operatorData.sustainLevel, range: 0...15) { try operatorData.settingSustainLevel($0) }
+                    operatorKnob("Release Rate", value: operatorData.releaseRate, range: 0...15) { try operatorData.settingReleaseRate($0) }
+                }
             }
 
             OperatorControlGroup(title: "Keyboard Scaling") {
-                operatorStepper("Level Scaling", value: operatorData.keyboardLevelScalingDepth, range: 0...15) { try operatorData.settingKeyboardLevelScalingDepth($0) }
+                HStack(alignment: .top, spacing: 12) {
+                    operatorKnob("Level Scaling", value: operatorData.keyboardLevelScalingDepth, range: 0...15) { try operatorData.settingKeyboardLevelScalingDepth($0) }
+                    operatorKnob("Rate Scaling", value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
+                }
                 operatorToggle("Level Type A", binding: keyboardLevelScalingTypeBit0Binding)
                 operatorToggle("Level Type B", binding: keyboardLevelScalingTypeBit1Binding)
-                operatorStepper("Rate Scaling", value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
             }
         }
     }
@@ -10080,29 +10011,24 @@ struct OperatorInspector: View {
         )
     }
 
-    private func operatorStepper(
+    private func operatorKnob(
         _ label: String,
         value: Int,
         range: ClosedRange<Int>,
         update: @escaping (Int) throws -> FB01VoiceOperatorData
     ) -> some View {
-        HStack {
-            Text(label)
-                .foregroundStyle(.secondary)
-            Spacer()
-            Stepper(value: Binding(
+        ParameterKnob(
+            label: label,
+            value: Binding(
                 get: { value },
                 set: { newValue in
                     if let updated = try? update(newValue) {
                         updateOperator(updated)
                     }
                 }
-            ), in: range) {
-                Text("\(value)")
-                    .frame(minWidth: 34, alignment: .trailing)
-                    .monospacedDigit()
-            }
-        }
+            ),
+            range: range
+        )
     }
 
     private func operatorLevelControl(
@@ -10111,25 +10037,18 @@ struct OperatorInspector: View {
         range: ClosedRange<Int>,
         update: @escaping (Int) throws -> FB01VoiceOperatorData
     ) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack {
-                Text(label)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(value)")
-                    .frame(minWidth: 34, alignment: .trailing)
-                    .monospacedDigit()
-            }
-
-            Slider(value: Binding(
-                get: { Double(value) },
+        ParameterKnob(
+            label: label,
+            value: Binding(
+                get: { value },
                 set: { newValue in
-                    if let updated = try? update(Int(newValue.rounded())) {
+                    if let updated = try? update(newValue) {
                         updateOperator(updated)
                     }
                 }
-            ), in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
-        }
+            ),
+            range: range
+        )
     }
 
     private func operatorToggle(_ label: String, binding: Binding<Bool>) -> some View {
