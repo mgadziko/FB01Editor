@@ -1044,6 +1044,12 @@ private func safeEditorFileName(_ name: String, fallback: String) -> String {
     return sanitized.isEmpty ? fallback : sanitized
 }
 
+func editorDocumentName(fromFileURL url: URL, maxLength: Int, fallback: String) -> String {
+    let stem = url.deletingPathExtension().lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+    let base = stem.isEmpty ? fallback : stem
+    return String(base.prefix(maxLength))
+}
+
 @MainActor
 private func showEditorError(title: String, message: String) {
     let alert = NSAlert()
@@ -1359,7 +1365,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return
         }
 
-        save(to: url)
+        save(to: url, voiceNameFromFile: editorDocumentName(
+            fromFileURL: url,
+            maxLength: FB01VoiceData.nameLength,
+            fallback: "voice"
+        ))
     }
 
     static func loadFromDisk() -> VoiceDocumentModel? {
@@ -1749,11 +1759,17 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         Int((Double(min(max(value, 0), 127)) / 127.0 * Double(maxValue)).rounded())
     }
 
-    private func save(to url: URL) {
+    private func save(to url: URL, voiceNameFromFile: String? = nil) {
         do {
-            let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
+            let savedPayload = try voiceNameFromFile.map { try voice.settingName($0) } ?? voice
+            let artifact = try savedPayload.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
             try artifact.writeSysEx(to: url)
-            savedVoice = voice
+            if savedPayload != voice {
+                voice = savedPayload
+                preparedKeyboardVoiceSignature = nil
+                preparedKeyboardVoiceDate = nil
+            }
+            savedVoice = savedPayload
             fileURL = url
             rememberEditorSaveDirectory(for: url)
             statusMessage = "Saved \(url.lastPathComponent)."
@@ -2710,31 +2726,33 @@ struct FB01EditorApplication: App {
                 }
                 .disabled(document.isBusy)
 
-                Button("Swap Voice with Slot...") {
-                    document.swapSelectedVoiceWithLocalSlot()
+                if document.voiceEditorParadigm == .consoleSections {
+                    Button("Swap Voice with Slot...") {
+                        document.swapSelectedVoiceWithLocalSlot()
+                    }
+                    .disabled(!document.canUseSelectedVoiceLibrarianActions)
+
+                    Divider()
+
+                    Button("Reset Selected Voice") {
+                        document.resetSelectedVoiceEdit()
+                    }
+                    .disabled(!document.canResetSelectedVoice)
+
+                    Button("Reset All Voice Edits") {
+                        document.resetAllSelectedVoiceEdits()
+                    }
+                    .disabled(!document.canResetAllSelectedVoiceEdits)
+
+                    Divider()
+
+                    Button("Save Edited Bank As...") {
+                        document.saveSelectedEditedVoiceBankAs()
+                    }
+                    .disabled(!document.canResetAllSelectedVoiceEdits)
+
+                    Divider()
                 }
-                .disabled(!document.canUseSelectedVoiceLibrarianActions)
-
-                Divider()
-
-                Button("Reset Selected Voice") {
-                    document.resetSelectedVoiceEdit()
-                }
-                .disabled(!document.canResetSelectedVoice)
-
-                Button("Reset All Voice Edits") {
-                    document.resetAllSelectedVoiceEdits()
-                }
-                .disabled(!document.canResetAllSelectedVoiceEdits)
-
-                Divider()
-
-                Button("Save Edited Bank As...") {
-                    document.saveSelectedEditedVoiceBankAs()
-                }
-                .disabled(!document.canResetAllSelectedVoiceEdits)
-
-                Divider()
 
                 Button("Store General MIDI voices...") {
                     document.storeGeneralMIDIVoicesToDevice()
@@ -2748,27 +2766,29 @@ struct FB01EditorApplication: App {
                 }
                 .disabled(document.isBusy)
 
-                Divider()
+                if document.voiceEditorParadigm == .consoleSections {
+                    Divider()
 
-                Button("Send Selected Configuration to Current Edit Buffer...") {
-                    document.sendSelectedConfigurationToCurrentEditBuffer()
-                }
-                .disabled(!document.canSendSelectedConfiguration)
+                    Button("Send Selected Configuration to Current Edit Buffer...") {
+                        document.sendSelectedConfigurationToCurrentEditBuffer()
+                    }
+                    .disabled(!document.canSendSelectedConfiguration)
 
-                Button("Send and Confirm Selected Configuration...") {
-                    document.sendAndConfirmSelectedConfigurationToCurrentEditBuffer()
-                }
-                .disabled(!document.canSendSelectedConfiguration)
+                    Button("Send and Confirm Selected Configuration...") {
+                        document.sendAndConfirmSelectedConfigurationToCurrentEditBuffer()
+                    }
+                    .disabled(!document.canSendSelectedConfiguration)
 
-                Button("Store Selected Configuration to Slot...") {
-                    document.storeSelectedConfigurationToDeviceSlot()
-                }
-                .disabled(!document.canStoreSelectedConfiguration)
+                    Button("Store Selected Configuration to Slot...") {
+                        document.storeSelectedConfigurationToDeviceSlot()
+                    }
+                    .disabled(!document.canStoreSelectedConfiguration)
 
-                Button("Store and Confirm Selected Configuration...") {
-                    document.storeAndConfirmSelectedConfigurationToDeviceSlot()
+                    Button("Store and Confirm Selected Configuration...") {
+                        document.storeAndConfirmSelectedConfigurationToDeviceSlot()
+                    }
+                    .disabled(!document.canStoreSelectedConfiguration)
                 }
-                .disabled(!document.canStoreSelectedConfiguration)
             }
         }
     }
@@ -2898,7 +2918,7 @@ final class PreferencesWindowController {
             self?.window?.close()
         })
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 640),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -2948,74 +2968,75 @@ struct PreferencesView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Preferences")
-                .font(.title2.weight(.semibold))
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 12) {
-                    Picker("Voice Editor Paradigm", selection: $voiceEditorParadigm) {
-                        ForEach(VoiceEditorParadigm.allCases) { paradigm in
-                            Text(paradigm.displayName).tag(paradigm)
-                        }
-                    }
-                    .pickerStyle(.radioGroup)
-
-                    Text(voiceEditorParadigm.description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.top, 4)
-            } label: {
-                SectionTitle("Voice Editing")
-            }
-
-            GroupBox {
-                VStack(alignment: .leading, spacing: 14) {
-                    Stepper(value: Binding(
-                        get: { preferredDeviceCount },
-                        set: { setDraftDeviceCount($0) }
-                    ), in: 1...4) {
-                        Text("Number of FB-01 devices: \(preferredDeviceCount)")
-                    }
-
-                    Divider()
-
-                    ForEach(Array(devicePreferences.enumerated()), id: \.element.id) { offset, preference in
-                        HStack(alignment: .top, spacing: 14) {
-                            Text("Device \(offset + 1)")
-                                .font(.headline)
-                                .frame(width: 86, alignment: .leading)
-
-                            Picker("Command Channel", selection: Binding(
-                                get: { preference.commandChannel },
-                                set: { setDraftDeviceCommandChannel(index: offset, channel: $0) }
-                            )) {
-                                ForEach(0..<16, id: \.self) { channel in
-                                    Text("\(channel + 1)").tag(channel)
+        VStack(alignment: .leading, spacing: 16) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Picker("Voice Editor Paradigm", selection: $voiceEditorParadigm) {
+                                ForEach(VoiceEditorParadigm.allCases) { paradigm in
+                                    Text(paradigm.displayName).tag(paradigm)
                                 }
                             }
-                            .frame(width: 190)
+                            .pickerStyle(.radioGroup)
 
-                            RockerSwitch(label: "Memory Writable", isOn: Binding(
-                                get: { !preference.memoryProtectEnabled },
-                                set: { setDraftDeviceMemoryWritable(index: offset, writable: $0) }
-                            ), width: 84, height: 58)
+                            Text(voiceEditorParadigm.description)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
+                        .padding(.top, 4)
+                    } label: {
+                        SectionTitle("Voice Editing")
                     }
 
-                    Text("These multi-device settings are saved for the editor workflow. Current MIDI sends still use the selected FB-01 destination until multi-device routing is implemented.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.top, 4)
-            } label: {
-                SectionTitle("FB-01 Devices")
-            }
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Stepper(value: Binding(
+                                get: { preferredDeviceCount },
+                                set: { setDraftDeviceCount($0) }
+                            ), in: 1...4) {
+                                Text("Number of FB-01 devices: \(preferredDeviceCount)")
+                            }
 
-            Spacer()
+                            Divider()
+
+                            ForEach(Array(devicePreferences.enumerated()), id: \.element.id) { offset, preference in
+                                HStack(alignment: .top, spacing: 14) {
+                                    Text("Device \(offset + 1)")
+                                        .font(.headline)
+                                        .frame(width: 86, alignment: .leading)
+
+                                    Picker("Command Channel", selection: Binding(
+                                        get: { preference.commandChannel },
+                                        set: { setDraftDeviceCommandChannel(index: offset, channel: $0) }
+                                    )) {
+                                        ForEach(0..<16, id: \.self) { channel in
+                                            Text("\(channel + 1)").tag(channel)
+                                        }
+                                    }
+                                    .frame(width: 190)
+
+                                    RockerSwitch(label: "Memory Writable", isOn: Binding(
+                                        get: { !preference.memoryProtectEnabled },
+                                        set: { setDraftDeviceMemoryWritable(index: offset, writable: $0) }
+                                    ), width: 84, height: 58)
+                                }
+                            }
+
+                            Text("These multi-device settings are saved for the editor workflow. Current MIDI sends still use the selected FB-01 destination until multi-device routing is implemented.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.top, 4)
+                    } label: {
+                        SectionTitle("FB-01 Devices")
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 2)
+            }
 
             HStack {
                 Spacer()
@@ -3031,9 +3052,10 @@ struct PreferencesView: View {
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
             }
+            .padding(.top, 4)
         }
         .padding(22)
-        .frame(width: 620, height: 560, alignment: .topLeading)
+        .frame(width: 620, height: 640, alignment: .topLeading)
     }
 
     private func setDraftDeviceCount(_ count: Int) {
@@ -6859,7 +6881,7 @@ struct ContentView: View {
             Divider()
 
             LiveKeyboardView(document: document)
-                .frame(height: 126)
+                .frame(height: 196)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
 
@@ -6977,13 +6999,13 @@ struct LiveKeyboardView: View {
     @ObservedObject var document: DocumentModel
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 18) {
             LiveKeyboardMIDIControlsView(
                 document: document,
                 title: document.selectedVoiceDocumentPayload().map { "Live Keyboard - \($0.voice.name)" } ?? "Live Keyboard",
                 subtitle: document.hasKeyboardVoiceContext ? "Current voice" : "MIDI notes only"
             )
-            .frame(width: 410, alignment: .leading)
+            .frame(width: 380, alignment: .leading)
 
             PianoKeyboardRepresentable(
                 startNote: document.keyboardStartNote,
@@ -6992,8 +7014,15 @@ struct LiveKeyboardView: View {
                 noteOn: { document.sendKeyboardNote($0, isOn: true) },
                 noteOff: { document.sendKeyboardNote($0, isOn: false) }
             )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(height: 72)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity)
         }
+        .padding(14)
     }
 }
 
@@ -8398,7 +8427,7 @@ struct VoiceDocumentWindow: View {
             .padding(18)
             .frame(minWidth: device.voiceEditorParadigm == .fmRoutingPatchBay ? 980 : 0, maxWidth: .infinity, alignment: .leading)
         }
-        .navigationTitle(document.title)
+        .navigationTitle("Voice - \(document.title)")
         .toolbar {
             ToolbarItemGroup {
                 Button {
@@ -8557,7 +8586,7 @@ struct ConfigurationDocumentWindow: View {
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .navigationTitle(document.title)
+        .navigationTitle("Configuration - \(document.title)")
         .toolbar {
             ToolbarItemGroup {
                 Button {
@@ -10190,7 +10219,7 @@ private struct FMPatchBayLayout {
     let outputPoint: CGPoint
     let feedbackControlCenter: CGPoint
 
-    static let moduleSize = CGSize(width: 390, height: 640)
+    static let moduleSize = CGSize(width: 390, height: 740)
     static let margin: CGFloat = 170
     static let horizontalGap: CGFloat = 96
     static let verticalGap: CGFloat = 120
@@ -10267,16 +10296,16 @@ private struct FMPatchBayLayout {
 
         func feedbackRoute(_ positions: [Int: CGPoint]) -> Route {
             let r = rect(4, in: positions)
-            let topY = r.minY - 132
-            let sourceX = r.midX + 40
-            let returnX = r.midX + 122
+            let sideX = r.maxX + 82
+            let topY = r.minY + 90
+            let bottomY = r.minY + 390
             return route(
                 "feedback-4",
                 [
-                    CGPoint(x: sourceX, y: r.minY - 10),
-                    CGPoint(x: sourceX, y: topY),
-                    CGPoint(x: returnX, y: topY),
-                    CGPoint(x: returnX, y: r.minY - 10),
+                    CGPoint(x: r.maxX + 16, y: topY),
+                    CGPoint(x: sideX, y: topY),
+                    CGPoint(x: sideX, y: bottomY),
+                    CGPoint(x: r.maxX + 16, y: bottomY),
                 ],
                 kind: .feedback
             )
@@ -10284,7 +10313,7 @@ private struct FMPatchBayLayout {
 
         func feedbackControl(_ positions: [Int: CGPoint]) -> CGPoint {
             let r = rect(4, in: positions)
-            return CGPoint(x: r.midX + 38, y: r.minY - 74)
+            return CGPoint(x: r.maxX + 82, y: r.minY + 240)
         }
 
         func outputRoutes(_ carriers: [Int], positions: [Int: CGPoint], output: CGPoint) -> [Route] {
@@ -10539,8 +10568,8 @@ struct FMPatchOperatorModule: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(operatorData.carrier ? Color.green : Color.blue)
                 Spacer()
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(isSelected ? Color.blue : .secondary)
+                Image(systemName: operatorEnabled ? "power.circle.fill" : "power.circle")
+                    .foregroundStyle(operatorEnabled ? Color.green : .secondary)
             }
 
             LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
@@ -10549,6 +10578,18 @@ struct FMPatchOperatorModule: View {
                 ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7)
                 ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3)
             }
+
+            OperatorEnvelopeView(
+                operatorData: operatorData,
+                updateOperator: { updatedOperator in
+                    guard operatorEnabled else {
+                        return
+                    }
+                    updateOperator(updatedOperator)
+                }
+            )
+            .frame(height: 82)
+            .allowsHitTesting(operatorEnabled)
 
             LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                 ParameterKnob(label: "Attack", value: operatorBinding({ $0.attackRate }, update: { try $0.settingAttackRate($1) }), range: 0...31)
@@ -10577,7 +10618,7 @@ struct FMPatchOperatorModule: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color.blue : moduleStroke, lineWidth: isSelected ? 2 : 1)
+                .stroke(moduleStroke, lineWidth: operatorEnabled ? 2.2 : 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture(perform: select)
@@ -10587,9 +10628,6 @@ struct FMPatchOperatorModule: View {
         Binding(
             get: { operatorEnabled },
             set: { enabled in
-                guard isSelected else {
-                    return
-                }
                 operatorEnabled = enabled
             }
         )
@@ -10602,7 +10640,10 @@ struct FMPatchOperatorModule: View {
     }
 
     private var moduleStroke: Color {
-        operatorData.carrier ? Color.green.opacity(0.45) : Color.blue.opacity(0.42)
+        if operatorEnabled {
+            return Color.green.opacity(0.90)
+        }
+        return operatorData.carrier ? Color.green.opacity(0.24) : Color.blue.opacity(0.24)
     }
 
     private func operatorBinding(
@@ -10612,7 +10653,7 @@ struct FMPatchOperatorModule: View {
         Binding(
             get: { value(operatorData) },
             set: { newValue in
-                guard isSelected else {
+                guard operatorEnabled else {
                     return
                 }
                 if let updated = try? update(operatorData, newValue) {

@@ -107,6 +107,15 @@ import Testing
 }
 
 @MainActor
+@Test func voiceSaveAsDocumentNameUsesSelectedFileStem() {
+    let popcornURL = URL(fileURLWithPath: "/tmp/popcorn.fb01voice")
+    #expect(editorDocumentName(fromFileURL: popcornURL, maxLength: FB01VoiceData.nameLength, fallback: "voice") == "popcorn")
+
+    let longURL = URL(fileURLWithPath: "/tmp/LongVoiceName.fb01voice")
+    #expect(editorDocumentName(fromFileURL: longURL, maxLength: FB01VoiceData.nameLength, fallback: "voice") == "LongVoi")
+}
+
+@MainActor
 @Test func voiceDocumentMapsOxygenC1ThroughC6ToCurrentOperatorEnvelope() throws {
     let voiceData = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
     let voice = VoiceDocumentModel(voice: voiceData, systemChannel: 0)
