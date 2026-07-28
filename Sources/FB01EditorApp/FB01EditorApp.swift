@@ -2891,6 +2891,7 @@ final class DocumentModel: ObservableObject {
     @Published var systemChannel = 0
     @Published var systemMemoryProtectEnabled = false
     @Published var systemMasterOutputLevel = 127
+    @Published var systemDeviceStatus = "Not requested"
     @Published var keyboardVelocity = 100
     @Published var keyboardChannel = 0
     @Published var keyboardStartNote = 36
@@ -3184,6 +3185,60 @@ final class DocumentModel: ObservableObject {
             errorMessage = "Set master output failed: \(error)"
             statusMessage = nil
         }
+    }
+
+    func requestUnitID() {
+        guard !isBusy else { return }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let sourceName = selectedSourceName
+        let destinationName = selectedDestinationName
+        let systemChannel = systemChannel
+        isFetchingFromDevice = true
+        statusMessage = "Requesting FB-01 Unit ID..."
+        errorMessage = nil
+
+        Task {
+            do {
+                let bytes = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.request(
+                        .unitID,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        timeout: 8
+                    )
+                }.value
+                let artifact = try FB01Artifact(sysexBytes: bytes)
+                let detail = try Self.deviceStatusDescription(from: artifact)
+                systemDeviceStatus = detail
+                statusMessage = "Received FB-01 Unit ID from \(sourceName) after requesting \(destinationName)."
+                errorMessage = nil
+            } catch {
+                systemDeviceStatus = "Request failed"
+                errorMessage = "Unit ID request failed: \(error)"
+                statusMessage = nil
+            }
+
+            isFetchingFromDevice = false
+        }
+    }
+
+    private static func deviceStatusDescription(from artifact: FB01Artifact) throws -> String {
+        for message in artifact.messages {
+            switch message {
+            case let .unitIDDump(systemChannel, packet):
+                let payload = packet.payload.map { String(format: "%02X", $0) }.joined(separator: " ")
+                return "Unit ID, System \(systemChannel + 1): \(payload)"
+            case let .deviceStatus(code):
+                return String(format: "Device Status: 0x%02X", code)
+            default:
+                continue
+            }
+        }
+        let bytes = try artifact.sysexBytes.map { String(format: "%02X", $0) }.joined(separator: " ")
+        return "Raw response: \(bytes)"
     }
 
     func systemMemoryProtectMessageBytes(enabled: Bool) throws -> [UInt8] {
@@ -7323,6 +7378,25 @@ struct SystemSettingsView: View {
                 }
                 .frame(width: 360, alignment: .topLeading)
             }
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 10) {
+                    SummaryPanel(rows: [
+                        KeyValueRow("Last Response", document.systemDeviceStatus),
+                    ])
+
+                    Button {
+                        document.requestUnitID()
+                    } label: {
+                        Label("Request Unit ID", systemImage: "info.circle")
+                    }
+                    .disabled(document.isBusy)
+                }
+                .padding(.top, 4)
+            } label: {
+                SectionTitle("Device Status")
+            }
+            .frame(minWidth: 420, maxWidth: 560, alignment: .topLeading)
         }
     }
 }
@@ -7671,6 +7745,58 @@ struct DocumentMIDIContextView: View {
     }
 }
 
+struct FB01TransferToolbarIcon: View {
+    enum Direction {
+        case fetch
+        case store
+    }
+
+    var direction: Direction
+
+    var body: some View {
+        Canvas { context, size in
+            let stroke = context.resolve(.foreground)
+            let lineWidth = max(size.width * 0.075, 1.4)
+            let deviceRect = CGRect(
+                x: size.width * 0.18,
+                y: size.height * 0.58,
+                width: size.width * 0.64,
+                height: size.height * 0.24
+            )
+
+            let device = Path(roundedRect: deviceRect, cornerRadius: size.width * 0.06)
+            context.stroke(device, with: stroke, lineWidth: lineWidth)
+
+            let display = Path(roundedRect: CGRect(
+                x: deviceRect.minX + deviceRect.width * 0.12,
+                y: deviceRect.minY + deviceRect.height * 0.28,
+                width: deviceRect.width * 0.24,
+                height: deviceRect.height * 0.28
+            ), cornerRadius: size.width * 0.02)
+            context.stroke(display, with: stroke, lineWidth: lineWidth * 0.75)
+
+            var arrow = Path()
+            switch direction {
+            case .fetch:
+                arrow.move(to: CGPoint(x: size.width * 0.50, y: deviceRect.minY - size.height * 0.04))
+                arrow.addLine(to: CGPoint(x: size.width * 0.50, y: size.height * 0.18))
+                arrow.move(to: CGPoint(x: size.width * 0.32, y: size.height * 0.34))
+                arrow.addLine(to: CGPoint(x: size.width * 0.50, y: size.height * 0.16))
+                arrow.addLine(to: CGPoint(x: size.width * 0.68, y: size.height * 0.34))
+            case .store:
+                arrow.move(to: CGPoint(x: size.width * 0.50, y: size.height * 0.16))
+                arrow.addLine(to: CGPoint(x: size.width * 0.50, y: deviceRect.minY - size.height * 0.02))
+                arrow.move(to: CGPoint(x: size.width * 0.32, y: deviceRect.minY - size.height * 0.18))
+                arrow.addLine(to: CGPoint(x: size.width * 0.50, y: deviceRect.minY))
+                arrow.addLine(to: CGPoint(x: size.width * 0.68, y: deviceRect.minY - size.height * 0.18))
+            }
+            context.stroke(arrow, with: stroke, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round))
+        }
+        .frame(width: 18, height: 18)
+        .accessibilityHidden(true)
+    }
+}
+
 struct VoiceDocumentLiveKeyboardView: View {
     @ObservedObject var document: VoiceDocumentModel
     @ObservedObject var device: DocumentModel
@@ -7807,7 +7933,6 @@ struct VoiceDocumentWindow: View {
                 SummaryPanel(rows: [
                     KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
                     KeyValueRow("Feedback", "\(voice.feedbackLevel)"),
-                    KeyValueRow("User Code", "\(voice.userCode)"),
                 ])
 
                 VoiceEditorControls(
@@ -7819,6 +7944,10 @@ struct VoiceDocumentWindow: View {
                         get: { voice.feedbackLevel },
                         set: { newValue in document.updateVoice { voice in try voice.settingFeedbackLevel(newValue) } }
                     ),
+                    userCode: Binding(
+                        get: { voice.userCode },
+                        set: { newValue in document.updateVoice { voice in try voice.settingUserCode(newValue) } }
+                    ),
                     lfoSpeed: Binding(
                         get: { voice.lfoSpeed },
                         set: { newValue in document.updateVoice { voice in try voice.settingLFOSpeed(newValue) } }
@@ -7826,6 +7955,10 @@ struct VoiceDocumentWindow: View {
                     lfoWaveform: Binding(
                         get: { voice.lfoWaveform },
                         set: { newValue in document.updateVoice { voice in try voice.settingLFOWaveform(newValue) } }
+                    ),
+                    loadLFODataEnabled: Binding(
+                        get: { voice.loadLFODataEnabled },
+                        set: { newValue in document.updateVoice { voice in try voice.settingLoadLFODataEnabled(newValue) } }
                     ),
                     lfoSyncEnabled: Binding(
                         get: { voice.lfoSyncEnabled },
@@ -7906,7 +8039,11 @@ struct VoiceDocumentWindow: View {
                 Button {
                     document.fetchFromDevice(device: device)
                 } label: {
-                    Label("Fetch Device", systemImage: "arrow.down.circle")
+                    Label {
+                        Text("Fetch Device")
+                    } icon: {
+                        FB01TransferToolbarIcon(direction: .fetch)
+                    }
                 }
                 .help("Fetch voice from device into this voice document")
                 .disabled(device.isBusy || document.isBusy)
@@ -7914,7 +8051,11 @@ struct VoiceDocumentWindow: View {
                 Button {
                     document.storeToDevice(device: device)
                 } label: {
-                    Label("Store Slot", systemImage: "externaldrive.badge.plus")
+                    Label {
+                        Text("Store Slot")
+                    } icon: {
+                        FB01TransferToolbarIcon(direction: .store)
+                    }
                 }
                 .help("Store this voice to a device slot")
                 .disabled(device.isBusy || document.isBusy)
@@ -8057,7 +8198,11 @@ struct ConfigurationDocumentWindow: View {
                 Button {
                     document.fetchFromDevice(device: device)
                 } label: {
-                    Label("Fetch Device", systemImage: "arrow.down.circle")
+                    Label {
+                        Text("Fetch Device")
+                    } icon: {
+                        FB01TransferToolbarIcon(direction: .fetch)
+                    }
                 }
                 .help("Fetch configuration from device into this configuration document")
                 .disabled(device.isBusy || document.isBusy)
@@ -8065,7 +8210,11 @@ struct ConfigurationDocumentWindow: View {
                 Button {
                     document.storeToDevice(device: device)
                 } label: {
-                    Label("Store Slot", systemImage: "externaldrive.badge.plus")
+                    Label {
+                        Text("Store Slot")
+                    } icon: {
+                        FB01TransferToolbarIcon(direction: .store)
+                    }
                 }
                 .help("Store this configuration to a device slot")
                 .disabled(device.isBusy || document.isBusy)
@@ -8600,7 +8749,7 @@ struct ConfigurationInstrumentInspector: View {
 
             OperatorControlGroup(title: "Key Range") {
                 HStack(alignment: .top, spacing: 12) {
-                    readOnlyValue("Active Notes", value: "\(instrument.noteCount)")
+                    instrumentKnob("Active Notes", value: instrument.noteCount, range: 0...8) { try instrument.settingNoteCount($0) }
                     instrumentKnob("Low Key", value: instrument.lowKeyLimit, range: 0...127) { try instrument.settingLowKeyLimit($0) }
                     instrumentKnob("High Key", value: instrument.highKeyLimit, range: 0...127) { try instrument.settingHighKeyLimit($0) }
                 }
@@ -8609,7 +8758,12 @@ struct ConfigurationInstrumentInspector: View {
             OperatorControlGroup(title: "Output") {
                 HStack(alignment: .top, spacing: 12) {
                     instrumentKnob("Level", value: instrument.outputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
-                    instrumentKnob("Pan", value: instrument.pan, range: 0...127) { try instrument.settingPan($0) }
+                    instrumentKnob(
+                        "Stereo Pan",
+                        value: centeredPanValue(forRawPan: instrument.pan),
+                        range: -63...63,
+                        displayText: stereoPanDisplayText
+                    ) { try instrument.settingPan(rawPanValue(forCenteredPan: $0)) }
                 }
                 RockerSwitch(label: "LFO Enabled", isOn: lfoEnabledBinding)
                 Picker("PMD", selection: pmdBinding) {
@@ -8623,6 +8777,7 @@ struct ConfigurationInstrumentInspector: View {
 
             OperatorControlGroup(title: "Performance") {
                 HStack(alignment: .top, spacing: 12) {
+                    instrumentKnob("Detune", value: instrument.detune, range: -64...63) { try instrument.settingDetune($0) }
                     instrumentKnob("Octave", value: instrument.octaveTranspose, range: -2...2) { try instrument.settingOctaveTranspose($0) }
                     instrumentKnob("Portamento", value: instrument.portamentoTime, range: 0...127) { try instrument.settingPortamentoTime($0) }
                     instrumentKnob("Bend Range", value: instrument.pitchBendRange, range: 0...12) { try instrument.settingPitchBendRange($0) }
@@ -8668,6 +8823,7 @@ struct ConfigurationInstrumentInspector: View {
         _ label: String,
         value: Int,
         range: ClosedRange<Int>,
+        displayText: ((Int) -> String)? = nil,
         update: @escaping (Int) throws -> FB01InstrumentConfiguration
     ) -> some View {
         ParameterKnob(
@@ -8680,8 +8836,27 @@ struct ConfigurationInstrumentInspector: View {
                     }
                 }
             ),
-            range: range
+            range: range,
+            displayTextProvider: displayText
         )
+    }
+
+    private func centeredPanValue(forRawPan rawPan: Int) -> Int {
+        min(max(rawPan - 64, -63), 63)
+    }
+
+    private func rawPanValue(forCenteredPan centeredPan: Int) -> Int {
+        centeredPan <= -63 ? 0 : min(max(centeredPan + 64, 0), 127)
+    }
+
+    private func stereoPanDisplayText(_ centeredPan: Int) -> String {
+        if centeredPan < 0 {
+            return String(format: "L%02d", abs(centeredPan))
+        }
+        if centeredPan > 0 {
+            return String(format: "R%02d", centeredPan)
+        }
+        return "C00"
     }
 
     private func readOnlyValue(_ label: String, value: String) -> some View {
@@ -9064,7 +9239,6 @@ struct VoiceDetailView: View {
 
             SummaryPanel(rows: [
                 KeyValueRow("Feedback", "\(editableVoice.feedbackLevel)"),
-                KeyValueRow("User Code", "\(editableVoice.userCode)"),
             ])
 
             VoiceEditorControls(
@@ -9076,6 +9250,10 @@ struct VoiceDetailView: View {
                     get: { editableVoice.feedbackLevel },
                     set: { setFeedback($0) }
                 ),
+                userCode: Binding(
+                    get: { editableVoice.userCode },
+                    set: { setUserCode($0) }
+                ),
                 lfoSpeed: Binding(
                     get: { editableVoice.lfoSpeed },
                     set: { setLFOSpeed($0) }
@@ -9083,6 +9261,10 @@ struct VoiceDetailView: View {
                 lfoWaveform: Binding(
                     get: { editableVoice.lfoWaveform },
                     set: { setLFOWaveform($0) }
+                ),
+                loadLFODataEnabled: Binding(
+                    get: { editableVoice.loadLFODataEnabled },
+                    set: { setLoadLFODataEnabled($0) }
                 ),
                 lfoSyncEnabled: Binding(
                     get: { editableVoice.lfoSyncEnabled },
@@ -9191,8 +9373,16 @@ struct VoiceDetailView: View {
         updateVoice { try $0.settingFeedbackLevel(value) }
     }
 
+    private func setUserCode(_ value: Int) {
+        updateVoice { try $0.settingUserCode(value) }
+    }
+
     private func setLFOSpeed(_ value: Int) {
         updateVoice { try $0.settingLFOSpeed(value) }
+    }
+
+    private func setLoadLFODataEnabled(_ value: Bool) {
+        updateVoice { try $0.settingLoadLFODataEnabled(value) }
     }
 
     private func setLFOWaveform(_ value: Int) {
@@ -9284,8 +9474,10 @@ struct VoiceDetailView: View {
 struct VoiceEditorControls: View {
     @Binding var name: String
     @Binding var feedback: Int
+    @Binding var userCode: Int
     @Binding var lfoSpeed: Int
     @Binding var lfoWaveform: Int
+    @Binding var loadLFODataEnabled: Bool
     @Binding var lfoSyncEnabled: Bool
     @Binding var amplitudeModulationDepth: Int
     @Binding var pitchModulationDepth: Int
@@ -9310,6 +9502,7 @@ struct VoiceEditorControls: View {
 
                     HStack(alignment: .top, spacing: 12) {
                         ParameterKnob(label: "Feedback", value: $feedback, range: 0...7)
+                        ParameterKnob(label: "User Code", value: $userCode, range: 0...255)
                         ParameterKnob(label: "Transpose", value: $transpose, range: -128...127)
                     }
                 }
@@ -9337,8 +9530,11 @@ struct VoiceEditorControls: View {
                         }
 
                         GridRow {
-                            label("LFO Sync")
-                            RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58)
+                            label("LFO Flags")
+                            HStack(alignment: .top, spacing: 12) {
+                                RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58)
+                                RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58)
+                            }
                         }
                     }
                 }
@@ -9948,8 +10144,8 @@ struct OperatorInspector: View {
                     operatorKnob("Level Scaling", value: operatorData.keyboardLevelScalingDepth, range: 0...15) { try operatorData.settingKeyboardLevelScalingDepth($0) }
                     operatorKnob("Rate Scaling", value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
                 }
-                operatorToggle("Level Type A", binding: keyboardLevelScalingTypeBit0Binding)
-                operatorToggle("Level Type B", binding: keyboardLevelScalingTypeBit1Binding)
+                operatorToggle("Level Curve Bit 1", binding: keyboardLevelScalingTypeBit0Binding)
+                operatorToggle("Level Curve Bit 2", binding: keyboardLevelScalingTypeBit1Binding)
             }
         }
     }

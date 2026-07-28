@@ -6,12 +6,13 @@ struct ParameterKnob: View {
     var range: ClosedRange<Int>
     var width: CGFloat = 82
     var knobSize: CGFloat = 48
+    var displayTextProvider: ((Int) -> String)?
 
     @State private var dragStartValue: Int?
 
     var body: some View {
         VStack(spacing: 5) {
-            SevenSegmentDisplay(text: displayText)
+            SevenSegmentDisplay(text: formattedDisplayText)
                 .frame(width: width, height: 24)
 
             KnobFace(normalizedValue: normalizedValue)
@@ -52,7 +53,11 @@ struct ParameterKnob: View {
         return Double(value - range.lowerBound) / Double(span)
     }
 
-    private var displayText: String {
+    private var formattedDisplayText: String {
+        if let displayTextProvider {
+            return displayTextProvider(value)
+        }
+
         let maximumDigits = max("\(range.lowerBound)".count, "\(range.upperBound)".count)
         if value < 0 {
             return String(format: "%0\(maximumDigits)d", value)
@@ -283,6 +288,9 @@ private struct SevenSegmentCharacter: View {
         case "7": return [.top, .upperRight, .lowerRight]
         case "8": return Set(SevenSegment.allCases)
         case "9": return [.top, .upperLeft, .upperRight, .middle, .lowerRight, .bottom]
+        case "C", "c": return [.top, .upperLeft, .lowerLeft, .bottom]
+        case "L", "l": return [.upperLeft, .lowerLeft, .bottom]
+        case "R", "r": return [.top, .upperLeft, .upperRight, .middle, .lowerLeft]
         case "-": return [.middle]
         default: return []
         }

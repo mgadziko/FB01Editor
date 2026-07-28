@@ -43,6 +43,10 @@ public struct FB01VoiceData: Equatable, Sendable {
         try settingByte(at: 0x08, value: value, name: "lfoSpeed", range: 0...255)
     }
 
+    public func settingUserCode(_ value: Int) throws -> FB01VoiceData {
+        try settingByte(at: 0x07, value: value, name: "userCode", range: 0...255)
+    }
+
     public func settingFeedbackLevel(_ value: Int) throws -> FB01VoiceData {
         let feedback = try FB01.validate(value, name: "feedbackLevel", range: 0...7)
         var copy = bytes
@@ -603,7 +607,10 @@ public struct FB01InstrumentConfiguration: Equatable, Sendable {
     public var lowKeyLimit: Int { Int(bytes[0x03]) }
     public var voiceBank: Int { Int(bytes[0x04]) }
     public var voiceNumber: Int { Int(bytes[0x05]) }
-    public var detune: Int { Int(Int8(bitPattern: bytes[0x06])) }
+    public var detune: Int {
+        let value = Int(bytes[0x06])
+        return value >= 64 ? value - 128 : value
+    }
     public var octaveTransposeRaw: Int { Int(bytes[0x07]) }
     public var octaveTranspose: Int { octaveTransposeRaw - 2 }
     public var outputLevel: Int { Int(bytes[0x08]) }
@@ -620,6 +627,10 @@ public struct FB01InstrumentConfiguration: Equatable, Sendable {
 
     public func settingMIDIChannel(_ value: Int) throws -> FB01InstrumentConfiguration {
         try settingByte(at: 0x01, value: value, name: "midiChannel", range: 0...15)
+    }
+
+    public func settingNoteCount(_ value: Int) throws -> FB01InstrumentConfiguration {
+        try settingByte(at: 0x00, value: value, name: "noteCount", range: 0...8)
     }
 
     public func settingVoiceBank(_ value: Int) throws -> FB01InstrumentConfiguration {
@@ -648,6 +659,14 @@ public struct FB01InstrumentConfiguration: Equatable, Sendable {
 
     public func settingPan(_ value: Int) throws -> FB01InstrumentConfiguration {
         try settingByte(at: 0x09, value: value, name: "pan", range: 0...127)
+    }
+
+    public func settingDetune(_ value: Int) throws -> FB01InstrumentConfiguration {
+        guard (-64...63).contains(value) else {
+            throw FB01SysExError.valueOutOfRange(name: "detune", value: value, range: -64...63)
+        }
+        let encoded = value < 0 ? value + 128 : value
+        return try settingByte(at: 0x06, value: encoded, name: "detune", range: 0...127)
     }
 
     public func settingLFOEnabled(_ enabled: Bool) throws -> FB01InstrumentConfiguration {
