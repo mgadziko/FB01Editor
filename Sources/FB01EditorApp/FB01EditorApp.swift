@@ -556,8 +556,16 @@ struct EditorDocumentCommands: View {
 
         Button("Load Configuration from File...") {
             if let id = workspace.loadConfigurationDocument() {
-                if let url = workspace.configurationDocument(id: id)?.fileURL {
+                if let configurationDocument = workspace.configurationDocument(id: id),
+                   let url = configurationDocument.fileURL {
                     document.rememberRecentLoadedConfigurationFile(url)
+                    Task { @MainActor in
+                        await document.prefetchConfigurationVoiceNames(
+                            for: configurationDocument.configuration,
+                            configurationDocument: configurationDocument,
+                            reason: "Loaded \(url.lastPathComponent)"
+                        )
+                    }
                 }
                 openWindow(id: "configuration-document", value: id)
             }
@@ -663,6 +671,15 @@ struct EditorDocumentCommands: View {
         if let id = workspace.loadConfigurationDocument(from: item.url) {
             document.rememberRecentLoadedConfigurationFile(item.url)
             openWindow(id: "configuration-document", value: id)
+            if let configurationDocument = workspace.configurationDocument(id: id) {
+                Task { @MainActor in
+                    await document.prefetchConfigurationVoiceNames(
+                        for: configurationDocument.configuration,
+                        configurationDocument: configurationDocument,
+                        reason: "Loaded \(item.title)"
+                    )
+                }
+            }
         }
     }
 
@@ -1322,6 +1339,14 @@ private final class EditorProgressPanel {
         messageLabel.stringValue = message
     }
 
+    func update(message: String, completed: Double, total: Double) {
+        messageLabel.stringValue = message
+        progress.isIndeterminate = false
+        progress.minValue = 0
+        progress.maxValue = max(total, 1)
+        progress.doubleValue = min(max(completed, 0), progress.maxValue)
+    }
+
     @objc private func cancel() {
         cancelButton.isEnabled = false
         update(message: "Canceling after the current MIDI operation finishes...")
@@ -1648,22 +1673,28 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         Task {
             let nameLookup: VoiceDocumentFetchNameLookup
             if preselectedSource == nil {
-                let progressPanel = EditorProgressPanel(
-                    title: "Reading Voice Names",
-                    message: "Reading Bank 1 and Bank 2 from the FB-01 on \(systemChannelName) so the Fetch dialog can show current RAM voice names."
-                )
-                progressPanel.show()
-                nameLookup = await Task.detached(priority: .userInitiated) {
-                    Self.fetchRAMVoiceNames(
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: systemChannel
+                let cachedLookup = device.voiceNameLookupFromCache()
+                if !cachedLookup.ramBankNames.isEmpty {
+                    nameLookup = cachedLookup
+                    statusMessage = "Voice names loaded from device cache."
+                } else {
+                    let progressPanel = EditorProgressPanel(
+                        title: "Reading Voice Names",
+                        message: "Reading Bank 1 and Bank 2 from the FB-01 on \(systemChannelName) so the Fetch dialog can show current RAM voice names."
                     )
-                }.value
-                progressPanel.dismiss()
-                statusMessage = "Voice name prefetch loaded \(nameLookup.loadedBankTitles) on \(systemChannelName)."
+                    progressPanel.show()
+                    nameLookup = await Task.detached(priority: .userInitiated) {
+                        Self.fetchRAMVoiceNames(
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel
+                        )
+                    }.value
+                    progressPanel.dismiss()
+                    statusMessage = "Voice name prefetch loaded \(nameLookup.loadedBankTitles) on \(systemChannelName)."
+                }
             } else {
-                nameLookup = .empty
+                nameLookup = device.voiceNameLookupFromCache()
             }
 
             let source: VoiceDocumentFetchSource
@@ -1681,6 +1712,19 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     return
                 }
                 source = chosenSource
+            }
+
+            if let cachedResult = device.cachedVoiceFetchResult(source: source, systemChannel: systemChannel, nameLookup: nameLookup) {
+                voice = cachedResult.voice
+                savedVoice = cachedResult.voice
+                self.systemChannel = cachedResult.systemChannel
+                fileURL = nil
+                let fetchedName = cachedResult.voice.name.isEmpty ? "Untitled" : cachedResult.voice.name
+                statusMessage = "Fetched \(fetchedName) from cached \(cachedResult.title) into this document."
+                device.rememberRecentFetchedVoice(source, title: cachedResult.title)
+                errorMessage = nil
+                isBusy = false
+                return
             }
 
             statusMessage = "Fetching voice from FB-01 on \(systemChannelName); waiting for device response..."
@@ -1812,6 +1856,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: bankNumber)
                 }
 
+                device.cacheVoiceBank(readback, userBankNumber: bankNumber)
                 statusMessage = "FB-01 verified Bank \(options.bank + 1) Voice \(options.voiceNumber + 1) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
                 errorMessage = nil
             } catch is CancellationError {
@@ -2502,21 +2547,27 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         Task {
             let nameLookup: ConfigurationFetchNameLookup
             if preselectedOptions == nil {
-                let progressPanel = EditorProgressPanel(
-                    title: "Reading Configuration Names",
-                    message: "Reading writable configuration names from the FB-01 so the Fetch dialog can show current slot names."
-                )
-                progressPanel.show()
-                nameLookup = await Task.detached(priority: .userInitiated) {
-                    Self.fetchConfigurationNames(
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: systemChannel
+                let cachedLookup = device.configurationNameLookupFromCache()
+                if !cachedLookup.storedNames.isEmpty {
+                    nameLookup = cachedLookup
+                    statusMessage = "Configuration names loaded from device cache."
+                } else {
+                    let progressPanel = EditorProgressPanel(
+                        title: "Reading Configuration Names",
+                        message: "Reading writable configuration names from the FB-01 so the Fetch dialog can show current slot names."
                     )
-                }.value
-                progressPanel.dismiss()
+                    progressPanel.show()
+                    nameLookup = await Task.detached(priority: .userInitiated) {
+                        Self.fetchConfigurationNames(
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel
+                        )
+                    }.value
+                    progressPanel.dismiss()
+                }
             } else {
-                nameLookup = .empty
+                nameLookup = device.configurationNameLookupFromCache()
             }
 
             let options: ConfigurationFetchOptions
@@ -2537,6 +2588,26 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
             statusMessage = "Fetching configuration from FB-01; waiting for device response..."
             let fetchTitle = recentTitle ?? (options.isCurrent ? "Current Configuration" : nameLookup.menuTitle(slot: options.slot + 1))
+            if let cachedConfiguration = device.cachedConfigurationFetchResult(options: options) {
+                configuration = cachedConfiguration
+                savedConfiguration = cachedConfiguration
+                self.systemChannel = systemChannel
+                fileURL = nil
+                let voiceNameStatus = await device.prefetchConfigurationVoiceNames(
+                    for: cachedConfiguration,
+                    configurationDocument: self,
+                    reason: "Fetched cached \(fetchTitle)"
+                )
+                statusMessage = if let voiceNameStatus {
+                    "Fetched cached \(fetchTitle) into this document. \(voiceNameStatus)"
+                } else {
+                    "Fetched cached \(fetchTitle) into this document."
+                }
+                device.rememberRecentFetchedConfiguration(options, title: fetchTitle)
+                errorMessage = nil
+                isBusy = false
+                return
+            }
             let fetchProgressPanel = EditorProgressPanel(
                 title: "Fetching Configuration",
                 message: "The configuration is being fetched. Please wait.\nReading \(fetchTitle) from the FB-01..."
@@ -2559,7 +2630,17 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                 savedConfiguration = result.0
                 self.systemChannel = result.1
                 fileURL = nil
-                statusMessage = "Fetched \(fetchTitle) into this document."
+                let voiceNameStatus = await device.prefetchConfigurationVoiceNames(
+                    for: result.0,
+                    configurationDocument: self,
+                    reason: "Fetched \(fetchTitle)",
+                    progressPanel: fetchProgressPanel
+                )
+                statusMessage = if let voiceNameStatus {
+                    "Fetched \(fetchTitle) into this document. \(voiceNameStatus)"
+                } else {
+                    "Fetched \(fetchTitle) into this document."
+                }
                 device.rememberRecentFetchedConfiguration(options, title: fetchTitle)
                 errorMessage = nil
             } catch {
@@ -2659,6 +2740,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                 } else {
                     statusMessage = "Stored configuration \(options.slot + 1) on \(destinationName)."
                 }
+                device.cacheConfiguration(configurationToStore, slot: options.slot + 1)
                 errorMessage = nil
             } catch is CancellationError {
                 statusMessage = nil
@@ -2907,6 +2989,7 @@ struct FB01EditorApplication: App {
                     appDelegate.document = document
                     appDelegate.documentWorkspace = documentWorkspace
                     LiveKeyboardPaletteController.shared.restoreIfNeeded(document: document)
+                    document.startLaunchDeviceCacheRefreshIfNeeded()
                 }
         }
         .defaultSize(width: 1080, height: 920)
@@ -3031,6 +3114,11 @@ struct FB01EditorApplication: App {
             CommandMenu("Configuration") {
                 Button("Copy Configuration to Slot ...") {
                     document.copyConfigurationSlotOnDevice()
+                }
+                .disabled(document.isBusy)
+
+                Button("Refresh Device Cache") {
+                    document.refreshDeviceCache(reason: "Refreshing device cache")
                 }
                 .disabled(document.isBusy)
 
@@ -3520,6 +3608,11 @@ final class DocumentModel: ObservableObject {
     @Published var recentFetchedVoices: [RecentVoiceFetch] = []
     @Published var recentLoadedConfigurationFiles: [RecentEditorFile] = []
     @Published var recentFetchedConfigurations: [RecentConfigurationFetch] = []
+    @Published private var ramVoiceNameCache: [Int: [String]] = [:]
+    @Published private var cachedVoiceBanks: [Int: FB01VoiceBankData] = [:]
+    @Published private var cachedConfigurations: [Int: FB01ConfigurationData] = [:]
+    @Published private var cachedCurrentConfiguration: FB01ConfigurationData?
+    @Published var deviceCacheStatus = "Not loaded"
 
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
@@ -3529,6 +3622,7 @@ final class DocumentModel: ObservableObject {
     private var liveKeyboardNoteOnHandler: ((Int) -> Void)?
     private var liveKeyboardNoteOffHandler: ((Int) -> Void)?
     private var externalVolumeTask: Task<Void, Never>?
+    private var hasStartedLaunchDeviceCacheRefresh = false
 
     private enum DefaultsKey {
         static let sourceIndex = "FB01Editor.selectedMIDISourceIndex"
@@ -3722,6 +3816,357 @@ final class DocumentModel: ObservableObject {
 
     var selectedKeyboardSourceName: String {
         midiSources.first { $0.index == selectedKeyboardSourceIndex }?.displayName ?? "Input \(selectedKeyboardSourceIndex)"
+    }
+
+    var deviceCacheSummaryRows: [KeyValueRow] {
+        [
+            KeyValueRow("Status", deviceCacheStatus),
+            KeyValueRow("Voice Banks", "\(cachedVoiceBanks.count)/7"),
+            KeyValueRow("Configurations", "\(cachedConfigurations.count)/20"),
+        ]
+    }
+
+    func startLaunchDeviceCacheRefreshIfNeeded() {
+        guard !hasStartedLaunchDeviceCacheRefresh else {
+            return
+        }
+        hasStartedLaunchDeviceCacheRefresh = true
+        refreshDeviceCache(reason: "Reading FB-01 device cache")
+    }
+
+    func refreshDeviceCache(reason: String = "Refreshing device cache") {
+        guard !isBusy else {
+            return
+        }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        let sourceName = selectedSourceName
+        let destinationName = selectedDestinationName
+        isFetchingFromDevice = true
+        deviceCacheStatus = "\(reason)..."
+        statusMessage = "\(reason) from \(sourceName) -> \(destinationName)..."
+        errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Reading FB-01 Device Cache",
+            message: "The FB-01 voice banks and configurations are being cached. Please wait."
+        )
+        progressPanel.show()
+
+        Task {
+            var loadedVoiceBanks: [Int: FB01VoiceBankData] = [:]
+            var loadedConfigurations: [Int: FB01ConfigurationData] = [:]
+            var loadedCurrentConfiguration: FB01ConfigurationData?
+            var failures: [String] = []
+            let totalRequests = 28.0
+            var completedRequests = 0.0
+
+            statusMessage = "\(reason): reading current configuration..."
+            progressPanel.update(
+                message: "The FB-01 voice banks and configurations are being cached. Please wait.\nReading current configuration...",
+                completed: completedRequests,
+                total: totalRequests
+            )
+            if let currentConfiguration = await Self.fetchCachedCurrentConfiguration(
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel
+            ) {
+                loadedCurrentConfiguration = currentConfiguration
+            } else {
+                failures.append("current configuration")
+            }
+            completedRequests += 1
+
+            for bank in 1...7 {
+                statusMessage = "\(reason): reading Voice Bank \(bank) of 7..."
+                progressPanel.update(
+                    message: "The FB-01 voice banks and configurations are being cached. Please wait.\nReading Voice Bank \(bank) of 7...",
+                    completed: completedRequests,
+                    total: totalRequests
+                )
+                if let voiceBank = await Self.fetchCachedVoiceBank(
+                    bank: bank,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                ) {
+                    loadedVoiceBanks[bank] = voiceBank
+                } else {
+                    failures.append("Voice Bank \(bank)")
+                }
+                completedRequests += 1
+            }
+
+            for slot in 1...20 {
+                statusMessage = "\(reason): reading Configuration \(slot) of 20..."
+                progressPanel.update(
+                    message: "The FB-01 voice banks and configurations are being cached. Please wait.\nReading Configuration \(slot) of 20...",
+                    completed: completedRequests,
+                    total: totalRequests
+                )
+                if let configuration = await Self.fetchCachedConfiguration(
+                    slot: slot,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                ) {
+                    loadedConfigurations[slot] = configuration
+                } else {
+                    failures.append("Configuration \(slot)")
+                }
+                completedRequests += 1
+            }
+            progressPanel.update(
+                message: "The FB-01 voice banks and configurations are being cached. Please wait.\nFinishing cache update...",
+                completed: totalRequests,
+                total: totalRequests
+            )
+
+            cachedVoiceBanks.merge(loadedVoiceBanks) { _, new in new }
+            cachedConfigurations.merge(loadedConfigurations) { _, new in new }
+            if let loadedCurrentConfiguration {
+                cachedCurrentConfiguration = loadedCurrentConfiguration
+            }
+            for (bank, bankData) in loadedVoiceBanks where (1...2).contains(bank) {
+                ramVoiceNameCache[bank] = bankData.voices.map { summary in
+                    summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
+                }
+            }
+
+            let loadedCount = loadedVoiceBanks.count + loadedConfigurations.count + (loadedCurrentConfiguration == nil ? 0 : 1)
+            deviceCacheStatus = failures.isEmpty
+                ? "Loaded \(loadedCount) items"
+                : "Loaded \(loadedCount) items; \(failures.count) failed"
+            statusMessage = failures.isEmpty
+                ? "Device cache loaded from \(sourceName) -> \(destinationName)."
+                : "Device cache partially loaded from \(sourceName) -> \(destinationName); \(failures.count) item\(failures.count == 1 ? "" : "s") failed."
+            errorMessage = nil
+            progressPanel.dismiss()
+            isFetchingFromDevice = false
+        }
+    }
+
+    nonisolated private static func fetchCachedVoiceBank(
+        bank: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) async -> FB01VoiceBankData? {
+        await Task.detached(priority: .userInitiated) {
+            guard let bytes = try? FB01MIDI.request(
+                .voiceBank(bank),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 20
+            ) else {
+                return nil
+            }
+            return try? voiceBankData(from: bytes, expectedBankNumber: bank)
+        }.value
+    }
+
+    nonisolated private static func fetchCachedConfiguration(
+        slot: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) async -> FB01ConfigurationData? {
+        await Task.detached(priority: .userInitiated) {
+            guard let bytes = try? FB01MIDI.request(
+                .configuration(slot),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 15
+            ),
+                  let artifact = try? FB01Artifact(sysexBytes: bytes) else {
+                return nil
+            }
+
+            for message in artifact.messages {
+                if case let .configurationDump(_, number, packet) = message,
+                   number == slot - 1 {
+                    return try? FB01ConfigurationData(bytes: packet.payload)
+                }
+            }
+            return nil
+        }.value
+    }
+
+    nonisolated private static func fetchCachedCurrentConfiguration(
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) async -> FB01ConfigurationData? {
+        await Task.detached(priority: .userInitiated) {
+            guard let bytes = try? FB01MIDI.request(
+                .currentConfiguration,
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 8
+            ),
+                  let artifact = try? FB01Artifact(sysexBytes: bytes) else {
+                return nil
+            }
+
+            for message in artifact.messages {
+                if case let .currentConfigurationDump(_, packet) = message {
+                    return try? FB01ConfigurationData(bytes: packet.payload)
+                }
+            }
+            return nil
+        }.value
+    }
+
+    fileprivate func prefetchConfigurationVoiceNames(
+        for configuration: FB01ConfigurationData,
+        configurationDocument: ConfigurationDocumentModel?,
+        reason: String,
+        progressPanel: EditorProgressPanel? = nil
+    ) async -> String? {
+        let referencedBanks = Array(Set(configuration.instruments.compactMap { instrument -> Int? in
+            guard instrument.noteCount > 0,
+                  (1...2).contains(instrument.voiceBank) else {
+                return nil
+            }
+            return instrument.voiceBank
+        })).sorted()
+        let banks = referencedBanks.filter { cachedVoiceBanks[$0] == nil }
+
+        guard !referencedBanks.isEmpty else {
+            return nil
+        }
+
+        guard !banks.isEmpty else {
+            return "Assigned RAM voice names are already cached."
+        }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        let systemChannelName = "System channel \(systemChannel + 1)"
+        let wasFetchingFromDevice = isFetchingFromDevice
+        isFetchingFromDevice = true
+        statusMessage = "\(reason). Reading assigned RAM voice names from \(bankListTitle(banks)) on \(systemChannelName)..."
+        configurationDocument?.statusMessage = "Reading assigned RAM voice names from the FB-01..."
+
+        var loadedBanks: [Int] = []
+        for bank in banks {
+            let detail = "Reading Bank \(bank) voice names for assigned Instruments..."
+            statusMessage = detail
+            configurationDocument?.statusMessage = detail
+            progressPanel?.update(message: "The configuration is being fetched. Please wait.\n\(detail)")
+
+            do {
+                let names = try await Task.detached(priority: .userInitiated) {
+                    let bytes = try FB01MIDI.request(
+                        .voiceBank(bank),
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        timeout: voiceBankNameFetchTimeout
+                    )
+                    let bankData = try voiceBankData(from: bytes, expectedBankNumber: bank)
+                    return bankData.voices.map { summary in
+                        summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
+                    }
+                }.value
+                ramVoiceNameCache[bank] = names
+                loadedBanks.append(bank)
+            } catch {
+                errorMessage = "Voice name fetch failed for Bank \(bank): \(error)"
+            }
+        }
+
+        if !wasFetchingFromDevice {
+            isFetchingFromDevice = false
+        }
+
+        guard !loadedBanks.isEmpty else {
+            configurationDocument?.statusMessage = "\(reason). Voice names were not loaded."
+            return "Voice names were not loaded."
+        }
+
+        let message = "Resolved assigned RAM voice names from \(bankListTitle(loadedBanks))."
+        statusMessage = "\(reason). \(message)"
+        configurationDocument?.statusMessage = "\(reason). \(message)"
+        return message
+    }
+
+    private func bankListTitle(_ banks: [Int]) -> String {
+        banks.map { "Bank \($0)" }.joined(separator: ", ")
+    }
+
+    func cachedVoiceFetchResult(
+        source: VoiceDocumentFetchSource,
+        systemChannel: Int,
+        nameLookup: VoiceDocumentFetchNameLookup = .empty
+    ) -> (voice: FB01VoiceData, systemChannel: Int, title: String)? {
+        guard case let .storedSlot(location, voiceNumber) = source else {
+            return nil
+        }
+
+        guard case let .bank(bank) = location,
+              let voiceBank = cachedVoiceBanks[bank],
+              voiceBank.voices.indices.contains(voiceNumber) else {
+            return nil
+        }
+
+        return (
+            voiceBank.voices[voiceNumber].voice,
+            systemChannel,
+            nameLookup.sourceTitle(location: location, voiceNumber: voiceNumber + 1)
+        )
+    }
+
+    func cachedConfigurationFetchResult(options: ConfigurationFetchOptions) -> FB01ConfigurationData? {
+        options.isCurrent ? cachedCurrentConfiguration : cachedConfigurations[options.slot + 1]
+    }
+
+    func voiceNameLookupFromCache() -> VoiceDocumentFetchNameLookup {
+        var namesByBank: [Int: [String]] = [:]
+        for bank in 1...2 {
+            if let voiceBank = cachedVoiceBanks[bank] {
+                namesByBank[bank] = voiceBank.voices.map { summary in
+                    summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
+                }
+            } else if let names = ramVoiceNameCache[bank] {
+                namesByBank[bank] = names
+            }
+        }
+        return VoiceDocumentFetchNameLookup(ramBankNames: namesByBank)
+    }
+
+    func configurationNameLookupFromCache() -> ConfigurationFetchNameLookup {
+        let names = cachedConfigurations.reduce(into: [Int: String]()) { result, element in
+            let (slot, configuration) = element
+            result[slot] = configuration.name.isEmpty ? "Untitled" : configuration.name
+        }
+        return ConfigurationFetchNameLookup(storedNames: names)
+    }
+
+    func cacheVoiceBank(_ voiceBank: FB01VoiceBankData, userBankNumber: Int) {
+        cachedVoiceBanks[userBankNumber] = voiceBank
+        if (1...2).contains(userBankNumber) {
+            ramVoiceNameCache[userBankNumber] = voiceBank.voices.map { summary in
+                summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
+            }
+        }
+        deviceCacheStatus = "Updated Voice Bank \(userBankNumber)"
+    }
+
+    func cacheConfiguration(_ configuration: FB01ConfigurationData, slot: Int) {
+        cachedConfigurations[slot] = configuration
+        deviceCacheStatus = "Updated Configuration \(slot)"
+    }
+
+    func cacheCurrentConfiguration(_ configuration: FB01ConfigurationData) {
+        cachedCurrentConfiguration = configuration
+        deviceCacheStatus = "Updated current configuration"
     }
 
     func refreshMIDIEndpoints() {
@@ -4234,6 +4679,7 @@ final class DocumentModel: ObservableObject {
                     mismatches = generalMIDIMismatches(readback: readback, targetBank: targetBank, selectedVoices: selectedVoices)
                 }
 
+                cacheVoiceBank(readback, userBankNumber: targetBank)
                 statusMessage = "FB-01 verified General MIDI voices in Bank \(targetBank) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
                 errorMessage = nil
             } catch is CancellationError {
@@ -5313,6 +5759,7 @@ final class DocumentModel: ObservableObject {
             throw FB01AppError.message("Configuration \(slotNumber) did not verify after writing.")
         }
 
+        cacheConfiguration(confirmedConfiguration, slot: slotNumber)
         return backupURL.lastPathComponent
     }
 
@@ -5702,6 +6149,7 @@ final class DocumentModel: ObservableObject {
             readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: bankNumber)
         }
 
+        cacheVoiceBank(readback, userBankNumber: bankNumber)
         return backupURL.lastPathComponent
     }
 
@@ -6644,6 +7092,10 @@ final class DocumentModel: ObservableObject {
 
         if (1...2).contains(bank) {
             for number in candidateNumbers {
+                if let names = ramVoiceNameCache[bank],
+                   (1...names.count).contains(number) {
+                    return names[number - 1]
+                }
                 if let voice = knownVoice(bank: bank - 1, number: number), !voice.name.isEmpty {
                     return voice.name
                 }
@@ -6886,6 +7338,11 @@ final class DocumentModel: ObservableObject {
     }
 
     private func knownVoice(bank: Int, number: Int) -> FB01VoiceData? {
+        if let cachedVoiceBank = cachedVoiceBanks[bank + 1],
+           let cachedVoice = cachedVoiceBank.voices.first(where: { $0.number == number })?.voice {
+            return cachedVoice
+        }
+
         for source in sources.reversed() {
             switch source.artifact.messages.first {
             case let .voiceBankDumpData(_, sourceBank, _, data, _) where sourceBank == bank:
@@ -7552,7 +8009,7 @@ struct LiveKeyboardPaletteControlsView: View {
                     .frame(height: 96)
 
                 VStack(alignment: .leading, spacing: 7) {
-                    SectionTitle("External Keyboard")
+                    SectionTitle("External Keyboard/MIDI Source")
 
                     HStack(alignment: .top, spacing: 10) {
                         RockerSwitch(label: "Enable", isOn: Binding(
@@ -7631,7 +8088,7 @@ struct LiveKeyboardMIDIControlsView: View {
             .font(.caption)
 
             HStack(spacing: 8) {
-                RockerSwitch(label: "External Keyboard", isOn: Binding(
+                RockerSwitch(label: "Enable", isOn: Binding(
                     get: { document.externalKeyboardEnabled },
                     set: { document.setExternalKeyboardEnabled($0) }
                 ), width: 72, height: 56)
@@ -8131,7 +8588,7 @@ struct GlobalStatusView: View {
                         KeyValueRow("MIDI Destinations", "\(document.midiDestinations.count)"),
                     ])
 
-                    statusCard(title: "External Keyboard", rows: [
+                    statusCard(title: "External Keyboard/MIDI Source", rows: [
                         KeyValueRow("Enabled", document.externalKeyboardEnabled ? "On" : "Off"),
                         KeyValueRow("MIDI In", document.selectedKeyboardSourceName),
                         KeyValueRow("Status", document.externalKeyboardStatus),
@@ -8153,6 +8610,8 @@ struct GlobalStatusView: View {
                         KeyValueRow("Selected Item", document.selectedSource?.title ?? "None"),
                     ])
                 }
+
+                statusCard(title: "Device Cache", rows: document.deviceCacheSummaryRows)
 
                 SystemSettingsView(document: document, showsSummary: false)
             }
@@ -9666,6 +10125,14 @@ struct ConfigurationEditorControls: View {
             }
 
             VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 16) {
+                    identityControls
+                    receiveAndWaveformControls
+                }
+                lfoAndModulationControls
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
                 identityControls
                 receiveAndWaveformControls
                 lfoAndModulationControls
@@ -9685,7 +10152,7 @@ struct ConfigurationEditorControls: View {
 
                 GridRow {
                     label("Combine")
-                    RockerSwitch(label: "Combine", isOn: $combineModeEnabled, width: 62, height: 58)
+                    RockerSwitch(label: "Layer Instruments", isOn: $combineModeEnabled, width: 92, height: 58)
                 }
             }
             .padding(.top, 4)
@@ -9750,9 +10217,16 @@ struct ConfigurationInstrumentEditor: View {
     @Binding var pitchModulationDepth: Int
     var updateInstrument: (FB01InstrumentConfiguration) -> Void
     @State private var selectedInstrumentIndex = 0
+    @State private var showAllNotesAssignedAlert = false
 
     private var selectedInstrument: FB01InstrumentConfiguration? {
         instruments.first { $0.index == selectedInstrumentIndex } ?? instruments.first
+    }
+
+    private var assignedNoteCount: Int {
+        instruments.reduce(0) { total, instrument in
+            total + instrument.noteCount
+        }
     }
 
     var body: some View {
@@ -9768,7 +10242,7 @@ struct ConfigurationInstrumentEditor: View {
                             voiceName: voiceName(instrument),
                             isSelected: instrument.index == selectedInstrumentIndex
                         ) {
-                            selectedInstrumentIndex = instrument.index
+                            selectInstrument(instrument)
                         }
                         .frame(minWidth: 164, maxWidth: .infinity)
                     }
@@ -9778,8 +10252,12 @@ struct ConfigurationInstrumentEditor: View {
                     if let selectedInstrument {
                         ConfigurationInstrumentInspector(
                             instrument: selectedInstrument,
+                            assignedNoteCount: assignedNoteCount,
                             pitchModulationDepth: $pitchModulationDepth,
-                            updateInstrument: updateInstrument
+                            updateInstrument: updateInstrument,
+                            showAllNotesAssignedAlert: {
+                                showAllNotesAssignedAlert = true
+                            }
                         )
                     }
                 }
@@ -9792,16 +10270,31 @@ struct ConfigurationInstrumentEditor: View {
                     .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
             )
         }
+        .padding(.top, 10)
         .onChange(of: instruments) { _, newInstruments in
             guard !newInstruments.contains(where: { $0.index == selectedInstrumentIndex }) else {
                 return
             }
             selectedInstrumentIndex = newInstruments.first?.index ?? 0
         }
+        .alert("Reduce Active Notes", isPresented: $showAllNotesAssignedAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("All 8 notes are assigned. Reduce the number of active notes assigned to other Instruments before adding a new Instrument.")
+        }
     }
 
     private var instrumentColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(minimum: 164), spacing: 10), count: 4)
+    }
+
+    private func selectInstrument(_ instrument: FB01InstrumentConfiguration) {
+        guard instrument.noteCount == 0, assignedNoteCount >= 8 else {
+            selectedInstrumentIndex = instrument.index
+            return
+        }
+
+        showAllNotesAssignedAlert = true
     }
 }
 
@@ -9877,77 +10370,119 @@ struct ConfigurationInstrumentSelectorButton: View {
 
 struct ConfigurationInstrumentInspector: View {
     var instrument: FB01InstrumentConfiguration
+    var assignedNoteCount: Int
     @Binding var pitchModulationDepth: Int
     var updateInstrument: (FB01InstrumentConfiguration) -> Void
+    var showAllNotesAssignedAlert: () -> Void
 
     var body: some View {
-        LazyVGrid(columns: [
-            GridItem(.flexible(minimum: 220), spacing: 12),
-            GridItem(.flexible(minimum: 220), spacing: 12),
-        ], alignment: .leading, spacing: 12) {
-            OperatorControlGroup(title: "MIDI and Voice") {
-                HStack(alignment: .top, spacing: 12) {
-                    instrumentKnob("MIDI Channel", value: instrument.midiChannel + 1, range: 1...16) { try instrument.settingMIDIChannel($0 - 1) }
-                    instrumentKnob("Voice Bank", value: instrument.voiceBank, range: 1...7) { try instrument.settingVoiceBank($0) }
-                    instrumentKnob("Voice Number", value: instrument.voiceNumber, range: 0...95) { try instrument.settingVoiceNumber($0) }
-                }
-                Picker("Mode", selection: modeBinding) {
-                    Text("Poly").tag(FB01MonoPolyMode.poly)
-                    Text("Mono").tag(FB01MonoPolyMode.mono)
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            controlPairRow {
+                assignMIDIAndVoiceControls
+            } trailing: {
+                keyRangeControls
             }
 
-            OperatorControlGroup(title: "Key Range") {
-                HStack(alignment: .top, spacing: 12) {
-                    instrumentKnob("Active Notes", value: instrument.noteCount, range: 0...8) { newValue in
-                        let updated = try instrument.settingNoteCount(newValue)
-                        if instrument.noteCount == 0, newValue > 0, updated.outputLevel == 0 {
-                            return try updated.settingOutputLevel(127)
-                        }
-                        return updated
+            controlPairRow {
+                outputControls
+            } trailing: {
+                performanceControls
+            }
+        }
+    }
+
+    private func controlPairRow<Leading: View, Trailing: View>(
+        @ViewBuilder leading: () -> Leading,
+        @ViewBuilder trailing: () -> Trailing
+    ) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                leading()
+                    .frame(minWidth: 220, maxWidth: .infinity, alignment: .topLeading)
+                trailing()
+                    .frame(minWidth: 220, maxWidth: .infinity, alignment: .topLeading)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                leading()
+                trailing()
+            }
+        }
+    }
+
+    private var assignMIDIAndVoiceControls: some View {
+        OperatorControlGroup(title: "Assign MIDI channel and Voice") {
+            HStack(alignment: .top, spacing: 12) {
+                instrumentKnob("MIDI Channel", value: instrument.midiChannel + 1, range: 1...16) { try instrument.settingMIDIChannel($0 - 1) }
+                instrumentKnob("Voice Bank", value: instrument.voiceBank, range: 1...7) { try instrument.settingVoiceBank($0) }
+                instrumentKnob("Voice Number", value: instrument.voiceNumber, range: 0...95) { try instrument.settingVoiceNumber($0) }
+            }
+            Picker("Mode", selection: modeBinding) {
+                Text("Poly").tag(FB01MonoPolyMode.poly)
+                Text("Mono").tag(FB01MonoPolyMode.mono)
+            }
+        }
+    }
+
+    private var keyRangeControls: some View {
+        OperatorControlGroup(title: "Key Range") {
+            HStack(alignment: .top, spacing: 12) {
+                instrumentKnob("Active Notes", value: instrument.noteCount, range: 0...8) { newValue in
+                    guard canSetActiveNotes(newValue) else {
+                        showAllNotesAssignedAlert()
+                        return instrument
                     }
-                    instrumentKnob("Low Key", value: instrument.lowKeyLimit, range: 0...127) { try instrument.settingLowKeyLimit($0) }
-                    instrumentKnob("High Key", value: instrument.highKeyLimit, range: 0...127) { try instrument.settingHighKeyLimit($0) }
-                }
-            }
-
-            OperatorControlGroup(title: "Output") {
-                HStack(alignment: .top, spacing: 12) {
-                    instrumentKnob("Level", value: displayedOutputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
-                    instrumentKnob(
-                        "Stereo Pan",
-                        value: centeredPanValue(forRawPan: instrument.pan),
-                        range: -63...63,
-                        displayText: stereoPanDisplayText
-                    ) { try instrument.settingPan(rawPanValue(forCenteredPan: $0)) }
-                }
-                HStack(alignment: .top, spacing: 18) {
-                    RockerSwitch(label: "LFO Enabled", isOn: lfoEnabledBinding)
-                    VStack(spacing: 6) {
-                        Text("PMD")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Picker("", selection: pmdBinding) {
-                            Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
-                            Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
-                            Text(FB01PMDControllerAssignment.modulationWheel.displayName).tag(FB01PMDControllerAssignment.modulationWheel)
-                            Text(FB01PMDControllerAssignment.breathController.displayName).tag(FB01PMDControllerAssignment.breathController)
-                            Text(FB01PMDControllerAssignment.footController.displayName).tag(FB01PMDControllerAssignment.footController)
-                        }
-                        .labelsHidden()
-                        .frame(width: 150)
+                    let updated = try instrument.settingNoteCount(newValue)
+                    if instrument.noteCount == 0, newValue > 0, updated.outputLevel == 0 {
+                        return try updated.settingOutputLevel(127)
                     }
-                    ParameterKnob(label: "PMD", value: $pitchModulationDepth, range: 0...127, width: 74, knobSize: 42)
+                    return updated
                 }
+                instrumentKnob("Low Key", value: instrument.lowKeyLimit, range: 0...127) { try instrument.settingLowKeyLimit($0) }
+                instrumentKnob("High Key", value: instrument.highKeyLimit, range: 0...127) { try instrument.settingHighKeyLimit($0) }
             }
+        }
+    }
 
-            OperatorControlGroup(title: "Performance") {
-                HStack(alignment: .top, spacing: 12) {
-                    instrumentKnob("Detune", value: instrument.detune, range: -64...63) { try instrument.settingDetune($0) }
-                    instrumentKnob("Octave", value: instrument.octaveTranspose, range: -2...2) { try instrument.settingOctaveTranspose($0) }
-                    instrumentKnob("Portamento", value: instrument.portamentoTime, range: 0...127) { try instrument.settingPortamentoTime($0) }
-                    instrumentKnob("Bend Range", value: instrument.pitchBendRange, range: 0...12) { try instrument.settingPitchBendRange($0) }
+    private var outputControls: some View {
+        OperatorControlGroup(title: "Output") {
+            HStack(alignment: .top, spacing: 12) {
+                instrumentKnob("Level", value: displayedOutputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
+                instrumentKnob(
+                    "Stereo Pan",
+                    value: centeredPanValue(forRawPan: instrument.pan),
+                    range: -63...63,
+                    displayText: stereoPanDisplayText
+                ) { try instrument.settingPan(rawPanValue(forCenteredPan: $0)) }
+            }
+            HStack(alignment: .top, spacing: 18) {
+                RockerSwitch(label: "LFO Enabled", isOn: lfoEnabledBinding)
+                VStack(spacing: 6) {
+                    Text("PMD")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Picker("", selection: pmdBinding) {
+                        Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
+                        Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
+                        Text(FB01PMDControllerAssignment.modulationWheel.displayName).tag(FB01PMDControllerAssignment.modulationWheel)
+                        Text(FB01PMDControllerAssignment.breathController.displayName).tag(FB01PMDControllerAssignment.breathController)
+                        Text(FB01PMDControllerAssignment.footController.displayName).tag(FB01PMDControllerAssignment.footController)
+                    }
+                    .labelsHidden()
+                    .frame(width: 150)
                 }
+                ParameterKnob(label: "PMD", value: $pitchModulationDepth, range: 0...127, width: 74, knobSize: 42)
+            }
+        }
+    }
+
+    private var performanceControls: some View {
+        OperatorControlGroup(title: "Performance") {
+            HStack(alignment: .top, spacing: 12) {
+                instrumentKnob("Detune", value: instrument.detune, range: -64...63) { try instrument.settingDetune($0) }
+                instrumentKnob("Octave", value: instrument.octaveTranspose, range: -2...2) { try instrument.settingOctaveTranspose($0) }
+                instrumentKnob("Portamento", value: instrument.portamentoTime, range: 0...127) { try instrument.settingPortamentoTime($0) }
+                instrumentKnob("Bend Range", value: instrument.pitchBendRange, range: 0...12) { try instrument.settingPitchBendRange($0) }
             }
         }
     }
@@ -9987,6 +10522,11 @@ struct ConfigurationInstrumentInspector: View {
 
     private var displayedOutputLevel: Int {
         instrument.noteCount == 0 ? 0 : instrument.outputLevel
+    }
+
+    private func canSetActiveNotes(_ newValue: Int) -> Bool {
+        let proposedTotal = assignedNoteCount - instrument.noteCount + newValue
+        return proposedTotal <= 8
     }
 
     private func instrumentKnob(
