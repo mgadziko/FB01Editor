@@ -508,17 +508,26 @@ struct EditorDocumentCommands: View {
 
         Button("Load Voice from File...") {
             if let id = workspace.loadVoiceDocument() {
+                if let url = workspace.voiceDocument(id: id)?.fileURL {
+                    document.rememberRecentLoadedVoiceFile(url)
+                }
                 openWindow(id: "voice-document", value: id)
             }
         }
         .keyboardShortcut("o", modifiers: [.command, .option])
 
-        Button("Load Configuration from File...") {
-            if let id = workspace.loadConfigurationDocument() {
-                openWindow(id: "configuration-document", value: id)
+        Menu("Load Recent Voice") {
+            if document.recentLoadedVoiceFiles.isEmpty {
+                Text("No Recent Voices")
+            } else {
+                ForEach(document.recentLoadedVoiceFiles) { item in
+                    Button(item.title) {
+                        openRecentVoice(item)
+                    }
+                    .help(item.path)
+                }
             }
         }
-        .keyboardShortcut("o", modifiers: [.command, .option, .shift])
 
         Button("Fetch Voice from Device...") {
             let id = workspace.createVoiceDocument()
@@ -530,6 +539,44 @@ struct EditorDocumentCommands: View {
         }
         .disabled(document.isBusy)
 
+        Menu("Fetch Recent Voice") {
+            if document.recentFetchedVoices.isEmpty {
+                Text("No Recent Voice Fetches")
+            } else {
+                ForEach(document.recentFetchedVoices) { item in
+                    Button(item.title) {
+                        fetchRecentVoice(item)
+                    }
+                    .disabled(document.isBusy || item.source == nil)
+                }
+            }
+        }
+
+        Divider()
+
+        Button("Load Configuration from File...") {
+            if let id = workspace.loadConfigurationDocument() {
+                if let url = workspace.configurationDocument(id: id)?.fileURL {
+                    document.rememberRecentLoadedConfigurationFile(url)
+                }
+                openWindow(id: "configuration-document", value: id)
+            }
+        }
+        .keyboardShortcut("o", modifiers: [.command, .option, .shift])
+
+        Menu("Load Recent Configuration") {
+            if document.recentLoadedConfigurationFiles.isEmpty {
+                Text("No Recent Configurations")
+            } else {
+                ForEach(document.recentLoadedConfigurationFiles) { item in
+                    Button(item.title) {
+                        openRecentConfiguration(item)
+                    }
+                    .help(item.path)
+                }
+            }
+        }
+
         Button("Fetch Configuration from Device...") {
             let id = workspace.createConfigurationDocument()
             openWindow(id: "configuration-document", value: id)
@@ -539,6 +586,19 @@ struct EditorDocumentCommands: View {
             }
         }
         .disabled(document.isBusy)
+
+        Menu("Fetch Recent Configuration") {
+            if document.recentFetchedConfigurations.isEmpty {
+                Text("No Recent Configuration Fetches")
+            } else {
+                ForEach(document.recentFetchedConfigurations) { item in
+                    Button(item.title) {
+                        fetchRecentConfiguration(item)
+                    }
+                    .disabled(document.isBusy)
+                }
+            }
+        }
 
         Divider()
 
@@ -591,6 +651,41 @@ struct EditorDocumentCommands: View {
 
         Divider()
     }
+
+    private func openRecentVoice(_ item: RecentEditorFile) {
+        if let id = workspace.loadVoiceDocument(from: item.url) {
+            document.rememberRecentLoadedVoiceFile(item.url)
+            openWindow(id: "voice-document", value: id)
+        }
+    }
+
+    private func openRecentConfiguration(_ item: RecentEditorFile) {
+        if let id = workspace.loadConfigurationDocument(from: item.url) {
+            document.rememberRecentLoadedConfigurationFile(item.url)
+            openWindow(id: "configuration-document", value: id)
+        }
+    }
+
+    private func fetchRecentVoice(_ item: RecentVoiceFetch) {
+        guard let source = item.source else {
+            return
+        }
+        let id = workspace.createVoiceDocument()
+        openWindow(id: "voice-document", value: id)
+        Task { @MainActor in
+            await Task.yield()
+            workspace.voiceDocument(id: id)?.fetchFromDevice(device: document, source: source, recentTitle: item.title)
+        }
+    }
+
+    private func fetchRecentConfiguration(_ item: RecentConfigurationFetch) {
+        let id = workspace.createConfigurationDocument()
+        openWindow(id: "configuration-document", value: id)
+        Task { @MainActor in
+            await Task.yield()
+            workspace.configurationDocument(id: id)?.fetchFromDevice(device: document, options: item.options, recentTitle: item.title)
+        }
+    }
 }
 
 @MainActor
@@ -622,8 +717,24 @@ final class EditorDocumentWorkspace: ObservableObject {
         return loaded.id
     }
 
+    func loadVoiceDocument(from url: URL) -> UUID? {
+        guard let loaded = VoiceDocumentModel.loadFromDisk(url: url) else {
+            return nil
+        }
+        insertVoiceDocument(loaded)
+        return loaded.id
+    }
+
     func loadConfigurationDocument() -> UUID? {
         guard let loaded = ConfigurationDocumentModel.loadFromDisk() else {
+            return nil
+        }
+        insertConfigurationDocument(loaded)
+        return loaded.id
+    }
+
+    func loadConfigurationDocument(from url: URL) -> UUID? {
+        guard let loaded = ConfigurationDocumentModel.loadFromDisk(url: url) else {
             return nil
         }
         insertConfigurationDocument(loaded)
@@ -751,6 +862,67 @@ private enum EditorFileDefaultsKey {
     static let lastSaveDirectory = "FB01Editor.lastSaveDirectory"
 }
 
+struct RecentEditorFile: Codable, Identifiable, Equatable {
+    var path: String
+
+    var id: String { path }
+    var url: URL { URL(fileURLWithPath: path) }
+    var title: String { url.deletingPathExtension().lastPathComponent }
+}
+
+struct RecentVoiceFetch: Codable, Identifiable, Equatable {
+    enum SourceKind: String, Codable {
+        case instrument
+        case bank
+        case voiceRAM1
+    }
+
+    var kind: SourceKind
+    var instrument: Int?
+    var bank: Int?
+    var voiceNumber: Int?
+    var title: String
+
+    var id: String {
+        switch kind {
+        case .instrument:
+            return "instrument-\(instrument ?? 0)"
+        case .bank:
+            return "bank-\(bank ?? 0)-voice-\(voiceNumber ?? 0)"
+        case .voiceRAM1:
+            return "voiceRAM1-\(voiceNumber ?? 0)"
+        }
+    }
+
+    var source: VoiceDocumentFetchSource? {
+        switch kind {
+        case .instrument:
+            guard let instrument else { return nil }
+            return .instrument(instrument)
+        case .bank:
+            guard let bank, let voiceNumber else { return nil }
+            return .storedSlot(location: .bank(bank), voiceNumber: voiceNumber)
+        case .voiceRAM1:
+            guard let voiceNumber else { return nil }
+            return .storedSlot(location: .voiceRAM1, voiceNumber: voiceNumber)
+        }
+    }
+}
+
+struct RecentConfigurationFetch: Codable, Identifiable, Equatable {
+    var isCurrent: Bool
+    var slot: Int
+    var title: String
+
+    var id: String {
+        isCurrent ? "current" : "slot-\(slot)"
+    }
+
+    var options: ConfigurationFetchOptions {
+        ConfigurationFetchOptions(isCurrent: isCurrent, slot: slot)
+    }
+}
+
 private struct VoiceDocumentStoreOptions: Sendable {
     var bank: Int
     var voiceNumber: Int
@@ -760,7 +932,7 @@ private struct VoiceDocumentStoreOptions: Sendable {
     }
 }
 
-private enum VoiceDocumentFetchSource: Sendable {
+enum VoiceDocumentFetchSource: Sendable {
     case instrument(Int)
     case storedSlot(location: VoiceDocumentFetchLocation, voiceNumber: Int)
 
@@ -950,7 +1122,7 @@ struct ConfigurationFetchNameLookup: Sendable {
     }
 }
 
-private struct ConfigurationFetchOptions: Sendable {
+struct ConfigurationFetchOptions: Sendable {
     var isCurrent: Bool
     var slot: Int
 }
@@ -1020,6 +1192,29 @@ private func ensureDefaultEditorBackupDirectory() throws -> URL {
 private func editorDirectoryExists(at url: URL) -> Bool {
     var isDirectory: ObjCBool = false
     return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+}
+
+private func recentEditorItems<T: Decodable>(forKey key: String, as type: T.Type = T.self) -> [T] {
+    guard let data = UserDefaults.standard.data(forKey: key) else {
+        return []
+    }
+    return (try? JSONDecoder().decode([T].self, from: data)) ?? []
+}
+
+private func saveRecentEditorItems<T: Encodable>(_ items: [T], forKey key: String) {
+    guard let data = try? JSONEncoder().encode(items) else {
+        return
+    }
+    UserDefaults.standard.set(data, forKey: key)
+}
+
+private func addingRecentEditorItem<T: Identifiable & Equatable>(_ item: T, to items: [T], limit: Int = 7) -> [T] where T.ID: Equatable {
+    var next = items.filter { $0.id != item.id }
+    next.insert(item, at: 0)
+    if next.count > limit {
+        next.removeLast(next.count - limit)
+    }
+    return next
 }
 
 private var defaultEditorFileDirectoryURL: URL {
@@ -1395,6 +1590,17 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
+    static func loadFromDisk(url: URL) -> VoiceDocumentModel? {
+        do {
+            let (voice, systemChannel) = try readVoice(from: url)
+            rememberEditorLoadDirectory(for: url)
+            return VoiceDocumentModel(voice: voice, systemChannel: systemChannel, fileURL: url)
+        } catch {
+            showEditorError(title: "Load Voice Failed", message: "\(error)")
+            return nil
+        }
+    }
+
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
@@ -1424,7 +1630,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    func fetchFromDevice(device: DocumentModel) {
+    func fetchFromDevice(device: DocumentModel, source preselectedSource: VoiceDocumentFetchSource? = nil, recentTitle: String? = nil) {
         guard !isBusy else { return }
         let sourceIndex = device.selectedSourceIndex
         let destinationIndex = device.selectedDestinationIndex
@@ -1432,37 +1638,58 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         isBusy = true
         let systemChannelName = "System channel \(systemChannel + 1)"
-        statusMessage = "Reading Bank 1 and Bank 2 voice names from FB-01 on \(systemChannelName)..."
         errorMessage = nil
-        let progressPanel = EditorProgressPanel(
-            title: "Reading Voice Names",
-            message: "Reading Bank 1 and Bank 2 from the FB-01 on \(systemChannelName) so the Fetch dialog can show current RAM voice names."
-        )
-        progressPanel.show()
+        if preselectedSource == nil {
+            statusMessage = "Reading Bank 1 and Bank 2 voice names from FB-01 on \(systemChannelName)..."
+        } else {
+            statusMessage = "Fetching \(recentTitle ?? "recent voice") from FB-01 on \(systemChannelName)..."
+        }
 
         Task {
-            let nameLookup = await Task.detached(priority: .userInitiated) {
-                Self.fetchRAMVoiceNames(
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
+            let nameLookup: VoiceDocumentFetchNameLookup
+            if preselectedSource == nil {
+                let progressPanel = EditorProgressPanel(
+                    title: "Reading Voice Names",
+                    message: "Reading Bank 1 and Bank 2 from the FB-01 on \(systemChannelName) so the Fetch dialog can show current RAM voice names."
                 )
-            }.value
-            progressPanel.dismiss()
-            statusMessage = "Voice name prefetch loaded \(nameLookup.loadedBankTitles) on \(systemChannelName)."
+                progressPanel.show()
+                nameLookup = await Task.detached(priority: .userInitiated) {
+                    Self.fetchRAMVoiceNames(
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel
+                    )
+                }.value
+                progressPanel.dismiss()
+                statusMessage = "Voice name prefetch loaded \(nameLookup.loadedBankTitles) on \(systemChannelName)."
+            } else {
+                nameLookup = .empty
+            }
 
-            guard let source = Self.chooseFetchSource(
-                title: "Fetch Voice from Device into Current Document",
-                actionTitle: "Fetch",
-                nameLookup: nameLookup,
-                systemChannel: systemChannel
-            ) else {
-                statusMessage = nil
-                isBusy = false
-                return
+            let source: VoiceDocumentFetchSource
+            if let preselectedSource {
+                source = preselectedSource
+            } else {
+                guard let chosenSource = Self.chooseFetchSource(
+                    title: "Fetch Voice from Device into Current Document",
+                    actionTitle: "Fetch",
+                    nameLookup: nameLookup,
+                    systemChannel: systemChannel
+                ) else {
+                    statusMessage = nil
+                    isBusy = false
+                    return
+                }
+                source = chosenSource
             }
 
             statusMessage = "Fetching voice from FB-01 on \(systemChannelName); waiting for device response..."
+            let fetchTitle = recentTitle ?? source.title(nameLookup: nameLookup)
+            let fetchProgressPanel = EditorProgressPanel(
+                title: "Fetching Voice",
+                message: "The voice is being fetched. Please wait.\nReading \(fetchTitle) from the FB-01..."
+            )
+            fetchProgressPanel.show()
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try Self.fetchVoice(source: source, sourceIndex: sourceIndex, destinationIndex: destinationIndex, systemChannel: systemChannel)
@@ -1472,12 +1699,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 self.systemChannel = result.systemChannel
                 fileURL = nil
                 let fetchedName = result.voice.name.isEmpty ? "Untitled" : result.voice.name
-                statusMessage = "Fetched \(fetchedName) from \(source.title(nameLookup: nameLookup)) into this document."
+                statusMessage = "Fetched \(fetchedName) from \(fetchTitle) into this document."
+                device.rememberRecentFetchedVoice(source, title: fetchTitle)
                 errorMessage = nil
             } catch {
                 errorMessage = "Fetch failed on \(systemChannelName): \(error)"
                 statusMessage = nil
             }
+            fetchProgressPanel.dismiss()
             isBusy = false
         }
     }
@@ -2218,6 +2447,17 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         }
     }
 
+    static func loadFromDisk(url: URL) -> ConfigurationDocumentModel? {
+        do {
+            let (configuration, systemChannel) = try readConfiguration(from: url)
+            rememberEditorLoadDirectory(for: url)
+            return ConfigurationDocumentModel(configuration: configuration, systemChannel: systemChannel, fileURL: url)
+        } catch {
+            showEditorError(title: "Load Configuration Failed", message: "\(error)")
+            return nil
+        }
+    }
+
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
@@ -2247,42 +2487,61 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    func fetchFromDevice(device: DocumentModel) {
+    func fetchFromDevice(device: DocumentModel, options preselectedOptions: ConfigurationFetchOptions? = nil, recentTitle: String? = nil) {
         guard !isBusy else { return }
         let sourceIndex = device.selectedSourceIndex
         let destinationIndex = device.selectedDestinationIndex
         let systemChannel = device.systemChannel
 
         isBusy = true
-        statusMessage = "Reading configuration names from FB-01..."
         errorMessage = nil
-        let progressPanel = EditorProgressPanel(
-            title: "Reading Configuration Names",
-            message: "Reading writable configuration names from the FB-01 so the Fetch dialog can show current slot names."
-        )
-        progressPanel.show()
+        statusMessage = preselectedOptions == nil
+            ? "Reading configuration names from FB-01..."
+            : "Fetching \(recentTitle ?? "recent configuration") from FB-01..."
 
         Task {
-            let nameLookup = await Task.detached(priority: .userInitiated) {
-                Self.fetchConfigurationNames(
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
+            let nameLookup: ConfigurationFetchNameLookup
+            if preselectedOptions == nil {
+                let progressPanel = EditorProgressPanel(
+                    title: "Reading Configuration Names",
+                    message: "Reading writable configuration names from the FB-01 so the Fetch dialog can show current slot names."
                 )
-            }.value
-            progressPanel.dismiss()
+                progressPanel.show()
+                nameLookup = await Task.detached(priority: .userInitiated) {
+                    Self.fetchConfigurationNames(
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel
+                    )
+                }.value
+                progressPanel.dismiss()
+            } else {
+                nameLookup = .empty
+            }
 
-            guard let options = Self.chooseFetchOptions(
-                title: "Fetch Configuration from Device into Current Document",
-                actionTitle: "Fetch",
-                nameLookup: nameLookup
-            ) else {
-                statusMessage = nil
-                isBusy = false
-                return
+            let options: ConfigurationFetchOptions
+            if let preselectedOptions {
+                options = preselectedOptions
+            } else {
+                guard let chosenOptions = Self.chooseFetchOptions(
+                    title: "Fetch Configuration from Device into Current Document",
+                    actionTitle: "Fetch",
+                    nameLookup: nameLookup
+                ) else {
+                    statusMessage = nil
+                    isBusy = false
+                    return
+                }
+                options = chosenOptions
             }
 
             statusMessage = "Fetching configuration from FB-01; waiting for device response..."
+            let fetchTitle = recentTitle ?? (options.isCurrent ? "Current Configuration" : nameLookup.menuTitle(slot: options.slot + 1))
+            let fetchProgressPanel = EditorProgressPanel(
+                title: "Fetching Configuration",
+                message: "The configuration is being fetched. Please wait.\nReading \(fetchTitle) from the FB-01..."
+            )
+            fetchProgressPanel.show()
             do {
                 let kind: FB01MIDIRequestKind = options.isCurrent ? .currentConfiguration : .configuration(options.slot + 1)
                 let result = try await Task.detached(priority: .userInitiated) { () -> (FB01ConfigurationData, Int) in
@@ -2300,14 +2559,14 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                 savedConfiguration = result.0
                 self.systemChannel = result.1
                 fileURL = nil
-                statusMessage = options.isCurrent
-                    ? "Fetched current configuration into this document."
-                    : "Fetched \(nameLookup.menuTitle(slot: options.slot + 1)) into this document."
+                statusMessage = "Fetched \(fetchTitle) into this document."
+                device.rememberRecentFetchedConfiguration(options, title: fetchTitle)
                 errorMessage = nil
             } catch {
                 errorMessage = "Fetch failed: \(error)"
                 statusMessage = nil
             }
+            fetchProgressPanel.dismiss()
             isBusy = false
         }
     }
@@ -2643,12 +2902,13 @@ struct FB01EditorApplication: App {
     var body: some Scene {
         WindowGroup("Forest FB-01 Editor") {
             ContentView(document: document, workspace: documentWorkspace)
-                .frame(minWidth: 840, minHeight: 540)
+                .frame(minWidth: 1080, minHeight: 760)
                 .onAppear {
                     appDelegate.document = document
                     appDelegate.documentWorkspace = documentWorkspace
                 }
         }
+        .defaultSize(width: 1080, height: 760)
         WindowGroup("Voice Document", id: "voice-document", for: UUID.self) { $id in
             if let id, let voiceDocument = documentWorkspace.voiceDocument(id: id) {
                 VoiceDocumentWindow(document: voiceDocument, device: document) {
@@ -2718,6 +2978,13 @@ struct FB01EditorApplication: App {
                     document.saveSelectedConfigurationAs()
                 }
                 .disabled(!document.canSaveSelectedLibraryConfigurationAs)
+            }
+
+            CommandGroup(after: .windowArrangement) {
+                Button("Live Keyboard") {
+                    LiveKeyboardPaletteController.shared.show(document: document)
+                }
+                .keyboardShortcut("k", modifiers: [.command, .option])
             }
 
             CommandMenu("Voice") {
@@ -2951,6 +3218,40 @@ private final class PreferencesWindowDelegate: NSObject, NSWindowDelegate {
     }
 }
 
+@MainActor
+final class LiveKeyboardPaletteController {
+    static let shared = LiveKeyboardPaletteController()
+
+    private var panel: NSPanel?
+
+    func show(document: DocumentModel) {
+        if let panel {
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 848, height: 224),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .utilityWindow],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Live Keyboard"
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
+        panel.contentMinSize = NSSize(width: 760, height: 198)
+        panel.contentView = NSHostingView(rootView: LiveKeyboardPaletteView(document: document))
+        panel.center()
+        self.panel = panel
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
 struct PreferencesView: View {
     @ObservedObject var document: DocumentModel
     var close: () -> Void
@@ -3137,19 +3438,27 @@ final class DocumentModel: ObservableObject {
     @Published var systemMemoryProtectEnabled = false
     @Published var systemMasterOutputLevel = 127
     @Published var systemDeviceStatus = "Not requested"
-    @Published var voiceEditorParadigm: VoiceEditorParadigm = .consoleSections
+    @Published var voiceEditorParadigm: VoiceEditorParadigm = .fmRoutingPatchBay
     @Published var preferredDeviceCount = 1
     @Published var devicePreferences: [FB01DevicePreference] = []
     @Published var keyboardVelocity = 100
     @Published var keyboardChannel = 0
     @Published var keyboardStartNote = 36
     @Published var externalKeyboardPressedNotes: Set<Int> = []
+    @Published var liveKeyboardTitle = "Live Keyboard"
+    @Published var liveKeyboardSubtitle = "MIDI notes only"
+    @Published var recentLoadedVoiceFiles: [RecentEditorFile] = []
+    @Published var recentFetchedVoices: [RecentVoiceFetch] = []
+    @Published var recentLoadedConfigurationFiles: [RecentEditorFile] = []
+    @Published var recentFetchedConfigurations: [RecentConfigurationFetch] = []
 
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
     private var externalKeyboardMonitor: FB01MIDILiveInputMonitor?
     private var externalKeyboardDocumentHandler: (([UInt8]) -> Bool)?
+    private var liveKeyboardNoteOnHandler: ((Int) -> Void)?
+    private var liveKeyboardNoteOffHandler: ((Int) -> Void)?
     private var externalVolumeTask: Task<Void, Never>?
 
     private enum DefaultsKey {
@@ -3168,6 +3477,10 @@ final class DocumentModel: ObservableObject {
         static let keyboardStartNote = "FB01Editor.keyboardStartNote"
         static let voiceEditorParadigm = "FB01Editor.voiceEditorParadigm"
         static let preferredDeviceCount = "FB01Editor.preferredDeviceCount"
+        static let recentLoadedVoiceFiles = "FB01Editor.recentLoadedVoiceFiles"
+        static let recentFetchedVoices = "FB01Editor.recentFetchedVoices"
+        static let recentLoadedConfigurationFiles = "FB01Editor.recentLoadedConfigurationFiles"
+        static let recentFetchedConfigurations = "FB01Editor.recentFetchedConfigurations"
 
         static func deviceCommandChannel(_ index: Int) -> String {
             "FB01Editor.devicePreference.\(index).commandChannel"
@@ -3196,6 +3509,10 @@ final class DocumentModel: ObservableObject {
            let paradigm = VoiceEditorParadigm(rawValue: rawParadigm) {
             voiceEditorParadigm = paradigm
         }
+        recentLoadedVoiceFiles = recentEditorItems(forKey: DefaultsKey.recentLoadedVoiceFiles)
+        recentFetchedVoices = recentEditorItems(forKey: DefaultsKey.recentFetchedVoices)
+        recentLoadedConfigurationFiles = recentEditorItems(forKey: DefaultsKey.recentLoadedConfigurationFiles)
+        recentFetchedConfigurations = recentEditorItems(forKey: DefaultsKey.recentFetchedConfigurations)
         let savedDeviceCount = UserDefaults.standard.integer(forKey: DefaultsKey.preferredDeviceCount)
         preferredDeviceCount = (1...4).contains(savedDeviceCount) ? savedDeviceCount : 1
         loadDevicePreferences()
@@ -3430,6 +3747,36 @@ final class DocumentModel: ObservableObject {
     func setVoiceEditorParadigm(_ paradigm: VoiceEditorParadigm) {
         voiceEditorParadigm = paradigm
         UserDefaults.standard.set(paradigm.rawValue, forKey: DefaultsKey.voiceEditorParadigm)
+    }
+
+    func rememberRecentLoadedVoiceFile(_ url: URL) {
+        recentLoadedVoiceFiles = addingRecentEditorItem(RecentEditorFile(path: url.path), to: recentLoadedVoiceFiles)
+        saveRecentEditorItems(recentLoadedVoiceFiles, forKey: DefaultsKey.recentLoadedVoiceFiles)
+    }
+
+    func rememberRecentLoadedConfigurationFile(_ url: URL) {
+        recentLoadedConfigurationFiles = addingRecentEditorItem(RecentEditorFile(path: url.path), to: recentLoadedConfigurationFiles)
+        saveRecentEditorItems(recentLoadedConfigurationFiles, forKey: DefaultsKey.recentLoadedConfigurationFiles)
+    }
+
+    func rememberRecentFetchedVoice(_ source: VoiceDocumentFetchSource, title: String) {
+        let item: RecentVoiceFetch
+        switch source {
+        case .instrument(let instrument):
+            item = RecentVoiceFetch(kind: .instrument, instrument: instrument, bank: nil, voiceNumber: nil, title: title)
+        case .storedSlot(.bank(let bank), let voiceNumber):
+            item = RecentVoiceFetch(kind: .bank, instrument: nil, bank: bank, voiceNumber: voiceNumber, title: title)
+        case .storedSlot(.voiceRAM1, let voiceNumber):
+            item = RecentVoiceFetch(kind: .voiceRAM1, instrument: nil, bank: nil, voiceNumber: voiceNumber, title: title)
+        }
+        recentFetchedVoices = addingRecentEditorItem(item, to: recentFetchedVoices)
+        saveRecentEditorItems(recentFetchedVoices, forKey: DefaultsKey.recentFetchedVoices)
+    }
+
+    func rememberRecentFetchedConfiguration(_ options: ConfigurationFetchOptions, title: String) {
+        let item = RecentConfigurationFetch(isCurrent: options.isCurrent, slot: options.slot, title: title)
+        recentFetchedConfigurations = addingRecentEditorItem(item, to: recentFetchedConfigurations)
+        saveRecentEditorItems(recentFetchedConfigurations, forKey: DefaultsKey.recentFetchedConfigurations)
     }
 
     func setPreferredDeviceCount(_ count: Int) {
@@ -5942,6 +6289,39 @@ final class DocumentModel: ObservableObject {
         externalKeyboardDocumentHandler = handler
     }
 
+    func setLiveKeyboardContext(
+        title: String,
+        subtitle: String,
+        noteOn: @escaping (Int) -> Void,
+        noteOff: @escaping (Int) -> Void
+    ) {
+        liveKeyboardTitle = title
+        liveKeyboardSubtitle = subtitle
+        liveKeyboardNoteOnHandler = noteOn
+        liveKeyboardNoteOffHandler = noteOff
+    }
+
+    func resetLiveKeyboardContext() {
+        liveKeyboardTitle = selectedVoiceDocumentPayload().map { "Live Keyboard - \($0.voice.name)" } ?? "Live Keyboard"
+        liveKeyboardSubtitle = hasKeyboardVoiceContext ? "Current voice" : "MIDI notes only"
+        liveKeyboardNoteOnHandler = nil
+        liveKeyboardNoteOffHandler = nil
+    }
+
+    func sendLiveKeyboardPaletteNote(_ note: Int, isOn: Bool) {
+        if isOn, let liveKeyboardNoteOnHandler {
+            liveKeyboardNoteOnHandler(note)
+            return
+        }
+
+        if !isOn, let liveKeyboardNoteOffHandler {
+            liveKeyboardNoteOffHandler(note)
+            return
+        }
+
+        sendKeyboardNote(note, isOn: isOn)
+    }
+
     private func updateExternalKeyboardPressedNotes(from message: [UInt8]) {
         guard message.count > 2, let status = message.first else {
             return
@@ -6870,41 +7250,50 @@ struct ContentView: View {
     @ObservedObject var workspace: EditorDocumentWorkspace
 
     var body: some View {
-        VStack(spacing: 0) {
-            ToolbarView(document: document)
+        ScrollView([.horizontal, .vertical]) {
+            VStack(spacing: 0) {
+                ToolbarView(document: document)
 
-            Divider()
-
-            StatusWindowView(document: document, workspace: workspace)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider()
-
-            LiveKeyboardView(document: document)
-                .frame(height: 196)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-
-            if let errorMessage = document.errorMessage {
                 Divider()
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-            }
 
-            if let statusMessage = document.statusMessage {
+                StatusWindowView(document: document, workspace: workspace)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
                 Divider()
-                Text(statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
+
+                LiveKeyboardView(document: document)
+                    .frame(height: 224)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 8)
+
+                Divider()
+
+                MainWindowStatusFooter(
+                    errorMessage: document.errorMessage,
+                    statusMessage: document.statusMessage
+                )
             }
+            .frame(width: 1080, height: 760)
         }
+        .background(MainWindowSizeConfigurator(minimumSize: CGSize(width: 1080, height: 760)))
+    }
+}
+
+struct MainWindowStatusFooter: View {
+    var errorMessage: String?
+    var statusMessage: String?
+
+    private var message: String {
+        errorMessage ?? statusMessage ?? " "
+    }
+
+    var body: some View {
+        Text(message)
+            .font(.caption)
+            .foregroundStyle(errorMessage == nil ? Color.secondary : Color.red)
+            .lineLimit(1)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+            .padding(.horizontal, 14)
     }
 }
 
@@ -7023,6 +7412,124 @@ struct LiveKeyboardView: View {
             .frame(maxWidth: .infinity)
         }
         .padding(14)
+        .background(WindowActivationObserver(
+            onBecomeKey: {
+                document.resetLiveKeyboardContext()
+            },
+            onResignKey: {}
+        ))
+        .onAppear {
+            document.resetLiveKeyboardContext()
+        }
+    }
+}
+
+struct LiveKeyboardPaletteView: View {
+    @ObservedObject var document: DocumentModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LiveKeyboardPaletteControlsView(document: document)
+
+            PianoKeyboardRepresentable(
+                startNote: document.keyboardStartNote,
+                octaveCount: 5,
+                highlightedNotes: document.externalKeyboardPressedNotes,
+                noteOn: { document.sendLiveKeyboardPaletteNote($0, isOn: true) },
+                noteOff: { document.sendLiveKeyboardPaletteNote($0, isOn: false) }
+            )
+            .frame(height: 84)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
+        }
+        .padding(14)
+        .frame(width: 820)
+    }
+}
+
+struct LiveKeyboardPaletteControlsView: View {
+    @ObservedObject var document: DocumentModel
+
+    private var paletteStatus: String {
+        document.externalKeyboardStatus.hasPrefix("Listening to ") ? " " : document.externalKeyboardStatus
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 7) {
+                    SectionTitle("MIDI Notes")
+
+                    HStack(alignment: .top, spacing: 10) {
+                        ParameterKnob(label: "Channel", value: Binding(
+                            get: { document.keyboardChannel + 1 },
+                            set: { document.setKeyboardChannel($0 - 1) }
+                        ), range: 1...16, width: 70, knobSize: 42)
+
+                        ParameterKnob(label: "Velocity", value: Binding(
+                            get: { document.keyboardVelocity },
+                            set: { document.setKeyboardVelocity($0) }
+                        ), range: 1...127, width: 74, knobSize: 42)
+
+                        ParameterKnob(label: "Octave", value: Binding(
+                            get: { document.keyboardStartNote / 12 },
+                            set: { document.setKeyboardStartNote($0 * 12) }
+                        ), range: 0...5, width: 70, knobSize: 42)
+
+                        ParameterKnob(label: "Volume", value: Binding(
+                            get: { document.externalKeyboardVolume },
+                            set: { document.setExternalKeyboardVolume($0) }
+                        ), range: 0...127, width: 74, knobSize: 42)
+                    }
+                }
+
+                Divider()
+                    .frame(height: 96)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    SectionTitle("External Keyboard")
+
+                    HStack(alignment: .top, spacing: 10) {
+                        RockerSwitch(label: "Enable", isOn: Binding(
+                            get: { document.externalKeyboardEnabled },
+                            set: { document.setExternalKeyboardEnabled($0) }
+                        ), width: 62, height: 56)
+
+                        Menu {
+                            ForEach(document.midiSources, id: \.index) { source in
+                                Button {
+                                    document.selectKeyboardSource(source)
+                                } label: {
+                                    endpointLabel(source, selected: source.index == document.selectedKeyboardSourceIndex)
+                                }
+                            }
+                        } label: {
+                            Text(document.selectedKeyboardSourceName)
+                                .lineLimit(1)
+                        }
+                        .frame(width: 180, alignment: .leading)
+                        .disabled(document.midiSources.isEmpty || !document.externalKeyboardEnabled)
+                        .padding(.top, 18)
+                    }
+                }
+            }
+
+            Text(paletteStatus)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 14, alignment: .leading)
+        }
+        .font(.caption)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func endpointLabel(_ endpoint: FB01MIDIEndpoint, selected: Bool) -> some View {
+        let unique = endpoint.uniqueID.map { " id=\($0)" } ?? ""
+        return Label("[\(endpoint.index)] \(endpoint.displayName)\(unique)", systemImage: selected ? "checkmark" : "circle")
     }
 }
 
@@ -7199,7 +7706,7 @@ final class PianoKeyboardNSView: NSView {
 
         for key in whiteKeys {
             let rect = whiteKeyRect(index: key.whiteIndex)
-            (isHighlighted(key.note) ? NSColor.systemBlue : NSColor.white).setFill()
+            (isHighlighted(key.note) ? NSColor.systemGreen : NSColor.white).setFill()
             rect.fill()
             NSColor.separatorColor.setStroke()
             NSBezierPath(rect: rect).stroke()
@@ -7207,7 +7714,7 @@ final class PianoKeyboardNSView: NSView {
 
         for key in blackKeys {
             let rect = blackKeyRect(afterWhiteIndex: key.afterWhiteIndex)
-            (isHighlighted(key.note) ? NSColor.systemBlue : NSColor.black).setFill()
+            (isHighlighted(key.note) ? NSColor.systemGreen : NSColor.black).setFill()
             NSBezierPath(roundedRect: rect, xRadius: 2, yRadius: 2).fill()
         }
     }
@@ -8043,6 +8550,49 @@ struct WindowActivationObserver: NSViewRepresentable {
     }
 }
 
+struct MainWindowSizeConfigurator: NSViewRepresentable {
+    var minimumSize: CGSize
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            configure(window: view.window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            configure(window: nsView.window)
+        }
+    }
+
+    private func configure(window: NSWindow?) {
+        guard let window else {
+            return
+        }
+
+        window.contentMinSize = minimumSize
+        let contentSize = window.contentView?.bounds.size ?? .zero
+        guard contentSize.width < minimumSize.width || contentSize.height < minimumSize.height else {
+            return
+        }
+
+        let frameSize = window.frameRect(forContentRect: CGRect(origin: .zero, size: minimumSize)).size
+        var frame = window.frame
+        frame.size.width = max(frame.width, frameSize.width)
+        frame.size.height = max(frame.height, frameSize.height)
+
+        if let screen = window.screen ?? NSScreen.main {
+            let visibleFrame = screen.visibleFrame
+            frame.origin.x = min(max(frame.origin.x, visibleFrame.minX), visibleFrame.maxX - frame.width)
+            frame.origin.y = min(max(frame.origin.y, visibleFrame.minY), visibleFrame.maxY - frame.height)
+        }
+
+        window.setFrame(frame, display: true)
+    }
+}
+
 struct DocumentMIDIContextView: View {
     @ObservedObject var device: DocumentModel
     var documentSystemChannel: Int
@@ -8170,6 +8720,18 @@ struct VoiceDocumentLiveKeyboardView: View {
     }
 
     private func registerExternalKeyboardHandler() {
+        device.setLiveKeyboardContext(
+            title: document.voice.name.isEmpty ? "Live Keyboard" : "Live Keyboard - \(document.voice.name)",
+            subtitle: "Document voice",
+            noteOn: { [weak document, weak device] note in
+                guard let document, let device else { return }
+                document.sendKeyboardNote(note, isOn: true, device: device)
+            },
+            noteOff: { [weak document, weak device] note in
+                guard let document, let device else { return }
+                document.sendKeyboardNote(note, isOn: false, device: device)
+            }
+        )
         device.setExternalKeyboardDocumentHandler { [weak document, weak device] message in
             guard let document, let device else {
                 return false
@@ -8206,6 +8768,16 @@ struct ConfigurationDocumentLiveKeyboardView: View {
         }
         .background(WindowActivationObserver(
             onBecomeKey: {
+                device.setLiveKeyboardContext(
+                    title: "Live Keyboard",
+                    subtitle: "Configuration performance",
+                    noteOn: { [weak device] note in
+                        device?.sendKeyboardNoteWithoutVoicePreparation(note, isOn: true)
+                    },
+                    noteOff: { [weak device] note in
+                        device?.sendKeyboardNoteWithoutVoicePreparation(note, isOn: false)
+                    }
+                )
                 device.setExternalKeyboardDocumentHandler { [weak device] message in
                     device?.receiveExternalKeyboardPerformanceMessage(message) ?? false
                 }
@@ -8214,6 +8786,18 @@ struct ConfigurationDocumentLiveKeyboardView: View {
                 // Keep the last active document handler until another document takes over or this window closes.
             }
         ))
+        .onAppear {
+            device.setLiveKeyboardContext(
+                title: "Live Keyboard",
+                subtitle: "Configuration performance",
+                noteOn: { [weak device] note in
+                    device?.sendKeyboardNoteWithoutVoicePreparation(note, isOn: true)
+                },
+                noteOff: { [weak device] note in
+                    device?.sendKeyboardNoteWithoutVoicePreparation(note, isOn: false)
+                }
+            )
+        }
         .onDisappear {
             device.setExternalKeyboardDocumentHandler(nil)
         }
@@ -8574,6 +9158,10 @@ struct ConfigurationDocumentWindow: View {
                 ConfigurationInstrumentEditor(
                     instruments: configuration.instruments,
                     voiceName: { device.configurationInstrumentVoiceName($0) },
+                    pitchModulationDepth: Binding(
+                        get: { configuration.pitchModulationDepth },
+                        set: { newValue in document.updateConfiguration { configuration in try configuration.settingPitchModulationDepth(newValue) } }
+                    ),
                     updateInstrument: { instrument in
                         document.updateConfiguration { try $0.replacingInstrument(instrument) }
                     }
@@ -8846,6 +9434,10 @@ struct ConfigurationDetailView: View {
                 ConfigurationInstrumentEditor(
                     instruments: editableConfiguration.instruments,
                     voiceName: { document.configurationInstrumentVoiceName($0) },
+                    pitchModulationDepth: Binding(
+                        get: { editableConfiguration.pitchModulationDepth },
+                        set: { setPitchModulationDepth($0) }
+                    ),
                     updateInstrument: updateInstrument
                 )
             }
@@ -9023,6 +9615,7 @@ struct ConfigurationEditorControls: View {
 struct ConfigurationInstrumentEditor: View {
     var instruments: [FB01InstrumentConfiguration]
     var voiceName: (FB01InstrumentConfiguration) -> String?
+    @Binding var pitchModulationDepth: Int
     var updateInstrument: (FB01InstrumentConfiguration) -> Void
     @State private var selectedInstrumentIndex = 0
 
@@ -9052,6 +9645,7 @@ struct ConfigurationInstrumentEditor: View {
                     if let selectedInstrument {
                         ConfigurationInstrumentInspector(
                             instrument: selectedInstrument,
+                            pitchModulationDepth: $pitchModulationDepth,
                             updateInstrument: updateInstrument
                         )
                     }
@@ -9107,7 +9701,7 @@ struct ConfigurationInstrumentSelectorButton: View {
                         Capsule()
                             .fill(Color.secondary.opacity(0.18))
                         Capsule()
-                            .fill(Color.accentColor)
+                            .fill(Color.green)
                             .frame(width: proxy.size.width * CGFloat(instrument.outputLevel) / 127)
                     }
                 }
@@ -9117,11 +9711,11 @@ struct ConfigurationInstrumentSelectorButton: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(isSelected ? Color.accentColor.opacity(0.16) : Color.secondary.opacity(0.08))
+                    .fill(isSelected ? Color.green.opacity(0.16) : Color.secondary.opacity(0.08))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 7)
-                    .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.22), lineWidth: isSelected ? 1.5 : 1)
+                    .stroke(isSelected ? Color.green : Color.secondary.opacity(0.22), lineWidth: isSelected ? 1.5 : 1)
             )
         }
         .buttonStyle(.plain)
@@ -9130,6 +9724,7 @@ struct ConfigurationInstrumentSelectorButton: View {
 
 struct ConfigurationInstrumentInspector: View {
     var instrument: FB01InstrumentConfiguration
+    @Binding var pitchModulationDepth: Int
     var updateInstrument: (FB01InstrumentConfiguration) -> Void
 
     var body: some View {
@@ -9183,6 +9778,7 @@ struct ConfigurationInstrumentInspector: View {
                         .labelsHidden()
                         .frame(width: 150)
                     }
+                    ParameterKnob(label: "PMD", value: $pitchModulationDepth, range: 0...127, width: 74, knobSize: 42)
                 }
             }
 
@@ -10137,13 +10733,7 @@ struct FMRoutingPatchBayView: View {
 
     private var algorithmChooser: some View {
         OperatorControlGroup(title: "Algorithm") {
-            Picker("", selection: $algorithm) {
-                ForEach(1...8, id: \.self) { number in
-                    Text("\(number)").tag(number)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
+            GreenNumberSegmentedPicker(selection: $algorithm, values: Array(1...8))
             .frame(width: 420)
         }
         .frame(width: 500, alignment: .center)
@@ -10571,6 +11161,8 @@ struct FMPatchOperatorModule: View {
                 Image(systemName: operatorEnabled ? "power.circle.fill" : "power.circle")
                     .foregroundStyle(operatorEnabled ? Color.green : .secondary)
             }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: select)
 
             LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                 ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127)
@@ -10578,6 +11170,8 @@ struct FMPatchOperatorModule: View {
                 ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7)
                 ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3)
             }
+
+            timbreMacroSection
 
             OperatorEnvelopeView(
                 operatorData: operatorData,
@@ -10621,7 +11215,46 @@ struct FMPatchOperatorModule: View {
                 .stroke(moduleStroke, lineWidth: operatorEnabled ? 2.2 : 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 8))
-        .onTapGesture(perform: select)
+    }
+
+    private var timbreMacroSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Timbre Macro")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            LazyVGrid(columns: [
+                GridItem(.flexible(minimum: 70), spacing: 6),
+                GridItem(.flexible(minimum: 70), spacing: 6),
+                GridItem(.flexible(minimum: 70), spacing: 6),
+                GridItem(.flexible(minimum: 70), spacing: 6),
+            ], alignment: .leading, spacing: 6) {
+                ForEach(FMOperatorTimbreMacro.allCases) { macro in
+                    Button {
+                        applyTimbreMacro(macro)
+                    } label: {
+                        Text(macro.title)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(operatorEnabled ? Color.primary : Color.secondary)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(operatorEnabled ? Color.green.opacity(0.14) : Color.secondary.opacity(0.08))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(operatorEnabled ? Color.green.opacity(0.45) : Color.secondary.opacity(0.16), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!operatorEnabled)
+                    .help(macro.help)
+                }
+            }
+        }
     }
 
     private var editableOperatorEnabled: Binding<Bool> {
@@ -10646,6 +11279,13 @@ struct FMPatchOperatorModule: View {
         return operatorData.carrier ? Color.green.opacity(0.24) : Color.blue.opacity(0.24)
     }
 
+    private func applyTimbreMacro(_ macro: FMOperatorTimbreMacro) {
+        guard operatorEnabled, let updated = try? macro.applying(to: operatorData) else {
+            return
+        }
+        updateOperator(updated)
+    }
+
     private func operatorBinding(
         _ value: @escaping (FB01VoiceOperatorData) -> Int,
         update: @escaping (FB01VoiceOperatorData, Int) throws -> FB01VoiceOperatorData
@@ -10664,30 +11304,174 @@ struct FMPatchOperatorModule: View {
     }
 }
 
-struct WaveformPicker: View {
-    @Binding var selection: Int
+enum FMOperatorTimbreMacro: String, CaseIterable, Identifiable {
+    case pure
+    case soft
+    case hollow
+    case bright
+    case buzz
+    case metallic
+    case bell
+    case percussive
 
-    var body: some View {
-        Picker("", selection: $selection) {
-            waveformOption("Sawtooth", waveform: .sawtooth).tag(0)
-            waveformOption("Square", waveform: .square).tag(1)
-            waveformOption("Triangle", waveform: .triangle).tag(2)
-            waveformOption("Random", waveform: .random).tag(3)
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .pure:
+            return "Pure"
+        case .soft:
+            return "Soft"
+        case .hollow:
+            return "Hollow"
+        case .bright:
+            return "Bright"
+        case .buzz:
+            return "Buzz"
+        case .metallic:
+            return "Metallic"
+        case .bell:
+            return "Bell"
+        case .percussive:
+            return "Percussive"
         }
-        .labelsHidden()
-        .pickerStyle(.segmented)
     }
 
-    private func waveformOption(_ title: String, waveform: WaveformShape.Kind) -> some View {
-        VStack(spacing: 3) {
-            Text(title)
-                .font(.caption2.weight(.semibold))
-            WaveformShape(kind: waveform)
-                .stroke(Color.primary, style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
-                .frame(width: 44, height: 16)
-                .padding(.bottom, 1)
+    var help: String {
+        switch self {
+        case .pure:
+            return "Simple sine-like operator settings."
+        case .soft:
+            return "Gentle rounded settings for pads, muted tones, or warm carriers."
+        case .hollow:
+            return "Odd-harmonic leaning settings for a rounder hollow tone."
+        case .bright:
+            return "Brighter harmonic settings with a quick, stable envelope."
+        case .buzz:
+            return "Aggressive harmonic settings for buzzy or reed-like color."
+        case .metallic:
+            return "Detuned higher-ratio settings for metallic color."
+        case .bell:
+            return "High-ratio, decaying settings for bell-like color."
+        case .percussive:
+            return "Fast transient settings for plucks, mallets, and attack energy."
         }
-        .frame(minWidth: 72)
+    }
+
+    func applying(to operatorData: FB01VoiceOperatorData) throws -> FB01VoiceOperatorData {
+        let settings = self.settings
+        return try operatorData
+            .settingTotalLevel(settings.totalLevel)
+            .settingMultiple(settings.multiple)
+            .settingDetune1(settings.detune1)
+            .settingDetune2(settings.detune2)
+            .settingAttackRate(settings.attack)
+            .settingDecay1Rate(settings.decay1)
+            .settingDecay2Rate(settings.decay2)
+            .settingSustainLevel(settings.sustain)
+            .settingReleaseRate(settings.release)
+    }
+
+    private var settings: Settings {
+        switch self {
+        case .pure:
+            return Settings(totalLevel: 0, multiple: 1, detune1: 0, detune2: 0, attack: 31, decay1: 0, decay2: 0, sustain: 15, release: 8)
+        case .soft:
+            return Settings(totalLevel: 18, multiple: 1, detune1: 0, detune2: 0, attack: 18, decay1: 2, decay2: 4, sustain: 13, release: 10)
+        case .hollow:
+            return Settings(totalLevel: 12, multiple: 2, detune1: 0, detune2: 0, attack: 31, decay1: 2, decay2: 6, sustain: 12, release: 8)
+        case .bright:
+            return Settings(totalLevel: 8, multiple: 3, detune1: 0, detune2: 0, attack: 31, decay1: 4, decay2: 8, sustain: 10, release: 7)
+        case .buzz:
+            return Settings(totalLevel: 6, multiple: 5, detune1: 1, detune2: 0, attack: 31, decay1: 5, decay2: 10, sustain: 9, release: 6)
+        case .metallic:
+            return Settings(totalLevel: 10, multiple: 7, detune1: 2, detune2: 1, attack: 31, decay1: 6, decay2: 12, sustain: 6, release: 8)
+        case .bell:
+            return Settings(totalLevel: 14, multiple: 9, detune1: 3, detune2: 2, attack: 31, decay1: 8, decay2: 15, sustain: 0, release: 11)
+        case .percussive:
+            return Settings(totalLevel: 7, multiple: 4, detune1: 1, detune2: 0, attack: 31, decay1: 9, decay2: 15, sustain: 0, release: 5)
+        }
+    }
+
+    private struct Settings {
+        var totalLevel: Int
+        var multiple: Int
+        var detune1: Int
+        var detune2: Int
+        var attack: Int
+        var decay1: Int
+        var decay2: Int
+        var sustain: Int
+        var release: Int
+    }
+}
+
+struct WaveformPicker: View {
+    @Binding var selection: Int
+    @Environment(\.colorScheme) private var colorScheme
+
+    private let options: [(title: String, waveform: WaveformShape.Kind, tag: Int)] = [
+        ("Sawtooth", .sawtooth, 0),
+        ("Square", .square, 1),
+        ("Triangle", .triangle, 2),
+        ("Random", .random, 3)
+    ]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(options, id: \.tag) { option in
+                waveformOption(option.title, waveform: option.waveform, tag: option.tag)
+            }
+        }
+        .padding(3)
+        .background(Color.secondary.opacity(colorScheme == .light ? 0.16 : 0.12), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func waveformOption(_ title: String, waveform: WaveformShape.Kind, tag: Int) -> some View {
+        let isSelected = selection == tag
+        return Button {
+            selection = tag
+        } label: {
+            VStack(spacing: 3) {
+                Text(title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(isSelected ? Color.black : Color.primary)
+                WaveformShape(kind: waveform)
+                    .stroke(isSelected ? Color(red: 0.0, green: 0.30, blue: 0.08) : Color.green, style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+                    .frame(width: 44, height: 16)
+                    .padding(.bottom, 1)
+            }
+            .frame(minWidth: 78)
+            .padding(.vertical, 4)
+            .background(isSelected ? Color.green : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct GreenNumberSegmentedPicker: View {
+    @Binding var selection: Int
+    var values: [Int]
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(values, id: \.self) { value in
+                Button {
+                    selection = value
+                } label: {
+                    Text("\(value)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(selection == value ? Color.black : Color.primary)
+                        .frame(minWidth: 32)
+                        .padding(.vertical, 5)
+                        .background(selection == value ? Color.green : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Color.secondary.opacity(colorScheme == .light ? 0.16 : 0.12), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -10801,17 +11585,17 @@ struct AlgorithmSelectorView: View {
                     Text("\(algorithm)")
                         .font(.caption.weight(.semibold))
                 }
-                .foregroundStyle(selection == algorithm ? .blue : .secondary)
+                .foregroundStyle(selection == algorithm ? .green : .secondary)
             }
             .padding(9)
             .frame(width: cardWidth)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(selection == algorithm ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.07))
+                    .fill(selection == algorithm ? Color.green.opacity(0.12) : Color.secondary.opacity(0.07))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(selection == algorithm ? Color.blue : Color.secondary.opacity(0.18), lineWidth: selection == algorithm ? 1.5 : 1)
+                    .stroke(selection == algorithm ? Color.green : Color.secondary.opacity(0.18), lineWidth: selection == algorithm ? 1.5 : 1)
             )
         }
         .buttonStyle(.plain)
@@ -10850,8 +11634,8 @@ struct AlgorithmDiagramView: View {
             let nodes = Self.nodes(for: algorithm)
             let edges = Self.edges(for: algorithm)
             let sumNodes = Self.sumNodes(for: algorithm)
-            let strokeColor = isSelected ? Color.blue : Color.primary.opacity(0.82)
-            let modulatorFill = isSelected ? Color.blue.opacity(0.10) : Color(nsColor: .textBackgroundColor)
+            let strokeColor = isSelected ? Color.green : Color.primary.opacity(0.82)
+            let modulatorFill = isSelected ? Color.green.opacity(0.10) : Color(nsColor: .textBackgroundColor)
             let carrierFill = isSelected ? Color(red: 0.22, green: 0.98, blue: 0.34).opacity(0.42) : Color(red: 0.18, green: 0.92, blue: 0.26).opacity(0.34)
 
             ZStack {
@@ -11357,7 +12141,7 @@ struct OperatorEnvelopeView: View {
                 fill.addLine(to: geometry.release)
                 fill.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
                 fill.closeSubpath()
-                context.fill(fill, with: .color(.accentColor.opacity(0.12)))
+                context.fill(fill, with: .color(.green.opacity(0.14)))
 
                 var line = Path()
                 line.move(to: geometry.start)
@@ -11365,12 +12149,12 @@ struct OperatorEnvelopeView: View {
                 line.addLine(to: geometry.decay1)
                 line.addLine(to: geometry.sustain)
                 line.addLine(to: geometry.release)
-                context.stroke(line, with: .color(.accentColor), lineWidth: 2)
+                context.stroke(line, with: .color(.green), lineWidth: 2)
 
                 for handle in EnvelopeHandle.allCases {
                     let point = geometry.point(for: handle)
                     let marker = CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)
-                    context.fill(Path(ellipseIn: marker), with: .color(handle == activeHandle ? .accentColor : .primary))
+                    context.fill(Path(ellipseIn: marker), with: .color(handle == activeHandle ? .green : .primary))
                 }
             }
             .gesture(
@@ -11511,6 +12295,7 @@ private struct EnvelopeGeometry {
 struct OperatorControlGroup<Content: View>: View {
     var title: String
     @ViewBuilder var content: Content
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         GroupBox {
@@ -11522,6 +12307,10 @@ struct OperatorControlGroup<Content: View>: View {
         } label: {
             SectionTitle(title)
         }
+        .background(
+            Color.secondary.opacity(colorScheme == .light ? 0.13 : 0.0),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
     }
 }
 
