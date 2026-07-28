@@ -1746,12 +1746,13 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 statusMessage = "Fetched \(fetchedName) from \(fetchTitle) into this document."
                 device.rememberRecentFetchedVoice(source, title: fetchTitle)
                 errorMessage = nil
+                isBusy = false
             } catch {
                 errorMessage = "Fetch failed on \(systemChannelName): \(error)"
                 statusMessage = nil
+                isBusy = false
             }
             fetchProgressPanel.dismiss()
-            isBusy = false
         }
     }
 
@@ -10411,15 +10412,19 @@ struct ConfigurationInstrumentInspector: View {
     }
 
     private var assignMIDIAndVoiceControls: some View {
-        OperatorControlGroup(title: "Assign MIDI channel and Voice") {
+        OperatorControlGroup(title: "Assign MIDI Channel and Voice") {
             HStack(alignment: .top, spacing: 12) {
                 instrumentKnob("MIDI Channel", value: instrument.midiChannel + 1, range: 1...16) { try instrument.settingMIDIChannel($0 - 1) }
                 instrumentKnob("Voice Bank", value: instrument.voiceBank, range: 1...7) { try instrument.settingVoiceBank($0) }
                 instrumentKnob("Voice Number", value: instrument.voiceNumber, range: 0...95) { try instrument.settingVoiceNumber($0) }
-            }
-            Picker("Mode", selection: modeBinding) {
-                Text("Poly").tag(FB01MonoPolyMode.poly)
-                Text("Mono").tag(FB01MonoPolyMode.mono)
+                menuControl(label: "Mode", width: 82) {
+                    Picker("", selection: modeBinding) {
+                        Text("Poly").tag(FB01MonoPolyMode.poly)
+                        Text("Mono").tag(FB01MonoPolyMode.mono)
+                    }
+                    .labelsHidden()
+                    .frame(width: 82)
+                }
             }
         }
     }
@@ -10454,13 +10459,8 @@ struct ConfigurationInstrumentInspector: View {
                     range: -63...63,
                     displayText: stereoPanDisplayText
                 ) { try instrument.settingPan(rawPanValue(forCenteredPan: $0)) }
-            }
-            HStack(alignment: .top, spacing: 18) {
-                RockerSwitch(label: "LFO Enabled", isOn: lfoEnabledBinding)
-                VStack(spacing: 6) {
-                    Text("PMD")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                ParameterKnob(label: "PMD", value: $pitchModulationDepth, range: 0...127, width: 82, knobSize: 42)
+                menuControl(label: "PMD", width: 150, pickerCenterY: 53) {
                     Picker("", selection: pmdBinding) {
                         Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
                         Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
@@ -10471,7 +10471,14 @@ struct ConfigurationInstrumentInspector: View {
                     .labelsHidden()
                     .frame(width: 150)
                 }
-                ParameterKnob(label: "PMD", value: $pitchModulationDepth, range: 0...127, width: 74, knobSize: 42)
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                Color.clear
+                    .frame(width: 82)
+                Color.clear
+                    .frame(width: 82)
+                RockerSwitch(label: "LFO Enabled", isOn: lfoEnabledBinding, width: 82, height: 58)
             }
         }
     }
@@ -10518,6 +10525,29 @@ struct ConfigurationInstrumentInspector: View {
                 }
             }
         )
+    }
+
+    private func menuControl<Content: View>(
+        label: String,
+        width: CGFloat,
+        pickerCenterY: CGFloat = 69,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ZStack(alignment: .top) {
+            content()
+                .position(x: width / 2, y: pickerCenterY)
+
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.75)
+                .frame(width: width, height: 28, alignment: .top)
+                .position(x: width / 2, y: 96)
+        }
+        .frame(width: width, height: 110)
+        .frame(width: width)
     }
 
     private var displayedOutputLevel: Int {
@@ -11452,10 +11482,10 @@ struct FMRoutingPatchBayView: View {
                 ParameterKnob(label: "PMS", value: $pitchModulationSensitivity, range: 0...7)
             }
 
-            WaveformPicker(selection: $lfoWaveform)
-                .frame(width: 340)
+            HStack(alignment: .top, spacing: 14) {
+                WaveformPicker(selection: $lfoWaveform)
+                    .frame(width: 340)
 
-            HStack(alignment: .top, spacing: 12) {
                 RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58)
                 RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58)
             }

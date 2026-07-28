@@ -26,7 +26,12 @@ struct ParameterKnob: View {
                             let startValue = dragStartValue ?? value
                             let span = max(range.upperBound - range.lowerBound, 1)
                             let pointsPerFullTravel: CGFloat = 150
-                            let delta = Int((-gesture.translation.height / pointsPerFullTravel * CGFloat(span)).rounded())
+                            let delta = dragDelta(
+                                translation: gesture.translation.height,
+                                startValue: startValue,
+                                span: span,
+                                pointsPerFullTravel: pointsPerFullTravel
+                            )
                             setValue(startValue + delta)
                         }
                         .onEnded { _ in
@@ -53,6 +58,10 @@ struct ParameterKnob: View {
         return Double(value - range.lowerBound) / Double(span)
     }
 
+    private var hasCenterZeroDetent: Bool {
+        range.lowerBound < 0 && range.upperBound > 0
+    }
+
     private var formattedDisplayText: String {
         if let displayTextProvider {
             return displayTextProvider(value)
@@ -65,8 +74,31 @@ struct ParameterKnob: View {
         return String(format: "%0\(maximumDigits)d", value)
     }
 
+    private func dragDelta(
+        translation: CGFloat,
+        startValue: Int,
+        span: Int,
+        pointsPerFullTravel: CGFloat
+    ) -> Int {
+        var adjustedTranslation = translation
+        if hasCenterZeroDetent, startValue == 0 {
+            let detentPoints: CGFloat = 18
+            if abs(adjustedTranslation) < detentPoints {
+                return 0
+            }
+            adjustedTranslation += adjustedTranslation > 0 ? -detentPoints : detentPoints
+        }
+
+        return Int((-adjustedTranslation / pointsPerFullTravel * CGFloat(span)).rounded())
+    }
+
     private func setValue(_ proposedValue: Int) {
-        value = min(max(proposedValue, range.lowerBound), range.upperBound)
+        let clampedValue = min(max(proposedValue, range.lowerBound), range.upperBound)
+        if hasCenterZeroDetent, abs(Double(clampedValue)) < 1.25 {
+            value = 0
+        } else {
+            value = clampedValue
+        }
     }
 }
 
