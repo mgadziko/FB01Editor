@@ -203,6 +203,38 @@ private let keyboardPreparationStaleAfter: TimeInterval = 10
 private let keyboardPreparationSettleDelay: TimeInterval = 0.30
 private let voiceBankNameFetchTimeout: TimeInterval = 25
 
+enum VoiceEditorParadigm: String, CaseIterable, Identifiable {
+    case consoleSections
+    case fmRoutingPatchBay
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .consoleSections:
+            "Console Sections"
+        case .fmRoutingPatchBay:
+            "FM Routing Patch Bay"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .consoleSections:
+            "The existing grouped editor layout, organized by parameter families."
+        case .fmRoutingPatchBay:
+            "A routing-first voice editor that emphasizes operators, carriers, modulators, and algorithm signal flow."
+        }
+    }
+}
+
+struct FB01DevicePreference: Equatable, Identifiable {
+    var id: Int { index }
+    var index: Int
+    var commandChannel: Int
+    var memoryProtectEnabled: Bool
+}
+
 private enum FB01InstrumentParameter {
     static let noteCount = 0x00
     static let midiChannel = 0x01
@@ -2629,6 +2661,11 @@ struct FB01EditorApplication: App {
                     AboutBoxController.shared.show()
                 }
 
+                Button("Preferences...") {
+                    PreferencesWindowController.shared.show(document: document)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+
                 Button("Reset Instructions...") {
                     document.resetDeviceToFactorySettings()
                 }
@@ -2844,6 +2881,135 @@ struct AboutBoxView: View {
     }
 }
 
+@MainActor
+final class PreferencesWindowController {
+    static let shared = PreferencesWindowController()
+    private var window: NSWindow?
+    private var delegate: PreferencesWindowDelegate?
+
+    func show(document: DocumentModel) {
+        if let window {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let hostingView = NSHostingView(rootView: PreferencesView(document: document))
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 560),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Preferences"
+        panel.contentView = hostingView
+        panel.isReleasedWhenClosed = false
+        panel.center()
+        let delegate = PreferencesWindowDelegate { [weak self] in
+            self?.window = nil
+            self?.delegate = nil
+        }
+        self.delegate = delegate
+        panel.delegate = delegate
+        window = panel
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+private final class PreferencesWindowDelegate: NSObject, NSWindowDelegate {
+    private let closeHandler: () -> Void
+
+    init(closeHandler: @escaping () -> Void) {
+        self.closeHandler = closeHandler
+    }
+
+    func windowWillClose(_: Notification) {
+        closeHandler()
+    }
+}
+
+struct PreferencesView: View {
+    @ObservedObject var document: DocumentModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Preferences")
+                .font(.title2.weight(.semibold))
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("Voice Editor Paradigm", selection: Binding(
+                        get: { document.voiceEditorParadigm },
+                        set: { document.setVoiceEditorParadigm($0) }
+                    )) {
+                        ForEach(VoiceEditorParadigm.allCases) { paradigm in
+                            Text(paradigm.displayName).tag(paradigm)
+                        }
+                    }
+                    .pickerStyle(.radioGroup)
+
+                    Text(document.voiceEditorParadigm.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 4)
+            } label: {
+                SectionTitle("Voice Editing")
+            }
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 14) {
+                    Stepper(value: Binding(
+                        get: { document.preferredDeviceCount },
+                        set: { document.setPreferredDeviceCount($0) }
+                    ), in: 1...4) {
+                        Text("Number of FB-01 devices: \(document.preferredDeviceCount)")
+                    }
+
+                    Divider()
+
+                    ForEach(Array(document.devicePreferences.enumerated()), id: \.element.id) { offset, preference in
+                        HStack(alignment: .top, spacing: 14) {
+                            Text("Device \(offset + 1)")
+                                .font(.headline)
+                                .frame(width: 86, alignment: .leading)
+
+                            Picker("Command Channel", selection: Binding(
+                                get: { preference.commandChannel },
+                                set: { document.setDeviceCommandChannel(index: offset, channel: $0) }
+                            )) {
+                                ForEach(0..<16, id: \.self) { channel in
+                                    Text("\(channel + 1)").tag(channel)
+                                }
+                            }
+                            .frame(width: 190)
+
+                            RockerSwitch(label: "Memory Protect", isOn: Binding(
+                                get: { preference.memoryProtectEnabled },
+                                set: { document.setDeviceMemoryProtect(index: offset, enabled: $0) }
+                            ), width: 84, height: 58)
+                        }
+                    }
+
+                    Text("These multi-device settings are saved for the editor workflow. Current MIDI sends still use the selected FB-01 destination until multi-device routing is implemented.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 4)
+            } label: {
+                SectionTitle("FB-01 Devices")
+            }
+
+            Spacer()
+        }
+        .padding(22)
+        .frame(width: 620, height: 560, alignment: .topLeading)
+    }
+}
+
 struct AboutAppIcon: View {
     var body: some View {
         Image(nsImage: NSApp.applicationIconImage)
@@ -2892,6 +3058,9 @@ final class DocumentModel: ObservableObject {
     @Published var systemMemoryProtectEnabled = false
     @Published var systemMasterOutputLevel = 127
     @Published var systemDeviceStatus = "Not requested"
+    @Published var voiceEditorParadigm: VoiceEditorParadigm = .consoleSections
+    @Published var preferredDeviceCount = 1
+    @Published var devicePreferences: [FB01DevicePreference] = []
     @Published var keyboardVelocity = 100
     @Published var keyboardChannel = 0
     @Published var keyboardStartNote = 36
@@ -2918,6 +3087,16 @@ final class DocumentModel: ObservableObject {
         static let keyboardChannel = "FB01Editor.keyboardChannel"
         static let keyboardVelocity = "FB01Editor.keyboardVelocity"
         static let keyboardStartNote = "FB01Editor.keyboardStartNote"
+        static let voiceEditorParadigm = "FB01Editor.voiceEditorParadigm"
+        static let preferredDeviceCount = "FB01Editor.preferredDeviceCount"
+
+        static func deviceCommandChannel(_ index: Int) -> String {
+            "FB01Editor.devicePreference.\(index).commandChannel"
+        }
+
+        static func deviceMemoryProtect(_ index: Int) -> String {
+            "FB01Editor.devicePreference.\(index).memoryProtect"
+        }
     }
 
     init() {
@@ -2934,6 +3113,13 @@ final class DocumentModel: ObservableObject {
         keyboardVelocity = (1...127).contains(savedKeyboardVelocity) ? savedKeyboardVelocity : 100
         let savedKeyboardStartNote = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardStartNote)
         keyboardStartNote = (0...67).contains(savedKeyboardStartNote) ? savedKeyboardStartNote : 36
+        if let rawParadigm = UserDefaults.standard.string(forKey: DefaultsKey.voiceEditorParadigm),
+           let paradigm = VoiceEditorParadigm(rawValue: rawParadigm) {
+            voiceEditorParadigm = paradigm
+        }
+        let savedDeviceCount = UserDefaults.standard.integer(forKey: DefaultsKey.preferredDeviceCount)
+        preferredDeviceCount = (1...4).contains(savedDeviceCount) ? savedDeviceCount : 1
+        loadDevicePreferences()
         externalKeyboardVolume = systemMasterOutputLevel
         refreshMIDIEndpoints()
     }
@@ -3156,6 +3342,44 @@ final class DocumentModel: ObservableObject {
     func setKeyboardStartNote(_ note: Int) {
         keyboardStartNote = min(max(note, 0), 67)
         UserDefaults.standard.set(keyboardStartNote, forKey: DefaultsKey.keyboardStartNote)
+    }
+
+    func setVoiceEditorParadigm(_ paradigm: VoiceEditorParadigm) {
+        voiceEditorParadigm = paradigm
+        UserDefaults.standard.set(paradigm.rawValue, forKey: DefaultsKey.voiceEditorParadigm)
+    }
+
+    func setPreferredDeviceCount(_ count: Int) {
+        preferredDeviceCount = min(max(count, 1), 4)
+        UserDefaults.standard.set(preferredDeviceCount, forKey: DefaultsKey.preferredDeviceCount)
+        loadDevicePreferences()
+    }
+
+    func setDeviceCommandChannel(index: Int, channel: Int) {
+        guard devicePreferences.indices.contains(index) else { return }
+        let bounded = min(max(channel, 0), 15)
+        devicePreferences[index].commandChannel = bounded
+        UserDefaults.standard.set(bounded, forKey: DefaultsKey.deviceCommandChannel(index))
+    }
+
+    func setDeviceMemoryProtect(index: Int, enabled: Bool) {
+        guard devicePreferences.indices.contains(index) else { return }
+        devicePreferences[index].memoryProtectEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: DefaultsKey.deviceMemoryProtect(index))
+    }
+
+    private func loadDevicePreferences() {
+        devicePreferences = (0..<preferredDeviceCount).map { index in
+            let channel = UserDefaults.standard.object(forKey: DefaultsKey.deviceCommandChannel(index)) == nil
+                ? min(index, 15)
+                : UserDefaults.standard.integer(forKey: DefaultsKey.deviceCommandChannel(index))
+            let memoryProtect = UserDefaults.standard.bool(forKey: DefaultsKey.deviceMemoryProtect(index))
+            return FB01DevicePreference(
+                index: index,
+                commandChannel: min(max(channel, 0), 15),
+                memoryProtectEnabled: memoryProtect
+            )
+        }
     }
 
     func setMemoryProtect(_ enabled: Bool) {
@@ -7935,88 +8159,169 @@ struct VoiceDocumentWindow: View {
                     KeyValueRow("Feedback", "\(voice.feedbackLevel)"),
                 ])
 
-                VoiceEditorControls(
-                    name: Binding(
-                        get: { voice.name },
-                        set: { setName($0) }
-                    ),
-                    feedback: Binding(
-                        get: { voice.feedbackLevel },
-                        set: { newValue in document.updateVoice { voice in try voice.settingFeedbackLevel(newValue) } }
-                    ),
-                    userCode: Binding(
-                        get: { voice.userCode },
-                        set: { newValue in document.updateVoice { voice in try voice.settingUserCode(newValue) } }
-                    ),
-                    lfoSpeed: Binding(
-                        get: { voice.lfoSpeed },
-                        set: { newValue in document.updateVoice { voice in try voice.settingLFOSpeed(newValue) } }
-                    ),
-                    lfoWaveform: Binding(
-                        get: { voice.lfoWaveform },
-                        set: { newValue in document.updateVoice { voice in try voice.settingLFOWaveform(newValue) } }
-                    ),
-                    loadLFODataEnabled: Binding(
-                        get: { voice.loadLFODataEnabled },
-                        set: { newValue in document.updateVoice { voice in try voice.settingLoadLFODataEnabled(newValue) } }
-                    ),
-                    lfoSyncEnabled: Binding(
-                        get: { voice.lfoSyncEnabled },
-                        set: { newValue in document.updateVoice { voice in try voice.settingLFOSyncEnabled(newValue) } }
-                    ),
-                    amplitudeModulationDepth: Binding(
-                        get: { voice.amplitudeModulationDepth },
-                        set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationDepth(newValue) } }
-                    ),
-                    pitchModulationDepth: Binding(
-                        get: { voice.pitchModulationDepth },
-                        set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationDepth(newValue) } }
-                    ),
-                    amplitudeModulationSensitivity: Binding(
-                        get: { voice.amplitudeModulationSensitivity },
-                        set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationSensitivity(newValue) } }
-                    ),
-                    pitchModulationSensitivity: Binding(
-                        get: { voice.pitchModulationSensitivity },
-                        set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationSensitivity(newValue) } }
-                    ),
-                    transpose: Binding(
-                        get: { voice.transpose },
-                        set: { newValue in document.updateVoice { voice in try voice.settingTranspose(newValue) } }
-                    ),
-                    leftOutputEnabled: Binding(
-                        get: { voice.leftOutputEnabled },
-                        set: { newValue in document.updateVoice { voice in try voice.settingLeftOutputEnabled(newValue) } }
-                    ),
-                    rightOutputEnabled: Binding(
-                        get: { voice.rightOutputEnabled },
-                        set: { newValue in document.updateVoice { voice in try voice.settingRightOutputEnabled(newValue) } }
-                    )
-                )
-
-                AlgorithmSelectorView(selection: Binding(
-                    get: { voice.algorithm + 1 },
-                    set: { newValue in document.updateVoice { voice in try voice.settingAlgorithmAndOperatorRoles(newValue - 1) } }
-                ))
-
-                OperatorEditor(
-                    operators: voice.operators,
-                    operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
-                        Binding(
-                            get: { voice.operatorEnabled[index] },
-                            set: { enabled in
-                                document.updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
-                            }
+                if device.voiceEditorParadigm == .consoleSections {
+                    VoiceEditorControls(
+                        name: Binding(
+                            get: { voice.name },
+                            set: { setName($0) }
+                        ),
+                        feedback: Binding(
+                            get: { voice.feedbackLevel },
+                            set: { newValue in document.updateVoice { voice in try voice.settingFeedbackLevel(newValue) } }
+                        ),
+                        userCode: Binding(
+                            get: { voice.userCode },
+                            set: { newValue in document.updateVoice { voice in try voice.settingUserCode(newValue) } }
+                        ),
+                        lfoSpeed: Binding(
+                            get: { voice.lfoSpeed },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLFOSpeed(newValue) } }
+                        ),
+                        lfoWaveform: Binding(
+                            get: { voice.lfoWaveform },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLFOWaveform(newValue) } }
+                        ),
+                        loadLFODataEnabled: Binding(
+                            get: { voice.loadLFODataEnabled },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLoadLFODataEnabled(newValue) } }
+                        ),
+                        lfoSyncEnabled: Binding(
+                            get: { voice.lfoSyncEnabled },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLFOSyncEnabled(newValue) } }
+                        ),
+                        amplitudeModulationDepth: Binding(
+                            get: { voice.amplitudeModulationDepth },
+                            set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationDepth(newValue) } }
+                        ),
+                        pitchModulationDepth: Binding(
+                            get: { voice.pitchModulationDepth },
+                            set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationDepth(newValue) } }
+                        ),
+                        amplitudeModulationSensitivity: Binding(
+                            get: { voice.amplitudeModulationSensitivity },
+                            set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationSensitivity(newValue) } }
+                        ),
+                        pitchModulationSensitivity: Binding(
+                            get: { voice.pitchModulationSensitivity },
+                            set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationSensitivity(newValue) } }
+                        ),
+                        transpose: Binding(
+                            get: { voice.transpose },
+                            set: { newValue in document.updateVoice { voice in try voice.settingTranspose(newValue) } }
+                        ),
+                        leftOutputEnabled: Binding(
+                            get: { voice.leftOutputEnabled },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLeftOutputEnabled(newValue) } }
+                        ),
+                        rightOutputEnabled: Binding(
+                            get: { voice.rightOutputEnabled },
+                            set: { newValue in document.updateVoice { voice in try voice.settingRightOutputEnabled(newValue) } }
                         )
-                    },
-                    selectedOperatorIndex: Binding(
-                        get: { document.selectedOperatorIndex },
-                        set: { document.selectedOperatorIndex = $0 }
-                    ),
-                    updateOperator: { operatorData in
-                        document.updateVoice { try $0.replacingOperator(operatorData) }
-                    }
-                )
+                    )
+
+                    AlgorithmSelectorView(selection: Binding(
+                        get: { voice.algorithm + 1 },
+                        set: { newValue in document.updateVoice { voice in try voice.settingAlgorithmAndOperatorRoles(newValue - 1) } }
+                    ))
+
+                    OperatorEditor(
+                        operators: voice.operators,
+                        operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
+                            Binding(
+                                get: { voice.operatorEnabled[index] },
+                                set: { enabled in
+                                    document.updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
+                                }
+                            )
+                        },
+                        selectedOperatorIndex: Binding(
+                            get: { document.selectedOperatorIndex },
+                            set: { document.selectedOperatorIndex = $0 }
+                        ),
+                        updateOperator: { operatorData in
+                            document.updateVoice { try $0.replacingOperator(operatorData) }
+                        }
+                    )
+                } else {
+                    FMRoutingPatchBayView(
+                        name: Binding(
+                            get: { voice.name },
+                            set: { setName($0) }
+                        ),
+                        algorithm: Binding(
+                            get: { voice.algorithm + 1 },
+                            set: { newValue in document.updateVoice { voice in try voice.settingAlgorithmAndOperatorRoles(newValue - 1) } }
+                        ),
+                        feedback: Binding(
+                            get: { voice.feedbackLevel },
+                            set: { newValue in document.updateVoice { voice in try voice.settingFeedbackLevel(newValue) } }
+                        ),
+                        userCode: Binding(
+                            get: { voice.userCode },
+                            set: { newValue in document.updateVoice { voice in try voice.settingUserCode(newValue) } }
+                        ),
+                        lfoSpeed: Binding(
+                            get: { voice.lfoSpeed },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLFOSpeed(newValue) } }
+                        ),
+                        lfoWaveform: Binding(
+                            get: { voice.lfoWaveform },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLFOWaveform(newValue) } }
+                        ),
+                        loadLFODataEnabled: Binding(
+                            get: { voice.loadLFODataEnabled },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLoadLFODataEnabled(newValue) } }
+                        ),
+                        lfoSyncEnabled: Binding(
+                            get: { voice.lfoSyncEnabled },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLFOSyncEnabled(newValue) } }
+                        ),
+                        amplitudeModulationDepth: Binding(
+                            get: { voice.amplitudeModulationDepth },
+                            set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationDepth(newValue) } }
+                        ),
+                        pitchModulationDepth: Binding(
+                            get: { voice.pitchModulationDepth },
+                            set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationDepth(newValue) } }
+                        ),
+                        amplitudeModulationSensitivity: Binding(
+                            get: { voice.amplitudeModulationSensitivity },
+                            set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationSensitivity(newValue) } }
+                        ),
+                        pitchModulationSensitivity: Binding(
+                            get: { voice.pitchModulationSensitivity },
+                            set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationSensitivity(newValue) } }
+                        ),
+                        transpose: Binding(
+                            get: { voice.transpose },
+                            set: { newValue in document.updateVoice { voice in try voice.settingTranspose(newValue) } }
+                        ),
+                        leftOutputEnabled: Binding(
+                            get: { voice.leftOutputEnabled },
+                            set: { newValue in document.updateVoice { voice in try voice.settingLeftOutputEnabled(newValue) } }
+                        ),
+                        rightOutputEnabled: Binding(
+                            get: { voice.rightOutputEnabled },
+                            set: { newValue in document.updateVoice { voice in try voice.settingRightOutputEnabled(newValue) } }
+                        ),
+                        operators: voice.operators,
+                        operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
+                            Binding(
+                                get: { voice.operatorEnabled[index] },
+                                set: { enabled in
+                                    document.updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
+                                }
+                            )
+                        },
+                        selectedOperatorIndex: Binding(
+                            get: { document.selectedOperatorIndex },
+                            set: { document.selectedOperatorIndex = $0 }
+                        ),
+                        updateOperator: { operatorData in
+                            document.updateVoice { try $0.replacingOperator(operatorData) }
+                        }
+                    )
+                }
 
                 VoiceDocumentLiveKeyboardView(document: document, device: device)
 
@@ -9241,81 +9546,155 @@ struct VoiceDetailView: View {
                 KeyValueRow("Feedback", "\(editableVoice.feedbackLevel)"),
             ])
 
-            VoiceEditorControls(
-                name: Binding(
-                    get: { nameText },
-                    set: { setName($0) }
-                ),
-                feedback: Binding(
-                    get: { editableVoice.feedbackLevel },
-                    set: { setFeedback($0) }
-                ),
-                userCode: Binding(
-                    get: { editableVoice.userCode },
-                    set: { setUserCode($0) }
-                ),
-                lfoSpeed: Binding(
-                    get: { editableVoice.lfoSpeed },
-                    set: { setLFOSpeed($0) }
-                ),
-                lfoWaveform: Binding(
-                    get: { editableVoice.lfoWaveform },
-                    set: { setLFOWaveform($0) }
-                ),
-                loadLFODataEnabled: Binding(
-                    get: { editableVoice.loadLFODataEnabled },
-                    set: { setLoadLFODataEnabled($0) }
-                ),
-                lfoSyncEnabled: Binding(
-                    get: { editableVoice.lfoSyncEnabled },
-                    set: { setLFOSyncEnabled($0) }
-                ),
-                amplitudeModulationDepth: Binding(
-                    get: { editableVoice.amplitudeModulationDepth },
-                    set: { setAmplitudeModulationDepth($0) }
-                ),
-                pitchModulationDepth: Binding(
-                    get: { editableVoice.pitchModulationDepth },
-                    set: { setPitchModulationDepth($0) }
-                ),
-                amplitudeModulationSensitivity: Binding(
-                    get: { editableVoice.amplitudeModulationSensitivity },
-                    set: { setAmplitudeModulationSensitivity($0) }
-                ),
-                pitchModulationSensitivity: Binding(
-                    get: { editableVoice.pitchModulationSensitivity },
-                    set: { setPitchModulationSensitivity($0) }
-                ),
-                transpose: Binding(
-                    get: { editableVoice.transpose },
-                    set: { setTranspose($0) }
-                ),
-                leftOutputEnabled: Binding(
-                    get: { editableVoice.leftOutputEnabled },
-                    set: { setLeftOutputEnabled($0) }
-                ),
-                rightOutputEnabled: Binding(
-                    get: { editableVoice.rightOutputEnabled },
-                    set: { setRightOutputEnabled($0) }
-                )
-            )
-
-            AlgorithmSelectorView(selection: Binding(
-                get: { editableVoice.algorithm + 1 },
-                set: { setAlgorithm($0 - 1) }
-            ))
-
-            OperatorEditor(
-                operators: editableVoice.operators,
-                operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
-                    Binding(
-                        get: { editableVoice.operatorEnabled[index] },
-                        set: { setOperatorEnabled(index: index, enabled: $0) }
+            if document.voiceEditorParadigm == .consoleSections {
+                VoiceEditorControls(
+                    name: Binding(
+                        get: { nameText },
+                        set: { setName($0) }
+                    ),
+                    feedback: Binding(
+                        get: { editableVoice.feedbackLevel },
+                        set: { setFeedback($0) }
+                    ),
+                    userCode: Binding(
+                        get: { editableVoice.userCode },
+                        set: { setUserCode($0) }
+                    ),
+                    lfoSpeed: Binding(
+                        get: { editableVoice.lfoSpeed },
+                        set: { setLFOSpeed($0) }
+                    ),
+                    lfoWaveform: Binding(
+                        get: { editableVoice.lfoWaveform },
+                        set: { setLFOWaveform($0) }
+                    ),
+                    loadLFODataEnabled: Binding(
+                        get: { editableVoice.loadLFODataEnabled },
+                        set: { setLoadLFODataEnabled($0) }
+                    ),
+                    lfoSyncEnabled: Binding(
+                        get: { editableVoice.lfoSyncEnabled },
+                        set: { setLFOSyncEnabled($0) }
+                    ),
+                    amplitudeModulationDepth: Binding(
+                        get: { editableVoice.amplitudeModulationDepth },
+                        set: { setAmplitudeModulationDepth($0) }
+                    ),
+                    pitchModulationDepth: Binding(
+                        get: { editableVoice.pitchModulationDepth },
+                        set: { setPitchModulationDepth($0) }
+                    ),
+                    amplitudeModulationSensitivity: Binding(
+                        get: { editableVoice.amplitudeModulationSensitivity },
+                        set: { setAmplitudeModulationSensitivity($0) }
+                    ),
+                    pitchModulationSensitivity: Binding(
+                        get: { editableVoice.pitchModulationSensitivity },
+                        set: { setPitchModulationSensitivity($0) }
+                    ),
+                    transpose: Binding(
+                        get: { editableVoice.transpose },
+                        set: { setTranspose($0) }
+                    ),
+                    leftOutputEnabled: Binding(
+                        get: { editableVoice.leftOutputEnabled },
+                        set: { setLeftOutputEnabled($0) }
+                    ),
+                    rightOutputEnabled: Binding(
+                        get: { editableVoice.rightOutputEnabled },
+                        set: { setRightOutputEnabled($0) }
                     )
-                },
-                selectedOperatorIndex: $selectedOperatorIndex,
-                updateOperator: updateOperator
-            )
+                )
+
+                AlgorithmSelectorView(selection: Binding(
+                    get: { editableVoice.algorithm + 1 },
+                    set: { setAlgorithm($0 - 1) }
+                ))
+
+                OperatorEditor(
+                    operators: editableVoice.operators,
+                    operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
+                        Binding(
+                            get: { editableVoice.operatorEnabled[index] },
+                            set: { setOperatorEnabled(index: index, enabled: $0) }
+                        )
+                    },
+                    selectedOperatorIndex: $selectedOperatorIndex,
+                    updateOperator: updateOperator
+                )
+            } else {
+                FMRoutingPatchBayView(
+                    name: Binding(
+                        get: { nameText },
+                        set: { setName($0) }
+                    ),
+                    algorithm: Binding(
+                        get: { editableVoice.algorithm + 1 },
+                        set: { setAlgorithm($0 - 1) }
+                    ),
+                    feedback: Binding(
+                        get: { editableVoice.feedbackLevel },
+                        set: { setFeedback($0) }
+                    ),
+                    userCode: Binding(
+                        get: { editableVoice.userCode },
+                        set: { setUserCode($0) }
+                    ),
+                    lfoSpeed: Binding(
+                        get: { editableVoice.lfoSpeed },
+                        set: { setLFOSpeed($0) }
+                    ),
+                    lfoWaveform: Binding(
+                        get: { editableVoice.lfoWaveform },
+                        set: { setLFOWaveform($0) }
+                    ),
+                    loadLFODataEnabled: Binding(
+                        get: { editableVoice.loadLFODataEnabled },
+                        set: { setLoadLFODataEnabled($0) }
+                    ),
+                    lfoSyncEnabled: Binding(
+                        get: { editableVoice.lfoSyncEnabled },
+                        set: { setLFOSyncEnabled($0) }
+                    ),
+                    amplitudeModulationDepth: Binding(
+                        get: { editableVoice.amplitudeModulationDepth },
+                        set: { setAmplitudeModulationDepth($0) }
+                    ),
+                    pitchModulationDepth: Binding(
+                        get: { editableVoice.pitchModulationDepth },
+                        set: { setPitchModulationDepth($0) }
+                    ),
+                    amplitudeModulationSensitivity: Binding(
+                        get: { editableVoice.amplitudeModulationSensitivity },
+                        set: { setAmplitudeModulationSensitivity($0) }
+                    ),
+                    pitchModulationSensitivity: Binding(
+                        get: { editableVoice.pitchModulationSensitivity },
+                        set: { setPitchModulationSensitivity($0) }
+                    ),
+                    transpose: Binding(
+                        get: { editableVoice.transpose },
+                        set: { setTranspose($0) }
+                    ),
+                    leftOutputEnabled: Binding(
+                        get: { editableVoice.leftOutputEnabled },
+                        set: { setLeftOutputEnabled($0) }
+                    ),
+                    rightOutputEnabled: Binding(
+                        get: { editableVoice.rightOutputEnabled },
+                        set: { setRightOutputEnabled($0) }
+                    ),
+                    operators: editableVoice.operators,
+                    operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
+                        Binding(
+                            get: { editableVoice.operatorEnabled[index] },
+                            set: { setOperatorEnabled(index: index, enabled: $0) }
+                        )
+                    },
+                    selectedOperatorIndex: $selectedOperatorIndex,
+                    updateOperator: updateOperator
+                )
+            }
 
             if let editError {
                 Text(editError)
@@ -9577,6 +9956,245 @@ struct VoiceEditorControls: View {
 
     private func sectionTitle(_ text: String) -> some View {
         SectionTitle(text)
+    }
+}
+
+struct FMRoutingPatchBayView: View {
+    @Binding var name: String
+    @Binding var algorithm: Int
+    @Binding var feedback: Int
+    @Binding var userCode: Int
+    @Binding var lfoSpeed: Int
+    @Binding var lfoWaveform: Int
+    @Binding var loadLFODataEnabled: Bool
+    @Binding var lfoSyncEnabled: Bool
+    @Binding var amplitudeModulationDepth: Int
+    @Binding var pitchModulationDepth: Int
+    @Binding var amplitudeModulationSensitivity: Int
+    @Binding var pitchModulationSensitivity: Int
+    @Binding var transpose: Int
+    @Binding var leftOutputEnabled: Bool
+    @Binding var rightOutputEnabled: Bool
+    var operators: [FB01VoiceOperatorData]
+    var operatorEnabled: [Binding<Bool>]
+    @Binding var selectedOperatorIndex: Int
+    var updateOperator: (FB01VoiceOperatorData) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionTitle("FM Routing Patch Bay")
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    globalVoicePanel
+                    modulationPanel
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    globalVoicePanel
+                    modulationPanel
+                }
+            }
+
+            routingPanel
+
+            patchOperatorGrid
+        }
+    }
+
+    private var globalVoicePanel: some View {
+        OperatorControlGroup(title: "Voice and Output") {
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                GridRow {
+                    Text("Name")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    TextField("Name", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 180)
+                }
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                ParameterKnob(label: "Feedback", value: $feedback, range: 0...7)
+                ParameterKnob(label: "User Code", value: $userCode, range: 0...255)
+                ParameterKnob(label: "Transpose", value: $transpose, range: -128...127)
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                RockerSwitch(label: "Left Output", isOn: $leftOutputEnabled, width: 70, height: 62)
+                RockerSwitch(label: "Right Output", isOn: $rightOutputEnabled, width: 74, height: 62)
+            }
+        }
+        .frame(minWidth: 360, maxWidth: 460, alignment: .topLeading)
+    }
+
+    private var routingPanel: some View {
+        OperatorControlGroup(title: "Algorithm Routing") {
+            HStack(alignment: .top, spacing: 14) {
+                AlgorithmDiagramView(algorithm: algorithm, isSelected: true)
+                    .frame(width: 260, height: 210)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Algorithm \(algorithm)")
+                        .font(.headline)
+                    Text("Blue paths are modulators. Green operators are carriers that reach the output.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ParameterKnob(label: "Feedback", value: $feedback, range: 0...7)
+                }
+                .frame(width: 150, alignment: .topLeading)
+            }
+
+            AlgorithmSelectorView(selection: $algorithm)
+        }
+        .frame(minWidth: 560, maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private var modulationPanel: some View {
+        OperatorControlGroup(title: "Global LFO and Modulation") {
+            HStack(alignment: .top, spacing: 12) {
+                ParameterKnob(label: "LFO Speed", value: $lfoSpeed, range: 0...255)
+                ParameterKnob(label: "AMD", value: $amplitudeModulationDepth, range: 0...127)
+                ParameterKnob(label: "PMD", value: $pitchModulationDepth, range: 0...127)
+                ParameterKnob(label: "AMS", value: $amplitudeModulationSensitivity, range: 0...3)
+                ParameterKnob(label: "PMS", value: $pitchModulationSensitivity, range: 0...7)
+            }
+
+            WaveformPicker(selection: $lfoWaveform)
+                .frame(width: 340)
+
+            HStack(alignment: .top, spacing: 12) {
+                RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58)
+                RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58)
+            }
+        }
+        .frame(minWidth: 520, maxWidth: 680, alignment: .topLeading)
+    }
+
+    private var patchOperatorGrid: some View {
+        LazyVGrid(columns: [
+            GridItem(.flexible(minimum: 380), spacing: 14),
+            GridItem(.flexible(minimum: 380), spacing: 14),
+        ], alignment: .leading, spacing: 14) {
+            ForEach(displayOrderedOperators, id: \.index) { operatorData in
+                FMPatchOperatorModule(
+                    operatorData: operatorData,
+                    operatorEnabled: operatorEnabledBinding(for: operatorData.index),
+                    isSelected: operatorData.index == selectedOperatorIndex,
+                    select: { selectedOperatorIndex = operatorData.index },
+                    updateOperator: updateOperator
+                )
+            }
+        }
+    }
+
+    private var displayOrderedOperators: [FB01VoiceOperatorData] {
+        operators.sorted {
+            FB01VoiceData.operatorNumber(forDataIndex: $0.index) < FB01VoiceData.operatorNumber(forDataIndex: $1.index)
+        }
+    }
+
+    private func operatorEnabledBinding(for index: Int) -> Binding<Bool> {
+        guard operatorEnabled.indices.contains(index) else {
+            return .constant(true)
+        }
+        return operatorEnabled[index]
+    }
+}
+
+struct FMPatchOperatorModule: View {
+    var operatorData: FB01VoiceOperatorData
+    @Binding var operatorEnabled: Bool
+    var isSelected: Bool
+    var select: () -> Void
+    var updateOperator: (FB01VoiceOperatorData) -> Void
+
+    private var operatorNumber: Int {
+        FB01VoiceData.operatorNumber(forDataIndex: operatorData.index)
+    }
+
+    private var controlColumns: [GridItem] {
+        [
+            GridItem(.adaptive(minimum: 82), spacing: 12),
+        ]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Operator \(operatorNumber)")
+                    .font(.headline)
+                Text(operatorData.carrier ? "Carrier to Output" : "Modulator")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(operatorData.carrier ? Color.green : Color.blue)
+                Spacer()
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(isSelected ? Color.blue : .secondary)
+            }
+
+            LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
+                ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127)
+                ParameterKnob(label: "Multiple", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15)
+                ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7)
+                ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3)
+            }
+
+            LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
+                ParameterKnob(label: "Attack", value: operatorBinding({ $0.attackRate }, update: { try $0.settingAttackRate($1) }), range: 0...31)
+                ParameterKnob(label: "Decay 1", value: operatorBinding({ $0.decay1Rate }, update: { try $0.settingDecay1Rate($1) }), range: 0...15)
+                ParameterKnob(label: "Decay 2", value: operatorBinding({ $0.decay2Rate }, update: { try $0.settingDecay2Rate($1) }), range: 0...31)
+                ParameterKnob(label: "Sustain", value: operatorBinding({ $0.sustainLevel }, update: { try $0.settingSustainLevel($1) }), range: 0...15)
+                ParameterKnob(label: "Release", value: operatorBinding({ $0.releaseRate }, update: { try $0.settingReleaseRate($1) }), range: 0...15)
+            }
+
+            LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
+                RockerSwitch(label: "Disable", isOn: Binding(
+                    get: { !operatorEnabled },
+                    set: { operatorEnabled = !$0 }
+                ), width: 82, height: 58)
+                ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
+                ParameterKnob(label: "Vel to Attack", value: operatorBinding({ $0.velocitySensitivityForAttackRate }, update: { try $0.settingVelocitySensitivityForAttackRate($1) }), range: 0...7)
+                ParameterKnob(label: "Level Scaling", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15)
+                ParameterKnob(label: "Rate Scaling", value: operatorBinding({ $0.keyboardRateScalingDepth }, update: { try $0.settingKeyboardRateScalingDepth($1) }), range: 0...7)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(moduleFill)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? Color.blue : moduleStroke, lineWidth: isSelected ? 2 : 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onTapGesture(perform: select)
+    }
+
+    private var moduleFill: Color {
+        operatorData.carrier
+            ? Color(red: 0.06, green: 0.20, blue: 0.09).opacity(0.75)
+            : Color(red: 0.06, green: 0.11, blue: 0.22).opacity(0.75)
+    }
+
+    private var moduleStroke: Color {
+        operatorData.carrier ? Color.green.opacity(0.45) : Color.blue.opacity(0.42)
+    }
+
+    private func operatorBinding(
+        _ value: @escaping (FB01VoiceOperatorData) -> Int,
+        update: @escaping (FB01VoiceOperatorData, Int) throws -> FB01VoiceOperatorData
+    ) -> Binding<Int> {
+        Binding(
+            get: { value(operatorData) },
+            set: { newValue in
+                if let updated = try? update(operatorData, newValue) {
+                    updateOperator(updated)
+                }
+            }
+        )
     }
 }
 
