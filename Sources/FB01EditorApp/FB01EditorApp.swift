@@ -2894,7 +2894,9 @@ final class PreferencesWindowController {
             return
         }
 
-        let hostingView = NSHostingView(rootView: PreferencesView(document: document))
+        let hostingView = NSHostingView(rootView: PreferencesView(document: document) { [weak self] in
+            self?.window?.close()
+        })
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 620, height: 560),
             styleMask: [.titled, .closable],
@@ -2931,6 +2933,19 @@ private final class PreferencesWindowDelegate: NSObject, NSWindowDelegate {
 
 struct PreferencesView: View {
     @ObservedObject var document: DocumentModel
+    var close: () -> Void
+
+    @State private var voiceEditorParadigm: VoiceEditorParadigm
+    @State private var preferredDeviceCount: Int
+    @State private var devicePreferences: [FB01DevicePreference]
+
+    init(document: DocumentModel, close: @escaping () -> Void) {
+        self.document = document
+        self.close = close
+        _voiceEditorParadigm = State(initialValue: document.voiceEditorParadigm)
+        _preferredDeviceCount = State(initialValue: document.preferredDeviceCount)
+        _devicePreferences = State(initialValue: document.devicePreferences)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -2939,17 +2954,14 @@ struct PreferencesView: View {
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker("Voice Editor Paradigm", selection: Binding(
-                        get: { document.voiceEditorParadigm },
-                        set: { document.setVoiceEditorParadigm($0) }
-                    )) {
+                    Picker("Voice Editor Paradigm", selection: $voiceEditorParadigm) {
                         ForEach(VoiceEditorParadigm.allCases) { paradigm in
                             Text(paradigm.displayName).tag(paradigm)
                         }
                     }
                     .pickerStyle(.radioGroup)
 
-                    Text(document.voiceEditorParadigm.description)
+                    Text(voiceEditorParadigm.description)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2962,15 +2974,15 @@ struct PreferencesView: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 14) {
                     Stepper(value: Binding(
-                        get: { document.preferredDeviceCount },
-                        set: { document.setPreferredDeviceCount($0) }
+                        get: { preferredDeviceCount },
+                        set: { setDraftDeviceCount($0) }
                     ), in: 1...4) {
-                        Text("Number of FB-01 devices: \(document.preferredDeviceCount)")
+                        Text("Number of FB-01 devices: \(preferredDeviceCount)")
                     }
 
                     Divider()
 
-                    ForEach(Array(document.devicePreferences.enumerated()), id: \.element.id) { offset, preference in
+                    ForEach(Array(devicePreferences.enumerated()), id: \.element.id) { offset, preference in
                         HStack(alignment: .top, spacing: 14) {
                             Text("Device \(offset + 1)")
                                 .font(.headline)
@@ -2978,7 +2990,7 @@ struct PreferencesView: View {
 
                             Picker("Command Channel", selection: Binding(
                                 get: { preference.commandChannel },
-                                set: { document.setDeviceCommandChannel(index: offset, channel: $0) }
+                                set: { setDraftDeviceCommandChannel(index: offset, channel: $0) }
                             )) {
                                 ForEach(0..<16, id: \.self) { channel in
                                     Text("\(channel + 1)").tag(channel)
@@ -2986,9 +2998,9 @@ struct PreferencesView: View {
                             }
                             .frame(width: 190)
 
-                            RockerSwitch(label: "Memory Protect", isOn: Binding(
-                                get: { preference.memoryProtectEnabled },
-                                set: { document.setDeviceMemoryProtect(index: offset, enabled: $0) }
+                            RockerSwitch(label: "Memory Writable", isOn: Binding(
+                                get: { !preference.memoryProtectEnabled },
+                                set: { setDraftDeviceMemoryWritable(index: offset, writable: $0) }
                             ), width: 84, height: 58)
                         }
                     }
@@ -3004,9 +3016,54 @@ struct PreferencesView: View {
             }
 
             Spacer()
+
+            HStack {
+                Spacer()
+                Button("Close without Saving") {
+                    close()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Save Changes") {
+                    saveChanges()
+                    close()
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+            }
         }
         .padding(22)
         .frame(width: 620, height: 560, alignment: .topLeading)
+    }
+
+    private func setDraftDeviceCount(_ count: Int) {
+        preferredDeviceCount = min(max(count, 1), 4)
+        if devicePreferences.count < preferredDeviceCount {
+            for index in devicePreferences.count..<preferredDeviceCount {
+                devicePreferences.append(FB01DevicePreference(index: index, commandChannel: 0, memoryProtectEnabled: false))
+            }
+        } else if devicePreferences.count > preferredDeviceCount {
+            devicePreferences.removeLast(devicePreferences.count - preferredDeviceCount)
+        }
+    }
+
+    private func setDraftDeviceCommandChannel(index: Int, channel: Int) {
+        guard devicePreferences.indices.contains(index) else { return }
+        devicePreferences[index].commandChannel = min(max(channel, 0), 15)
+    }
+
+    private func setDraftDeviceMemoryWritable(index: Int, writable: Bool) {
+        guard devicePreferences.indices.contains(index) else { return }
+        devicePreferences[index].memoryProtectEnabled = !writable
+    }
+
+    private func saveChanges() {
+        document.setVoiceEditorParadigm(voiceEditorParadigm)
+        document.setPreferredDeviceCount(preferredDeviceCount)
+        for preference in devicePreferences {
+            document.setDeviceCommandChannel(index: preference.index, channel: preference.commandChannel)
+            document.setDeviceMemoryProtect(index: preference.index, enabled: preference.memoryProtectEnabled)
+        }
     }
 }
 
@@ -3337,6 +3394,10 @@ final class DocumentModel: ObservableObject {
     func setKeyboardVelocity(_ velocity: Int) {
         keyboardVelocity = min(max(velocity, 1), 127)
         UserDefaults.standard.set(keyboardVelocity, forKey: DefaultsKey.keyboardVelocity)
+    }
+
+    func setExternalKeyboardVolume(_ volume: Int) {
+        applyExternalKeyboardVolume(volume)
     }
 
     func setKeyboardStartNote(_ note: Int) {
@@ -6922,7 +6983,7 @@ struct LiveKeyboardView: View {
                 title: document.selectedVoiceDocumentPayload().map { "Live Keyboard - \($0.voice.name)" } ?? "Live Keyboard",
                 subtitle: document.hasKeyboardVoiceContext ? "Current voice" : "MIDI notes only"
             )
-            .frame(width: 320, alignment: .leading)
+            .frame(width: 410, alignment: .leading)
 
             PianoKeyboardRepresentable(
                 startNote: document.keyboardStartNote,
@@ -6963,6 +7024,11 @@ struct LiveKeyboardMIDIControlsView: View {
                     get: { document.keyboardStartNote / 12 },
                     set: { document.setKeyboardStartNote($0 * 12) }
                 ), range: 0...5, width: 70, knobSize: 42)
+
+                ParameterKnob(label: "Volume", value: Binding(
+                    get: { document.externalKeyboardVolume },
+                    set: { document.setExternalKeyboardVolume($0) }
+                ), range: 0...127, width: 74, knobSize: 42)
             }
             .font(.caption)
 
@@ -8135,7 +8201,7 @@ struct VoiceDocumentWindow: View {
     }
 
     var body: some View {
-        ScrollView {
+        ScrollView([.horizontal, .vertical]) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -8324,11 +8390,13 @@ struct VoiceDocumentWindow: View {
                 }
 
                 VoiceDocumentLiveKeyboardView(document: document, device: device)
+                    .frame(width: 760)
+                    .frame(maxWidth: .infinity, alignment: .center)
 
                 DocumentStatusFooter(errorMessage: document.errorMessage, statusMessage: document.statusMessage, isBusy: document.isBusy)
             }
             .padding(18)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minWidth: device.voiceEditorParadigm == .fmRoutingPatchBay ? 980 : 0, maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(document.title)
         .toolbar {
@@ -9070,13 +9138,22 @@ struct ConfigurationInstrumentInspector: View {
                         displayText: stereoPanDisplayText
                     ) { try instrument.settingPan(rawPanValue(forCenteredPan: $0)) }
                 }
-                RockerSwitch(label: "LFO Enabled", isOn: lfoEnabledBinding)
-                Picker("PMD", selection: pmdBinding) {
-                    Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
-                    Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
-                    Text(FB01PMDControllerAssignment.modulationWheel.displayName).tag(FB01PMDControllerAssignment.modulationWheel)
-                    Text(FB01PMDControllerAssignment.breathController.displayName).tag(FB01PMDControllerAssignment.breathController)
-                    Text(FB01PMDControllerAssignment.footController.displayName).tag(FB01PMDControllerAssignment.footController)
+                HStack(alignment: .top, spacing: 18) {
+                    RockerSwitch(label: "LFO Enabled", isOn: lfoEnabledBinding)
+                    VStack(spacing: 6) {
+                        Text("PMD")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Picker("", selection: pmdBinding) {
+                            Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
+                            Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
+                            Text(FB01PMDControllerAssignment.modulationWheel.displayName).tag(FB01PMDControllerAssignment.modulationWheel)
+                            Text(FB01PMDControllerAssignment.breathController.displayName).tag(FB01PMDControllerAssignment.breathController)
+                            Text(FB01PMDControllerAssignment.footController.displayName).tag(FB01PMDControllerAssignment.footController)
+                        }
+                        .labelsHidden()
+                        .frame(width: 150)
+                    }
                 }
             }
 
@@ -9986,19 +10063,20 @@ struct FMRoutingPatchBayView: View {
 
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 14) {
-                    globalVoicePanel
                     modulationPanel
+                    globalVoicePanel
                 }
 
                 VStack(alignment: .leading, spacing: 14) {
-                    globalVoicePanel
                     modulationPanel
+                    globalVoicePanel
                 }
             }
 
-            routingPanel
+            algorithmChooser
+                .frame(maxWidth: .infinity, alignment: .center)
 
-            patchOperatorGrid
+            routedOperatorPatchBay
         }
     }
 
@@ -10016,7 +10094,6 @@ struct FMRoutingPatchBayView: View {
             }
 
             HStack(alignment: .top, spacing: 12) {
-                ParameterKnob(label: "Feedback", value: $feedback, range: 0...7)
                 ParameterKnob(label: "User Code", value: $userCode, range: 0...255)
                 ParameterKnob(label: "Transpose", value: $transpose, range: -128...127)
             }
@@ -10029,26 +10106,18 @@ struct FMRoutingPatchBayView: View {
         .frame(minWidth: 360, maxWidth: 460, alignment: .topLeading)
     }
 
-    private var routingPanel: some View {
-        OperatorControlGroup(title: "Algorithm Routing") {
-            HStack(alignment: .top, spacing: 14) {
-                AlgorithmDiagramView(algorithm: algorithm, isSelected: true)
-                    .frame(width: 260, height: 210)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Algorithm \(algorithm)")
-                        .font(.headline)
-                    Text("Blue paths are modulators. Green operators are carriers that reach the output.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ParameterKnob(label: "Feedback", value: $feedback, range: 0...7)
+    private var algorithmChooser: some View {
+        OperatorControlGroup(title: "Algorithm") {
+            Picker("", selection: $algorithm) {
+                ForEach(1...8, id: \.self) { number in
+                    Text("\(number)").tag(number)
                 }
-                .frame(width: 150, alignment: .topLeading)
             }
-
-            AlgorithmSelectorView(selection: $algorithm)
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 420)
         }
-        .frame(minWidth: 560, maxWidth: .infinity, alignment: .topLeading)
+        .frame(width: 500, alignment: .center)
     }
 
     private var modulationPanel: some View {
@@ -10072,27 +10141,24 @@ struct FMRoutingPatchBayView: View {
         .frame(minWidth: 520, maxWidth: 680, alignment: .topLeading)
     }
 
-    private var patchOperatorGrid: some View {
-        LazyVGrid(columns: [
-            GridItem(.flexible(minimum: 380), spacing: 14),
-            GridItem(.flexible(minimum: 380), spacing: 14),
-        ], alignment: .leading, spacing: 14) {
-            ForEach(displayOrderedOperators, id: \.index) { operatorData in
-                FMPatchOperatorModule(
-                    operatorData: operatorData,
-                    operatorEnabled: operatorEnabledBinding(for: operatorData.index),
-                    isSelected: operatorData.index == selectedOperatorIndex,
-                    select: { selectedOperatorIndex = operatorData.index },
-                    updateOperator: updateOperator
-                )
-            }
-        }
+    private var routedOperatorPatchBay: some View {
+        let layout = FMPatchBayLayout(algorithm: algorithm)
+        return FMPatchBayCanvas(
+            layout: layout,
+            operatorsByNumber: operatorsByNumber,
+            operatorEnabledBinding: operatorEnabledBinding,
+            feedback: $feedback,
+            selectedOperatorIndex: $selectedOperatorIndex,
+            updateOperator: updateOperator
+        )
+        .frame(width: layout.size.width, height: layout.size.height)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 
-    private var displayOrderedOperators: [FB01VoiceOperatorData] {
-        operators.sorted {
-            FB01VoiceData.operatorNumber(forDataIndex: $0.index) < FB01VoiceData.operatorNumber(forDataIndex: $1.index)
-        }
+    private var operatorsByNumber: [Int: FB01VoiceOperatorData] {
+        Dictionary(uniqueKeysWithValues: operators.map { operatorData in
+            (FB01VoiceData.operatorNumber(forDataIndex: operatorData.index), operatorData)
+        })
     }
 
     private func operatorEnabledBinding(for index: Int) -> Binding<Bool> {
@@ -10100,6 +10166,350 @@ struct FMRoutingPatchBayView: View {
             return .constant(true)
         }
         return operatorEnabled[index]
+    }
+}
+
+private struct FMPatchBayLayout {
+    struct Route: Identifiable {
+        enum Kind {
+            case modulation
+            case carrier
+            case feedback
+        }
+
+        var id: String
+        var points: [CGPoint]
+        var kind: Kind
+        var arrowAtEnd = true
+    }
+
+    let algorithm: Int
+    let positions: [Int: CGPoint]
+    let routes: [Route]
+    let sumPoints: [CGPoint]
+    let outputPoint: CGPoint
+    let feedbackControlCenter: CGPoint
+
+    static let moduleSize = CGSize(width: 390, height: 640)
+    static let margin: CGFloat = 170
+    static let horizontalGap: CGFloat = 96
+    static let verticalGap: CGFloat = 120
+
+    var size: CGSize {
+        let maxX = positions.values.map { $0.x }.max() ?? 0
+        let maxY = positions.values.map { $0.y }.max() ?? 0
+        let routeMaxX = routes.flatMap(\.points).map(\.x).max() ?? 0
+        let routeMaxY = routes.flatMap(\.points).map(\.y).max() ?? 0
+        let controlMaxX = feedbackControlCenter.x + 58
+        let controlMaxY = feedbackControlCenter.y + 58
+        return CGSize(
+            width: max(max(maxX + Self.moduleSize.width, routeMaxX, controlMaxX) + Self.margin, 820),
+            height: max(max(maxY + Self.moduleSize.height, routeMaxY, controlMaxY) + 96, outputPoint.y + 72)
+        )
+    }
+
+    init(algorithm: Int) {
+        self.algorithm = min(max(algorithm, 1), 8)
+        let layout = Self.makeLayout(for: self.algorithm)
+        positions = layout.positions
+        routes = layout.routes
+        sumPoints = layout.sumPoints
+        outputPoint = layout.outputPoint
+        feedbackControlCenter = layout.feedbackControlCenter
+    }
+
+    private static func makeLayout(for algorithm: Int) -> (
+        positions: [Int: CGPoint],
+        routes: [Route],
+        sumPoints: [CGPoint],
+        outputPoint: CGPoint,
+        feedbackControlCenter: CGPoint
+    ) {
+        let w = moduleSize.width
+        let h = moduleSize.height
+        let m = margin
+        let hg = horizontalGap
+        let vg = verticalGap
+        let stepX = w + hg
+        let stepY = h + vg
+
+        func point(_ column: Int, _ row: Int) -> CGPoint {
+            CGPoint(x: m + CGFloat(column) * stepX, y: m + CGFloat(row) * stepY)
+        }
+
+        func rect(_ number: Int, in positions: [Int: CGPoint]) -> CGRect {
+            CGRect(origin: positions[number] ?? .zero, size: moduleSize)
+        }
+
+        func top(_ number: Int, in positions: [Int: CGPoint]) -> CGPoint {
+            let r = rect(number, in: positions)
+            return CGPoint(x: r.midX, y: r.minY - 18)
+        }
+
+        func bottom(_ number: Int, in positions: [Int: CGPoint]) -> CGPoint {
+            let r = rect(number, in: positions)
+            return CGPoint(x: r.midX, y: r.maxY + 18)
+        }
+
+        func right(_ number: Int, in positions: [Int: CGPoint]) -> CGPoint {
+            let r = rect(number, in: positions)
+            return CGPoint(x: r.maxX + 22, y: r.midY)
+        }
+
+        func left(_ number: Int, in positions: [Int: CGPoint]) -> CGPoint {
+            let r = rect(number, in: positions)
+            return CGPoint(x: r.minX - 22, y: r.midY)
+        }
+
+        func route(_ id: String, _ points: [CGPoint], kind: Route.Kind = .modulation, arrowAtEnd: Bool = true) -> Route {
+            Route(id: id, points: points, kind: kind, arrowAtEnd: arrowAtEnd)
+        }
+
+        func feedbackRoute(_ positions: [Int: CGPoint]) -> Route {
+            let r = rect(4, in: positions)
+            let topY = r.minY - 132
+            let sourceX = r.midX + 40
+            let returnX = r.midX + 122
+            return route(
+                "feedback-4",
+                [
+                    CGPoint(x: sourceX, y: r.minY - 10),
+                    CGPoint(x: sourceX, y: topY),
+                    CGPoint(x: returnX, y: topY),
+                    CGPoint(x: returnX, y: r.minY - 10),
+                ],
+                kind: .feedback
+            )
+        }
+
+        func feedbackControl(_ positions: [Int: CGPoint]) -> CGPoint {
+            let r = rect(4, in: positions)
+            return CGPoint(x: r.midX + 38, y: r.minY - 74)
+        }
+
+        func outputRoutes(_ carriers: [Int], positions: [Int: CGPoint], output: CGPoint) -> [Route] {
+            let busY = output.y - 42
+            let points = carriers.map { bottom($0, in: positions) }
+            guard let minX = points.map(\.x).min(), let maxX = points.map(\.x).max() else {
+                return []
+            }
+            var routes = points.map { source in
+                route("op\(Int(source.x))-to-output-bus", [source, CGPoint(x: source.x, y: busY)], kind: .carrier, arrowAtEnd: false)
+            }
+            routes.append(route("output-bus", [CGPoint(x: minX, y: busY), CGPoint(x: maxX, y: busY)], kind: .carrier, arrowAtEnd: false))
+            routes.append(route("output-arrow", [CGPoint(x: (minX + maxX) / 2, y: busY), output], kind: .carrier))
+            return routes
+        }
+
+        var positions: [Int: CGPoint]
+        var routes: [Route] = []
+        var sumPoints: [CGPoint] = []
+        var outputPoint: CGPoint
+
+        switch algorithm {
+        case 1:
+            positions = [4: point(0, 0), 3: point(0, 1), 2: point(0, 2), 1: point(0, 3)]
+            outputPoint = CGPoint(x: rect(1, in: positions).midX, y: rect(1, in: positions).maxY + 88)
+            routes = [
+                route("4-3", [bottom(4, in: positions), top(3, in: positions)]),
+                route("3-2", [bottom(3, in: positions), top(2, in: positions)]),
+                route("2-1", [bottom(2, in: positions), top(1, in: positions)]),
+                feedbackRoute(positions),
+            ] + outputRoutes([1], positions: positions, output: outputPoint)
+        case 2:
+            positions = [3: point(0, 0), 4: point(1, 0), 2: CGPoint(x: point(0, 1).x + stepX / 2, y: point(0, 1).y), 1: CGPoint(x: point(0, 2).x + stepX / 2, y: point(0, 2).y)]
+            let sum = CGPoint(x: rect(2, in: positions).midX, y: rect(2, in: positions).minY - 58)
+            sumPoints = [sum]
+            outputPoint = CGPoint(x: rect(1, in: positions).midX, y: rect(1, in: positions).maxY + 88)
+            routes = [
+                route("3-sum", [bottom(3, in: positions), CGPoint(x: bottom(3, in: positions).x, y: sum.y), sum]),
+                route("4-sum", [bottom(4, in: positions), CGPoint(x: bottom(4, in: positions).x, y: sum.y), sum]),
+                route("sum-2", [sum, top(2, in: positions)]),
+                route("2-1", [bottom(2, in: positions), top(1, in: positions)]),
+                feedbackRoute(positions),
+            ] + outputRoutes([1], positions: positions, output: outputPoint)
+        case 3:
+            positions = [3: point(0, 0), 2: point(0, 1), 4: point(1, 1), 1: CGPoint(x: point(0, 2).x + stepX / 2, y: point(0, 2).y)]
+            let sum = CGPoint(x: rect(1, in: positions).midX, y: rect(1, in: positions).minY - 58)
+            sumPoints = [sum]
+            outputPoint = CGPoint(x: rect(1, in: positions).midX, y: rect(1, in: positions).maxY + 88)
+            routes = [
+                route("3-2", [bottom(3, in: positions), top(2, in: positions)]),
+                route("2-sum", [bottom(2, in: positions), CGPoint(x: bottom(2, in: positions).x, y: sum.y), sum]),
+                route("4-sum", [bottom(4, in: positions), CGPoint(x: bottom(4, in: positions).x, y: sum.y), sum]),
+                route("sum-1", [sum, top(1, in: positions)]),
+                feedbackRoute(positions),
+            ] + outputRoutes([1], positions: positions, output: outputPoint)
+        case 4:
+            positions = [4: point(1, 0), 2: point(0, 1), 3: point(1, 1), 1: CGPoint(x: point(0, 2).x + stepX / 2, y: point(0, 2).y)]
+            let sum = CGPoint(x: rect(1, in: positions).midX, y: rect(1, in: positions).minY - 58)
+            sumPoints = [sum]
+            outputPoint = CGPoint(x: rect(1, in: positions).midX, y: rect(1, in: positions).maxY + 88)
+            routes = [
+                route("4-3", [bottom(4, in: positions), top(3, in: positions)]),
+                route("2-sum", [bottom(2, in: positions), CGPoint(x: bottom(2, in: positions).x, y: sum.y), sum]),
+                route("3-sum", [bottom(3, in: positions), CGPoint(x: bottom(3, in: positions).x, y: sum.y), sum]),
+                route("sum-1", [sum, top(1, in: positions)]),
+                feedbackRoute(positions),
+            ] + outputRoutes([1], positions: positions, output: outputPoint)
+        case 5:
+            positions = [2: point(0, 0), 4: point(1, 0), 1: point(0, 1), 3: point(1, 1)]
+            outputPoint = CGPoint(x: (rect(1, in: positions).midX + rect(3, in: positions).midX) / 2, y: max(rect(1, in: positions).maxY, rect(3, in: positions).maxY) + 88)
+            routes = [
+                route("2-1", [bottom(2, in: positions), top(1, in: positions)]),
+                route("4-3", [bottom(4, in: positions), top(3, in: positions)]),
+                feedbackRoute(positions),
+            ] + outputRoutes([1, 3], positions: positions, output: outputPoint)
+        case 6:
+            positions = [4: CGPoint(x: point(1, 0).x, y: point(1, 0).y), 1: point(0, 1), 2: point(1, 1), 3: point(2, 1)]
+            let split = CGPoint(x: rect(4, in: positions).midX, y: rect(1, in: positions).minY - 58)
+            let busLeft = CGPoint(x: rect(1, in: positions).midX, y: split.y)
+            let busRight = CGPoint(x: rect(3, in: positions).midX, y: split.y)
+            sumPoints = [split]
+            outputPoint = CGPoint(x: rect(2, in: positions).midX, y: rect(2, in: positions).maxY + 88)
+            routes = [
+                route("4-split", [bottom(4, in: positions), split]),
+                route("split-bus", [busLeft, busRight], arrowAtEnd: false),
+                route("split-1", [CGPoint(x: rect(1, in: positions).midX, y: split.y), top(1, in: positions)]),
+                route("split-2", [CGPoint(x: rect(2, in: positions).midX, y: split.y), top(2, in: positions)]),
+                route("split-3", [CGPoint(x: rect(3, in: positions).midX, y: split.y), top(3, in: positions)]),
+                feedbackRoute(positions),
+            ] + outputRoutes([1, 2, 3], positions: positions, output: outputPoint)
+        case 7:
+            positions = [4: point(2, 0), 1: point(0, 1), 2: point(1, 1), 3: point(2, 1)]
+            outputPoint = CGPoint(x: rect(2, in: positions).midX, y: rect(2, in: positions).maxY + 88)
+            routes = [
+                route("4-3", [bottom(4, in: positions), top(3, in: positions)]),
+                feedbackRoute(positions),
+            ] + outputRoutes([1, 2, 3], positions: positions, output: outputPoint)
+        default:
+            positions = [1: point(0, 0), 2: point(1, 0), 3: point(2, 0), 4: point(3, 0)]
+            outputPoint = CGPoint(x: (rect(1, in: positions).midX + rect(4, in: positions).midX) / 2, y: rect(1, in: positions).maxY + 88)
+            routes = [
+                feedbackRoute(positions),
+            ] + outputRoutes([1, 2, 3, 4], positions: positions, output: outputPoint)
+        }
+
+        return (positions, routes, sumPoints, outputPoint, feedbackControl(positions))
+    }
+}
+
+private struct FMPatchBayCanvas: View {
+    var layout: FMPatchBayLayout
+    var operatorsByNumber: [Int: FB01VoiceOperatorData]
+    var operatorEnabledBinding: (Int) -> Binding<Bool>
+    @Binding var feedback: Int
+    @Binding var selectedOperatorIndex: Int
+    var updateOperator: (FB01VoiceOperatorData) -> Void
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.045))
+
+            FMPatchBayRouteCanvas(layout: layout)
+
+            Text("Output")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .position(x: layout.outputPoint.x, y: layout.outputPoint.y + 22)
+
+            ParameterKnob(label: "OP4 Feedback", value: $feedback, range: 0...7)
+                .position(layout.feedbackControlCenter)
+
+            ForEach(1...4, id: \.self) { number in
+                if let operatorData = operatorsByNumber[number],
+                   let origin = layout.positions[number] {
+                    FMPatchOperatorModule(
+                        operatorData: operatorData,
+                        operatorEnabled: operatorEnabledBinding(operatorData.index),
+                        isSelected: operatorData.index == selectedOperatorIndex,
+                        select: { selectedOperatorIndex = operatorData.index },
+                        updateOperator: updateOperator
+                    )
+                    .frame(width: FMPatchBayLayout.moduleSize.width)
+                    .position(
+                        x: origin.x + FMPatchBayLayout.moduleSize.width / 2,
+                        y: origin.y + FMPatchBayLayout.moduleSize.height / 2
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct FMPatchBayRouteCanvas: View {
+    var layout: FMPatchBayLayout
+
+    var body: some View {
+        Canvas { context, _ in
+            for route in layout.routes {
+                guard route.points.count >= 2 else {
+                    continue
+                }
+                let color = color(for: route.kind)
+                var path = Path()
+                path.move(to: route.points[0])
+                for point in route.points.dropFirst() {
+                    path.addLine(to: point)
+                }
+                context.stroke(
+                    path,
+                    with: .color(color),
+                    style: StrokeStyle(lineWidth: route.kind == .feedback ? 2.2 : 2.6, lineCap: .round, lineJoin: .round)
+                )
+
+                if route.arrowAtEnd,
+                   let end = route.points.last,
+                   let previous = route.points.dropLast().last {
+                    drawArrowHead(context: context, from: previous, to: end, color: color)
+                }
+            }
+
+            for point in layout.sumPoints {
+                let rect = CGRect(x: point.x - 12, y: point.y - 12, width: 24, height: 24)
+                context.fill(Path(ellipseIn: rect), with: .color(Color(nsColor: .controlBackgroundColor)))
+                context.stroke(Path(ellipseIn: rect), with: .color(.blue.opacity(0.78)), lineWidth: 1.6)
+                context.draw(
+                    context.resolve(Text("+").font(.caption.weight(.bold)).foregroundStyle(.primary)),
+                    at: point
+                )
+            }
+
+            let outputRect = CGRect(x: layout.outputPoint.x - 9, y: layout.outputPoint.y - 9, width: 18, height: 18)
+            context.fill(Path(ellipseIn: outputRect), with: .color(Color.green.opacity(0.24)))
+            context.stroke(Path(ellipseIn: outputRect), with: .color(Color.green.opacity(0.86)), lineWidth: 1.4)
+        }
+    }
+
+    private func color(for kind: FMPatchBayLayout.Route.Kind) -> Color {
+        switch kind {
+        case .modulation:
+            return .blue.opacity(0.86)
+        case .carrier:
+            return .green.opacity(0.86)
+        case .feedback:
+            return .orange.opacity(0.92)
+        }
+    }
+
+    private func drawArrowHead(context: GraphicsContext, from start: CGPoint, to end: CGPoint, color: Color) {
+        let angle = atan2(end.y - start.y, end.x - start.x)
+        let length: CGFloat = 10
+        let spread: CGFloat = 0.58
+        let left = CGPoint(
+            x: end.x - length * cos(angle - spread),
+            y: end.y - length * sin(angle - spread)
+        )
+        let right = CGPoint(
+            x: end.x - length * cos(angle + spread),
+            y: end.y - length * sin(angle + spread)
+        )
+        var head = Path()
+        head.move(to: left)
+        head.addLine(to: end)
+        head.addLine(to: right)
+        context.stroke(head, with: .color(color), style: StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
     }
 }
 
@@ -10149,14 +10559,14 @@ struct FMPatchOperatorModule: View {
             }
 
             LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                RockerSwitch(label: "Disable", isOn: Binding(
-                    get: { !operatorEnabled },
-                    set: { operatorEnabled = !$0 }
-                ), width: 82, height: 58)
                 ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
                 ParameterKnob(label: "Vel to Attack", value: operatorBinding({ $0.velocitySensitivityForAttackRate }, update: { try $0.settingVelocitySensitivityForAttackRate($1) }), range: 0...7)
                 ParameterKnob(label: "Level Scaling", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15)
                 ParameterKnob(label: "Rate Scaling", value: operatorBinding({ $0.keyboardRateScalingDepth }, update: { try $0.settingKeyboardRateScalingDepth($1) }), range: 0...7)
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                RockerSwitch(label: "Enabled", isOn: editableOperatorEnabled, width: 82, height: 58)
             }
         }
         .padding(12)
@@ -10171,6 +10581,18 @@ struct FMPatchOperatorModule: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onTapGesture(perform: select)
+    }
+
+    private var editableOperatorEnabled: Binding<Bool> {
+        Binding(
+            get: { operatorEnabled },
+            set: { enabled in
+                guard isSelected else {
+                    return
+                }
+                operatorEnabled = enabled
+            }
+        )
     }
 
     private var moduleFill: Color {
@@ -10190,6 +10612,9 @@ struct FMPatchOperatorModule: View {
         Binding(
             get: { value(operatorData) },
             set: { newValue in
+                guard isSelected else {
+                    return
+                }
                 if let updated = try? update(operatorData, newValue) {
                     updateOperator(updated)
                 }
@@ -10728,7 +11153,7 @@ struct OperatorInspector: View {
             }
 
             VStack(alignment: .leading, spacing: 12) {
-                RockerSwitch(label: "Disable Operator", isOn: disabledBinding)
+                RockerSwitch(label: "Operator Enabled", isOn: $operatorEnabled)
 
                 OperatorControlGroup(title: "Tuning") {
                     HStack(alignment: .top, spacing: 12) {
@@ -10766,13 +11191,6 @@ struct OperatorInspector: View {
                 operatorToggle("Level Curve Bit 2", binding: keyboardLevelScalingTypeBit1Binding)
             }
         }
-    }
-
-    private var disabledBinding: Binding<Bool> {
-        Binding(
-            get: { !operatorEnabled },
-            set: { operatorEnabled = !$0 }
-        )
     }
 
     private var operatorRolePicker: some View {
