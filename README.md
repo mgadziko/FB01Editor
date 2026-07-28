@@ -1,130 +1,216 @@
 # Forest FB-01 Editor
 
-Offline-first editor and librarian core for the Yamaha FB-01 FM sound generator.
+Forest FB-01 Editor is a macOS editor and librarian for the Yamaha FB-01 FM
+sound generator.
 
-The first milestone is intentionally hardware-free:
+The app is now centered on document windows: open, fetch, edit, save, and store
+individual voices and configurations without having to treat the whole FB-01 as
+one giant library file. A status/library window remains available for global
+MIDI state, open documents, and legacy source-library browsing.
 
-- model FB-01 voice and configuration data
-- encode and decode documented Yamaha SysEx command forms
-- validate 7-bit MIDI payloads, nibble-packed voice data, and Yamaha checksums
-- add CoreMIDI transport only after the byte-level core is covered by tests
+## Current App
 
-## Current Scope
+Forest FB-01 Editor can:
 
-This package currently contains the `FB01Editor` Swift library. It does not send MIDI yet.
+- load and save single voice files
+- load and save single configuration files
+- fetch voices from the FB-01, including RAM banks and factory ROM banks
+- fetch configurations from the FB-01, including read-only preset configurations
+- store voices into writable FB-01 voice slots in Banks 1 and 2
+- store configurations into writable FB-01 configuration slots 1-16
+- copy a voice directly from one FB-01 slot to another without opening an editor window
+- copy a configuration directly from one FB-01 slot to another without opening an editor window
+- install a General MIDI-oriented 48-voice set into Bank 1 or Bank 2
+- display reset instructions for restoring the FB-01 from the front panel
+- use a live on-screen keyboard and an external MIDI keyboard for auditioning
+- pass through external MIDI performance messages such as notes, modulation, and pitch bend
 
-The core is shaped around separately saveable artifacts:
+The app uses the terminology:
 
-- single instrument voice dumps
-- voice bank dumps
-- current configuration dumps
-- stored configuration dumps
-- configuration sets
-- raw SysEx fallback files
+- **Load**: read a voice or configuration from a disk file
+- **Save**: write a voice or configuration to a disk file
+- **Fetch**: read a voice or configuration from the FB-01
+- **Store**: write a voice or configuration to the FB-01
 
-## Early Command Coverage
+## Voice Editing
 
-- instrument parameter changes
-- MIDI-channel parameter changes
-- system parameter changes
-- voice bank and configuration dump requests
-- current instrument/configuration store requests
-- FB-01 voice-byte nibble packing
-- Yamaha 7-bit two's-complement checksums
+Voice documents support two editing paradigms, selectable from Preferences:
 
-## Parser Coverage
+- **Console Sections**: grouped controls organized by parameter family
+- **FM Routing Patch Bay**: a routing-first view that lays out operators according
+  to the selected FM algorithm
 
-- split `.syx` byte streams into individual SysEx messages
-- classify generated request/store commands
-- parse checksum-protected dump packets
-- classify dump messages into artifact kinds for future file save/open workflows
-- round-trip artifacts through `.syx` files without requiring connected hardware
+The FM Routing Patch Bay is the preferred current UI. It presents the voice as
+an FM signal-flow patch bay, with operators arranged by algorithm, arrows showing
+modulator/carrier routing, operator enable highlighting, OP4 feedback routing,
+ADSR envelope displays, rotary knob controls, rocker switches, and green LED
+numeric readouts.
 
-## Configuration Model Coverage
+The editor includes controls for voice identity, feedback, user code, transpose,
+stereo output assignment, LFO and modulation settings, algorithm selection, and
+per-operator parameters such as total level, frequency multiple, detune, attack,
+decay, sustain, release, velocity sensitivity, level scaling, rate scaling, PMD,
+LFO enable, and operator enable.
 
-The first real FB-01 fixture is a captured current configuration named `single`.
-`FB01ConfigurationData` currently decodes:
+When a voice document is saved with Save As, the selected file name also becomes
+the internal FB-01 voice name, subject to the FB-01's 7-character voice-name
+limit.
+
+## Configuration Editing
+
+Configuration documents expose the FB-01 performance setup:
 
 - configuration name
+- system channel
 - combine mode
-- shared LFO speed, AMD, PMD, waveform, and key-code receive mode
-- all 8 instrument definition blocks
-- per-instrument note allocation, MIDI channel, key limits, voice bank/number, detune, octave transpose, output level, pan, LFO enable, portamento, pitch bend range, mono/poly mode, and PMD controller assignment
+- key-code receive mode
+- LFO speed, AMD, PMD, and waveform
+- all 8 instrument slots
+- per-instrument MIDI channel, note allocation, key limits, voice bank/number,
+  voice name, output level, stereo pan, detune, octave transpose, LFO enable,
+  pitch bend range, portamento, mono/poly mode, and PMD controller assignment
 
-## macOS App Shell
+Configurations 1-16 are writable on the FB-01. Configurations 17-20 are factory
+preset/read-only configurations.
 
-`FB01EditorApp` is a safe SwiftUI librarian/editor shell:
+## MIDI Setup
+
+The main window has separate MIDI endpoint selections for:
+
+- **MIDI In from FB-01**
+- **MIDI Out to FB-01**
+
+The live keyboard areas also have a separate:
+
+- **MIDI In from External Keyboard**
+
+This distinction matters when using a synth module and a separate controller
+keyboard at the same time. For example, the FB-01 can remain connected through
+one MIDI interface while an M-Audio Oxygen keyboard supplies note and controller
+input over USB.
+
+## Files And Document Types
+
+The app supports FB-01-specific document types and Finder icons for:
+
+- single voice documents
+- single configuration documents
+- voice bank documents
+- configuration bank documents
+- generic SysEx files
+
+The default save/load folder is:
+
+```sh
+~/Documents/Forest FB-01 Editor
+```
+
+The app creates that folder when needed and remembers the most recently used
+load and save folders.
+
+## Command-Line Tools
+
+The package includes two command-line tools.
+
+`fb01-dump` lists MIDI endpoints, listens for manual dumps, and sends safe dump
+requests:
+
+```sh
+swift run fb01-dump list
+swift run fb01-dump listen --source 0 --output fb01-dump.syx --count 1
+swift run fb01-dump request unit-id --source 0 --destination 0 --output unit-id.syx
+swift run fb01-dump request current-configuration --source 0 --destination 0 --output current-config.syx
+swift run fb01-dump request voice-bank --bank 2 --source 0 --destination 0 --output voice-bank-2.syx
+```
+
+`fb01-gm-load` supports the General MIDI bank-loading workflow used by the app.
+
+## Build And Run
+
+Build and run from Swift Package Manager:
 
 ```sh
 swift run FB01EditorApp
 ```
 
-It opens one or more `.syx` files from the File menu, shows them in a source library, displays decoded current configuration fields, displays voice banks in a selectable browser with a local voice editor, saves the selected source from the File menu, saves open stored configurations as a configuration-set `.syx`, and exports the selected voice as a standalone single-voice SysEx file. The first local editor controls cover voice name, algorithm, feedback, and LFO speed. Local voice edits are tracked in the source library, so they survive voice/source selection changes; edited standalone single-voice sources, numbered voice-bank sources, and Voice RAM sources save through the File menu with rebuilt checksums. It can also fetch the current configuration, Banks 1-7, Voice RAM 1, and stored configurations 1-20 from the connected FB-01 into the same source browser, with a choice to replace or append when sources are already open. Sources can be renamed, removed, or cleared locally. It does not write to the FB-01.
+Run tests:
 
-To build a launchable local `.app` bundle:
+```sh
+swift test
+```
+
+Build a launchable local app bundle:
 
 ```sh
 ./scripts/build-macos-app.sh
 open "dist/Forest FB-01 Editor.app"
 ```
 
-The script creates an ad-hoc signed development bundle at `dist/Forest FB-01 Editor.app`.
+The script creates an ad-hoc signed development bundle at:
 
-## Xcode Project
+```sh
+dist/Forest FB-01 Editor.app
+```
 
-The repo also includes a native Xcode project:
+## Xcode
+
+The repo includes a native Xcode project:
 
 ```sh
 open "Forest FB-01 Editor.xcodeproj"
 ```
 
-The primary app scheme is `Forest FB-01 Editor`. The project also contains targets for the shared `FB01Editor` library, `fb01-dump`, `fb01-gm-load`, and `FB01EditorTests`. A local `.xcode-derived/` folder is ignored for command-line Xcode builds:
+The primary app scheme is `Forest FB-01 Editor`. The project also contains
+targets for the shared `FB01Editor` library, `fb01-dump`, `fb01-gm-load`, and
+`FB01EditorTests`.
+
+Command-line Xcode builds should use repo-local DerivedData:
 
 ```sh
 xcodebuild -project "Forest FB-01 Editor.xcodeproj" -scheme "Forest FB-01 Editor" -configuration Debug -derivedDataPath .xcode-derived build CODE_SIGNING_ALLOWED=NO
 xcodebuild -project "Forest FB-01 Editor.xcodeproj" -scheme "Forest FB-01 Editor" -configuration Debug -derivedDataPath .xcode-derived test CODE_SIGNING_ALLOWED=NO
 ```
 
-## MIDI Capture And Safe Dump Requests
+## SysEx And Data Model
 
-The `fb01-dump` executable is the first CoreMIDI tool. Manual capture is receive-only:
+The shared `FB01Editor` Swift library models and tests:
+
+- Yamaha SysEx message splitting and parsing
+- FB-01 voice data and nibble encoding
+- FB-01 voice bank dumps
+- current and stored configuration dumps
+- configuration sets
+- Yamaha 7-bit two's-complement checksums
+- system, instrument, store, memory-protect, voice-bank, and configuration commands
+
+Captured fixtures live in:
 
 ```sh
-swift run fb01-dump list
-swift run fb01-dump listen --source "USB Midi Cable" --output fb01-dump.syx --count 1
+Tests/FB01EditorTests/Fixtures
 ```
 
-Use the FB-01 front panel to send a bulk dump while `listen` is running. The tool saves complete SysEx messages, then classifies them with the library parser. Request/send/write-back features should wait until captured dumps are verified.
+Those fixtures include voice banks 1-7, Voice RAM 1, a current configuration
+dump, and an invalid bank-byte response used to preserve observed hardware
+behavior.
 
-The tool also supports documented dump requests that do not store or write data to the FB-01:
+## Hardware Notes
 
-```sh
-swift run fb01-dump request unit-id --source 0 --destination 0 --output unit-id.syx
-swift run fb01-dump request current-configuration --source 0 --destination 0 --output current-config.syx
-swift run fb01-dump request voice-bank --bank 2 --source 0 --destination 0 --output voice-bank-2.syx
-```
+Observed FB-01 behavior during development:
 
-If manual front-panel dumps work but computer-originated requests time out, verify the MIDI Out to FB-01 MIDI In cable direction, the FB-01 system channel, and whether the interface is passing outbound SysEx. The tested generic `USB Midi Cable` interface was unreliable for Mac-originated SysEx requests; a different interface enumerating as `USB MIDI Device` handled note bursts, current-configuration requests, and voice-bank requests successfully.
+- The app and CLI use user-facing bank numbers 1-7; the SysEx request byte is
+  zero-based.
+- Banks 1 and 2 are writable RAM banks.
+- Banks 3-7 are factory voice banks.
+- Configurations 1-16 are writable.
+- Configurations 17-20 are read-only preset configurations.
+- The FB-01 memory protect setting must be off before storing data; the app sends
+  the documented memory-protect-off command as part of store operations.
+- Some generic USB MIDI interfaces can pass notes but behave unreliably for
+  FB-01 SysEx request/response work. If requests time out, verify cable direction,
+  selected MIDI endpoints, system channel, and the interface's SysEx support.
 
-Observed hardware behavior:
+## Project History
 
-- Current configuration requests return 171-byte dumps with the working `USB MIDI Device` interface.
-- The app and CLI use the FB-01's user-facing bank numbers `1...7`; the SysEx request byte is zero-based (`0...6`).
-- Banks 1 through 7 returned 6363-byte dumps with the working interface when requested with SysEx bank bytes `0...6`.
-- Bank 7 returned a 6363-byte dump when requested with SysEx bank byte `6`.
-- A raw request with SysEx bank byte `7` returned the short response `F0 43 60 04 F7`, which is preserved as an invalid-request raw SysEx fixture.
-- The separate `voice-ram1` request returned a 6360-byte dump. This appears to be the user/RAM bank path described separately from numbered voice-bank requests, and is preserved as `voice-ram1.syx`.
-- `Tests/FB01EditorTests/Fixtures/voice-bank-1.syx` through `voice-bank-7.syx` are captured numbered voice-bank fixtures. They are recognized, exact-byte round-tripped, and decoded into 48 voice entries each.
-- `Tests/FB01EditorTests/Fixtures/voice-ram1.syx` is recognized as voice RAM dump data and decoded through the same 48-voice table model.
-- `FB01EditorApp` displays a selectable voice browser and local voice editor when a captured voice-bank dump is opened.
-- `FB01EditorApp` can open multiple `.syx` files at once and adds each opened bank, configuration, or single voice to the source library.
-- Source-library entries can be renamed, removed individually, or cleared from the app without touching disk files or the FB-01.
-- The selected voice can be edited locally and exported as a standalone single-voice SysEx artifact without writing anything to the FB-01.
-- Local voice edits are stored on the source entry. Edited standalone single-voice, numbered voice-bank, and Voice RAM sources are saved by File > Save SysEx with rebuilt SysEx checksums.
-- `FB01EditorApp` has a manual `Fetch Banks` action that requests current configuration, Banks 1-7, and Voice RAM 1, then shows the fetched dumps in a source sidebar. Source and destination MIDI endpoints are selectable from the toolbar and remembered between launches. This is still read-only and does not perform any store/write-back commands.
-- `FB01EditorApp` has a manual `Fetch Configs` action that requests stored configurations 1-20 and adds them as separate sources. Configurations 17-20 are labeled read-only/preset in the source browser.
-- File > Save Configuration Set writes the open stored-configuration sources as one multi-message `.syx` file, sorted by configuration number.
-
-## Recovered Context
-
-`fb01editor-context.json` is a handoff file from the original Codex task. It records the recovered project context, the SysEx research summary, the initial commit boundary, and the planned hardware-safe capture milestone.
+`fb01editor-context.json` is a recovered handoff file from the original Codex
+task. It records early project context, SysEx research notes, and the initial
+hardware-safe capture milestone.
