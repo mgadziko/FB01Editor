@@ -2906,9 +2906,10 @@ struct FB01EditorApplication: App {
                 .onAppear {
                     appDelegate.document = document
                     appDelegate.documentWorkspace = documentWorkspace
+                    LiveKeyboardPaletteController.shared.restoreIfNeeded(document: document)
                 }
         }
-        .defaultSize(width: 1080, height: 760)
+        .defaultSize(width: 1080, height: 920)
         WindowGroup("Voice Document", id: "voice-document", for: UUID.self) { $id in
             if let id, let voiceDocument = documentWorkspace.voiceDocument(id: id) {
                 VoiceDocumentWindow(document: voiceDocument, device: document) {
@@ -3223,10 +3224,28 @@ final class LiveKeyboardPaletteController {
     static let shared = LiveKeyboardPaletteController()
 
     private var panel: NSPanel?
+    private var delegate: LiveKeyboardPaletteDelegate?
+    private var restoredForLaunch = false
+
+    private enum DefaultsKey {
+        static let visible = "FB01Editor.liveKeyboardPalette.visible"
+        static let frame = "FB01Editor.liveKeyboardPalette.frame"
+    }
+
+    func restoreIfNeeded(document: DocumentModel) {
+        guard !restoredForLaunch else {
+            return
+        }
+        restoredForLaunch = true
+        if UserDefaults.standard.bool(forKey: DefaultsKey.visible) {
+            show(document: document)
+        }
+    }
 
     func show(document: DocumentModel) {
         if let panel {
             panel.makeKeyAndOrderFront(nil)
+            UserDefaults.standard.set(true, forKey: DefaultsKey.visible)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
@@ -3245,10 +3264,60 @@ final class LiveKeyboardPaletteController {
         panel.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
         panel.contentMinSize = NSSize(width: 760, height: 198)
         panel.contentView = NSHostingView(rootView: LiveKeyboardPaletteView(document: document))
-        panel.center()
+        if let savedFrame = UserDefaults.standard.string(forKey: DefaultsKey.frame) {
+            let frame = NSRectFromString(savedFrame)
+            if !frame.isEmpty {
+                panel.setFrame(frame, display: false)
+            } else {
+                panel.center()
+            }
+        } else {
+            panel.center()
+        }
+        let delegate = LiveKeyboardPaletteDelegate(
+            onFrameChange: { [weak self] window in
+                self?.saveFrame(window)
+            },
+            onClose: { [weak self] window in
+                self?.saveFrame(window)
+                UserDefaults.standard.set(false, forKey: DefaultsKey.visible)
+            }
+        )
+        self.delegate = delegate
+        panel.delegate = delegate
         self.panel = panel
         panel.makeKeyAndOrderFront(nil)
+        UserDefaults.standard.set(true, forKey: DefaultsKey.visible)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func saveFrame(_ window: NSWindow?) {
+        guard let window else {
+            return
+        }
+        UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: DefaultsKey.frame)
+    }
+}
+
+private final class LiveKeyboardPaletteDelegate: NSObject, NSWindowDelegate {
+    var onFrameChange: (NSWindow?) -> Void
+    var onClose: (NSWindow?) -> Void
+
+    init(onFrameChange: @escaping (NSWindow?) -> Void, onClose: @escaping (NSWindow?) -> Void) {
+        self.onFrameChange = onFrameChange
+        self.onClose = onClose
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        onFrameChange(notification.object as? NSWindow)
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        onFrameChange(notification.object as? NSWindow)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose(notification.object as? NSWindow)
     }
 }
 
@@ -7261,21 +7330,14 @@ struct ContentView: View {
 
                 Divider()
 
-                LiveKeyboardView(document: document)
-                    .frame(height: 224)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-
-                Divider()
-
                 MainWindowStatusFooter(
                     errorMessage: document.errorMessage,
                     statusMessage: document.statusMessage
                 )
             }
-            .frame(width: 1080, height: 760)
+            .frame(minWidth: 1080, maxWidth: 1080, minHeight: 920, alignment: .topLeading)
         }
-        .background(MainWindowSizeConfigurator(minimumSize: CGSize(width: 1080, height: 760)))
+        .background(MainWindowSizeConfigurator(contentSize: CGSize(width: 1080, height: 920)))
     }
 }
 
@@ -8551,7 +8613,7 @@ struct WindowActivationObserver: NSViewRepresentable {
 }
 
 struct MainWindowSizeConfigurator: NSViewRepresentable {
-    var minimumSize: CGSize
+    var contentSize: CGSize
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
@@ -8572,23 +8634,50 @@ struct MainWindowSizeConfigurator: NSViewRepresentable {
             return
         }
 
-        window.contentMinSize = minimumSize
-        let contentSize = window.contentView?.bounds.size ?? .zero
-        guard contentSize.width < minimumSize.width || contentSize.height < minimumSize.height else {
+        let screenVisibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame
+        let visibleContentSize = screenVisibleFrame.map { CGSize(width: max(720, $0.width - 32), height: max(640, $0.height - 32)) } ?? contentSize
+        let minimumWindowContentSize = CGSize(
+            width: min(contentSize.width, visibleContentSize.width),
+            height: min(contentSize.height, visibleContentSize.height)
+        )
+
+        window.contentMinSize = CGSize(width: 720, height: 640)
+
+        let currentContentSize = window.contentView?.bounds.size ?? .zero
+        guard currentContentSize.width < minimumWindowContentSize.width || currentContentSize.height < minimumWindowContentSize.height else {
+            clamp(window: window)
             return
         }
 
-        let frameSize = window.frameRect(forContentRect: CGRect(origin: .zero, size: minimumSize)).size
+        let frameSize = window.frameRect(forContentRect: CGRect(origin: .zero, size: minimumWindowContentSize)).size
         var frame = window.frame
         frame.size.width = max(frame.width, frameSize.width)
         frame.size.height = max(frame.height, frameSize.height)
 
-        if let screen = window.screen ?? NSScreen.main {
-            let visibleFrame = screen.visibleFrame
-            frame.origin.x = min(max(frame.origin.x, visibleFrame.minX), visibleFrame.maxX - frame.width)
-            frame.origin.y = min(max(frame.origin.y, visibleFrame.minY), visibleFrame.maxY - frame.height)
+        if let visibleFrame = screenVisibleFrame {
+            let maxFrameWidth = max(720, visibleFrame.width - 16)
+            let maxFrameHeight = max(640, visibleFrame.height - 16)
+            frame.size.width = min(frame.width, maxFrameWidth)
+            frame.size.height = min(frame.height, maxFrameHeight)
+            frame.origin.x = visibleFrame.minX + max(0, (visibleFrame.width - frame.width) / 2)
+            frame.origin.y = visibleFrame.minY + max(0, (visibleFrame.height - frame.height) / 2)
         }
 
+        window.setFrame(frame, display: true)
+    }
+
+    private func clamp(window: NSWindow) {
+        guard let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame else {
+            return
+        }
+
+        var frame = window.frame
+        let maxFrameWidth = max(720, visibleFrame.width - 16)
+        let maxFrameHeight = max(640, visibleFrame.height - 16)
+        frame.size.width = min(frame.width, maxFrameWidth)
+        frame.size.height = min(frame.height, maxFrameHeight)
+        frame.origin.x = min(max(frame.origin.x, visibleFrame.minX + 8), visibleFrame.maxX - frame.width - 8)
+        frame.origin.y = min(max(frame.origin.y, visibleFrame.minY + 8), visibleFrame.maxY - frame.height - 8)
         window.setFrame(frame, display: true)
     }
 }
@@ -9002,10 +9091,6 @@ struct VoiceDocumentWindow: View {
                     )
                 }
 
-                VoiceDocumentLiveKeyboardView(document: document, device: device)
-                    .frame(width: 760)
-                    .frame(maxWidth: .infinity, alignment: .center)
-
                 DocumentStatusFooter(errorMessage: document.errorMessage, statusMessage: document.statusMessage, isBusy: document.isBusy)
             }
             .padding(18)
@@ -9062,6 +9147,30 @@ struct VoiceDocumentWindow: View {
             save: { document.save() },
             onClose: closeDocument
         ))
+        .background(WindowActivationObserver(
+            onBecomeKey: {
+                registerLiveKeyboardContext()
+                document.scheduleKeyboardVoicePreparation(device: device)
+            },
+            onResignKey: {}
+        ))
+        .onAppear {
+            registerLiveKeyboardContext()
+            document.scheduleKeyboardVoicePreparation(device: device)
+        }
+        .onDisappear {
+            device.setExternalKeyboardDocumentHandler(nil)
+        }
+        .onChange(of: document.voice) {
+            registerLiveKeyboardContext()
+            document.scheduleKeyboardVoicePreparation(device: device)
+        }
+        .onChange(of: device.keyboardChannel) {
+            document.scheduleKeyboardVoicePreparation(device: device)
+        }
+        .onChange(of: device.selectedDestinationIndex) {
+            document.scheduleKeyboardVoicePreparation(device: device)
+        }
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
             save: { document.save() },
             saveTitle: "Save Voice to File",
@@ -9085,6 +9194,27 @@ struct VoiceDocumentWindow: View {
     private func setName(_ value: String) {
         document.setName(value)
     }
+
+    private func registerLiveKeyboardContext() {
+        device.setLiveKeyboardContext(
+            title: voice.name.isEmpty ? "Live Keyboard" : "Live Keyboard - \(voice.name)",
+            subtitle: "Document voice",
+            noteOn: { [weak document, weak device] note in
+                guard let document, let device else { return }
+                document.sendKeyboardNote(note, isOn: true, device: device)
+            },
+            noteOff: { [weak document, weak device] note in
+                guard let document, let device else { return }
+                document.sendKeyboardNote(note, isOn: false, device: device)
+            }
+        )
+        device.setExternalKeyboardDocumentHandler { [weak document, weak device] message in
+            guard let document, let device else {
+                return false
+            }
+            return document.receiveExternalKeyboardMessage(message, device: device)
+        }
+    }
 }
 
 struct ConfigurationDocumentWindow: View {
@@ -9100,14 +9230,6 @@ struct ConfigurationDocumentWindow: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(configuration.name.isEmpty ? "Untitled Configuration" : configuration.name)
-                            .font(.title2.weight(.semibold))
-                        Text(document.fileURL?.path ?? "New configuration document")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
                     Spacer()
                     Text(document.isEdited ? "Edited" : "Saved")
                         .font(.caption.weight(.medium))
@@ -9115,14 +9237,6 @@ struct ConfigurationDocumentWindow: View {
                 }
 
                 DocumentMIDIContextView(device: device, documentSystemChannel: document.systemChannel)
-
-                SummaryPanel(rows: [
-                    KeyValueRow("Name", configuration.name),
-                    KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
-                    KeyValueRow("Combine", configuration.combineModeEnabled ? "On" : "Off"),
-                    KeyValueRow("Key-Code Mode", configuration.keyCodeReceiveMode.displayName),
-                    KeyValueRow("LFO", "Speed \(configuration.lfoSpeed), AMD \(configuration.amplitudeModulationDepth), PMD \(configuration.pitchModulationDepth), Waveform \(configuration.lfoWaveform.lfoWaveformDisplayName)"),
-                ])
 
                 ConfigurationEditorControls(
                     name: Binding(
@@ -9166,8 +9280,6 @@ struct ConfigurationDocumentWindow: View {
                         document.updateConfiguration { try $0.replacingInstrument(instrument) }
                     }
                 )
-
-                ConfigurationDocumentLiveKeyboardView(device: device)
 
                 DocumentStatusFooter(errorMessage: document.errorMessage, statusMessage: document.statusMessage, isBusy: document.isBusy)
             }
@@ -9225,6 +9337,18 @@ struct ConfigurationDocumentWindow: View {
             save: { document.save() },
             onClose: closeDocument
         ))
+        .background(WindowActivationObserver(
+            onBecomeKey: {
+                registerLiveKeyboardContext()
+            },
+            onResignKey: {}
+        ))
+        .onAppear {
+            registerLiveKeyboardContext()
+        }
+        .onDisappear {
+            device.setExternalKeyboardDocumentHandler(nil)
+        }
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
             save: { document.save() },
             saveTitle: "Save Configuration to File",
@@ -9247,6 +9371,22 @@ struct ConfigurationDocumentWindow: View {
 
     private func setName(_ value: String) {
         document.setName(value)
+    }
+
+    private func registerLiveKeyboardContext() {
+        device.setLiveKeyboardContext(
+            title: "Live Keyboard",
+            subtitle: "Configuration performance",
+            noteOn: { [weak device] note in
+                device?.sendKeyboardNoteWithoutVoicePreparation(note, isOn: true)
+            },
+            noteOff: { [weak device] note in
+                device?.sendKeyboardNoteWithoutVoicePreparation(note, isOn: false)
+            }
+        )
+        device.setExternalKeyboardDocumentHandler { [weak device] message in
+            device?.receiveExternalKeyboardPerformanceMessage(message) ?? false
+        }
     }
 }
 
@@ -9526,14 +9666,6 @@ struct ConfigurationEditorControls: View {
             }
 
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 16) {
-                    identityControls
-                    receiveAndWaveformControls
-                }
-                lfoAndModulationControls
-            }
-
-            VStack(alignment: .leading, spacing: 14) {
                 identityControls
                 receiveAndWaveformControls
                 lfoAndModulationControls
@@ -9560,7 +9692,7 @@ struct ConfigurationEditorControls: View {
         } label: {
             SectionTitle("Identity")
         }
-        .frame(minWidth: 250, maxWidth: 280, alignment: .topLeading)
+        .frame(width: 220, height: 132, alignment: .topLeading)
     }
 
     private var receiveAndWaveformControls: some View {
@@ -9588,7 +9720,7 @@ struct ConfigurationEditorControls: View {
         } label: {
             SectionTitle("Receive and Waveform")
         }
-        .frame(minWidth: 370, maxWidth: 390, alignment: .topLeading)
+        .frame(width: 370, height: 132, alignment: .topLeading)
     }
 
     private var lfoAndModulationControls: some View {
@@ -9602,7 +9734,7 @@ struct ConfigurationEditorControls: View {
         } label: {
             SectionTitle("LFO and Modulation")
         }
-        .frame(minWidth: 290, maxWidth: 330, alignment: .topLeading)
+        .frame(width: 330, height: 132, alignment: .topLeading)
     }
 
     private func label(_ text: String) -> some View {
@@ -9627,9 +9759,10 @@ struct ConfigurationInstrumentEditor: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionTitle("Instruments")
 
-            HStack(alignment: .top, spacing: 14) {
-                VStack(spacing: 8) {
-                    ForEach(instruments, id: \.index) { instrument in
+            VStack(alignment: .leading, spacing: 14) {
+                LazyVGrid(columns: instrumentColumns, alignment: .leading, spacing: 10) {
+                    ForEach(0..<min(instruments.count, 8), id: \.self) { index in
+                        let instrument = instruments[index]
                         ConfigurationInstrumentSelectorButton(
                             instrument: instrument,
                             voiceName: voiceName(instrument),
@@ -9637,9 +9770,9 @@ struct ConfigurationInstrumentEditor: View {
                         ) {
                             selectedInstrumentIndex = instrument.index
                         }
+                        .frame(minWidth: 164, maxWidth: .infinity)
                     }
                 }
-                .frame(width: 150)
 
                 VStack(alignment: .leading, spacing: 10) {
                     if let selectedInstrument {
@@ -9652,6 +9785,12 @@ struct ConfigurationInstrumentEditor: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .padding(12)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
         }
         .onChange(of: instruments) { _, newInstruments in
             guard !newInstruments.contains(where: { $0.index == selectedInstrumentIndex }) else {
@@ -9659,6 +9798,10 @@ struct ConfigurationInstrumentEditor: View {
             }
             selectedInstrumentIndex = newInstruments.first?.index ?? 0
         }
+    }
+
+    private var instrumentColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(minimum: 164), spacing: 10), count: 4)
     }
 }
 
@@ -9680,7 +9823,7 @@ struct ConfigurationInstrumentSelectorButton: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text("MIDI \(instrument.midiChannel + 1), Voice \(instrument.voiceBank)/\(instrument.voiceNumber)")
+                Text("MIDI \(instrument.midiChannel + 1), Notes \(instrument.noteCount), Voice \(instrument.voiceBank)/\(instrument.voiceNumber)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -9696,16 +9839,22 @@ struct ConfigurationInstrumentSelectorButton: View {
                         .lineLimit(1)
                 }
 
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(Color.secondary.opacity(0.18))
-                        Capsule()
-                            .fill(Color.green)
-                            .frame(width: proxy.size.width * CGFloat(instrument.outputLevel) / 127)
+                HStack(spacing: 6) {
+                    Text("Lvl")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    GeometryReader { proxy in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color.secondary.opacity(0.18))
+                            Capsule()
+                                .fill(Color.green)
+                                .frame(width: proxy.size.width * CGFloat(displayedOutputLevel) / 127)
+                        }
                     }
+                    .frame(height: 5)
                 }
-                .frame(height: 5)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -9719,6 +9868,10 @@ struct ConfigurationInstrumentSelectorButton: View {
             )
         }
         .buttonStyle(.plain)
+    }
+
+    private var displayedOutputLevel: Int {
+        instrument.noteCount == 0 ? 0 : instrument.outputLevel
     }
 }
 
@@ -9746,7 +9899,13 @@ struct ConfigurationInstrumentInspector: View {
 
             OperatorControlGroup(title: "Key Range") {
                 HStack(alignment: .top, spacing: 12) {
-                    instrumentKnob("Active Notes", value: instrument.noteCount, range: 0...8) { try instrument.settingNoteCount($0) }
+                    instrumentKnob("Active Notes", value: instrument.noteCount, range: 0...8) { newValue in
+                        let updated = try instrument.settingNoteCount(newValue)
+                        if instrument.noteCount == 0, newValue > 0, updated.outputLevel == 0 {
+                            return try updated.settingOutputLevel(127)
+                        }
+                        return updated
+                    }
                     instrumentKnob("Low Key", value: instrument.lowKeyLimit, range: 0...127) { try instrument.settingLowKeyLimit($0) }
                     instrumentKnob("High Key", value: instrument.highKeyLimit, range: 0...127) { try instrument.settingHighKeyLimit($0) }
                 }
@@ -9754,7 +9913,7 @@ struct ConfigurationInstrumentInspector: View {
 
             OperatorControlGroup(title: "Output") {
                 HStack(alignment: .top, spacing: 12) {
-                    instrumentKnob("Level", value: instrument.outputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
+                    instrumentKnob("Level", value: displayedOutputLevel, range: 0...127) { try instrument.settingOutputLevel($0) }
                     instrumentKnob(
                         "Stereo Pan",
                         value: centeredPanValue(forRawPan: instrument.pan),
@@ -9824,6 +9983,10 @@ struct ConfigurationInstrumentInspector: View {
                 }
             }
         )
+    }
+
+    private var displayedOutputLevel: Int {
+        instrument.noteCount == 0 ? 0 : instrument.outputLevel
     }
 
     private func instrumentKnob(
@@ -11046,7 +11209,11 @@ private struct FMPatchBayCanvas: View {
                         select: { selectedOperatorIndex = operatorData.index },
                         updateOperator: updateOperator
                     )
-                    .frame(width: FMPatchBayLayout.moduleSize.width)
+                    .frame(
+                        width: FMPatchBayLayout.moduleSize.width,
+                        height: FMPatchBayLayout.moduleSize.height,
+                        alignment: .topLeading
+                    )
                     .position(
                         x: origin.x + FMPatchBayLayout.moduleSize.width / 2,
                         y: origin.y + FMPatchBayLayout.moduleSize.height / 2
@@ -11205,7 +11372,11 @@ struct FMPatchOperatorModule: View {
             }
         }
         .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(
+            width: FMPatchBayLayout.moduleSize.width,
+            height: FMPatchBayLayout.moduleSize.height,
+            alignment: .topLeading
+        )
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(moduleFill)
@@ -11223,38 +11394,41 @@ struct FMPatchOperatorModule: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
-            LazyVGrid(columns: [
-                GridItem(.flexible(minimum: 70), spacing: 6),
-                GridItem(.flexible(minimum: 70), spacing: 6),
-                GridItem(.flexible(minimum: 70), spacing: 6),
-                GridItem(.flexible(minimum: 70), spacing: 6),
-            ], alignment: .leading, spacing: 6) {
-                ForEach(FMOperatorTimbreMacro.allCases) { macro in
-                    Button {
-                        applyTimbreMacro(macro)
-                    } label: {
-                        Text(macro.title)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(operatorEnabled ? Color.primary : Color.secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 5)
-                                    .fill(operatorEnabled ? Color.green.opacity(0.14) : Color.secondary.opacity(0.08))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 5)
-                                    .stroke(operatorEnabled ? Color.green.opacity(0.45) : Color.secondary.opacity(0.16), lineWidth: 1)
-                            )
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(FMOperatorTimbreMacro.rows.indices, id: \.self) { rowIndex in
+                    HStack(spacing: 6) {
+                        ForEach(FMOperatorTimbreMacro.rows[rowIndex]) { macro in
+                            timbreMacroButton(macro)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!operatorEnabled)
-                    .help(macro.help)
                 }
             }
         }
+    }
+
+    private func timbreMacroButton(_ macro: FMOperatorTimbreMacro) -> some View {
+        Button {
+            applyTimbreMacro(macro)
+        } label: {
+            Text(macro.title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(operatorEnabled ? Color.primary : Color.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .frame(width: 84, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(operatorEnabled ? Color.green.opacity(0.14) : Color.secondary.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(operatorEnabled ? Color.green.opacity(0.45) : Color.secondary.opacity(0.16), lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!operatorEnabled)
+        .help(macro.help)
     }
 
     private var editableOperatorEnabled: Binding<Bool> {
@@ -11315,6 +11489,11 @@ enum FMOperatorTimbreMacro: String, CaseIterable, Identifiable {
     case percussive
 
     var id: String { rawValue }
+
+    static let rows: [[FMOperatorTimbreMacro]] = [
+        [.pure, .soft, .hollow, .bright],
+        [.buzz, .metallic, .bell, .percussive],
+    ]
 
     var title: String {
         switch self {
