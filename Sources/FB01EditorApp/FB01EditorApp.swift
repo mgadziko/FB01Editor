@@ -3850,7 +3850,7 @@ final class DocumentModel: ObservableObject {
         statusMessage = "\(reason) from \(sourceName) -> \(destinationName)..."
         errorMessage = nil
         let progressPanel = EditorProgressPanel(
-            title: "Reading FB-01 Device Cache",
+            title: "Fetching FB-01 Device Cache",
             message: "The FB-01 voice banks and configurations are being cached. Please wait."
         )
         progressPanel.show()
@@ -10459,8 +10459,8 @@ struct ConfigurationInstrumentInspector: View {
                     range: -63...63,
                     displayText: stereoPanDisplayText
                 ) { try instrument.settingPan(rawPanValue(forCenteredPan: $0)) }
-                ParameterKnob(label: "PMD", value: $pitchModulationDepth, range: 0...127, width: 82, knobSize: 42)
-                menuControl(label: "PMD", width: 150, pickerCenterY: 53) {
+                ParameterKnob(label: "", value: $pitchModulationDepth, range: 0...127, width: 82, knobSize: 42)
+                pmdAssignmentMenu {
                     Picker("", selection: pmdBinding) {
                         Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
                         Text(FB01PMDControllerAssignment.afterTouch.displayName).tag(FB01PMDControllerAssignment.afterTouch)
@@ -10525,6 +10525,34 @@ struct ConfigurationInstrumentInspector: View {
                 }
             }
         )
+    }
+
+    private func pmdAssignmentMenu<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        ZStack(alignment: .topLeading) {
+            content()
+                .frame(width: 150)
+                .position(x: 75, y: 53)
+
+            HStack(spacing: 6) {
+                Rectangle()
+                    .fill(Color.primary)
+                    .opacity(0.85)
+                    .frame(width: 41, height: 1)
+
+                Text("PMD")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 34)
+
+                Rectangle()
+                    .fill(Color.primary)
+                    .opacity(0.85)
+                    .frame(width: 41, height: 1)
+            }
+            .frame(width: 128)
+            .position(x: 11, y: 96)
+        }
+        .frame(width: 150, height: 110)
     }
 
     private func menuControl<Content: View>(
