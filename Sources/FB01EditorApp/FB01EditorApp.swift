@@ -3436,6 +3436,9 @@ struct PreferencesView: View {
     var close: () -> Void
 
     @State private var voiceEditorParadigm: VoiceEditorParadigm
+    @State private var preCacheRAMVoiceBanksOnLaunch: Bool
+    @State private var preCacheROMVoiceBanksOnLaunch: Bool
+    @State private var preCacheConfigurationsOnLaunch: Bool
     @State private var preferredDeviceCount: Int
     @State private var devicePreferences: [FB01DevicePreference]
 
@@ -3443,6 +3446,9 @@ struct PreferencesView: View {
         self.document = document
         self.close = close
         _voiceEditorParadigm = State(initialValue: document.voiceEditorParadigm)
+        _preCacheRAMVoiceBanksOnLaunch = State(initialValue: document.preCacheRAMVoiceBanksOnLaunch)
+        _preCacheROMVoiceBanksOnLaunch = State(initialValue: document.preCacheROMVoiceBanksOnLaunch)
+        _preCacheConfigurationsOnLaunch = State(initialValue: document.preCacheConfigurationsOnLaunch)
         _preferredDeviceCount = State(initialValue: document.preferredDeviceCount)
         _devicePreferences = State(initialValue: document.devicePreferences)
     }
@@ -3468,6 +3474,22 @@ struct PreferencesView: View {
                         .padding(.top, 4)
                     } label: {
                         SectionTitle("Voice Editing")
+                    }
+
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Toggle("Pre-Cache RAM Banks 1-2 on launch", isOn: $preCacheRAMVoiceBanksOnLaunch)
+                            Toggle("Pre-Cache ROM Banks 3-7 on launch", isOn: $preCacheROMVoiceBanksOnLaunch)
+                            Toggle("Pre-Cache Configurations on launch", isOn: $preCacheConfigurationsOnLaunch)
+
+                            Text("These settings affect the automatic launch cache. Manual cache refreshes still read the full FB-01 library.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.top, 4)
+                    } label: {
+                        SectionTitle("Caching")
                     }
 
                     GroupBox {
@@ -3561,6 +3583,9 @@ struct PreferencesView: View {
 
     private func saveChanges() {
         document.setVoiceEditorParadigm(voiceEditorParadigm)
+        document.setPreCacheRAMVoiceBanksOnLaunch(preCacheRAMVoiceBanksOnLaunch)
+        document.setPreCacheROMVoiceBanksOnLaunch(preCacheROMVoiceBanksOnLaunch)
+        document.setPreCacheConfigurationsOnLaunch(preCacheConfigurationsOnLaunch)
         document.setPreferredDeviceCount(preferredDeviceCount)
         for preference in devicePreferences {
             document.setDeviceCommandChannel(index: preference.index, channel: preference.commandChannel)
@@ -3618,6 +3643,9 @@ final class DocumentModel: ObservableObject {
     @Published var systemMasterOutputLevel = 127
     @Published var systemDeviceStatus = "Not requested"
     @Published var voiceEditorParadigm: VoiceEditorParadigm = .fmRoutingPatchBay
+    @Published var preCacheRAMVoiceBanksOnLaunch = true
+    @Published var preCacheROMVoiceBanksOnLaunch = true
+    @Published var preCacheConfigurationsOnLaunch = true
     @Published var preferredDeviceCount = 1
     @Published var devicePreferences: [FB01DevicePreference] = []
     @Published var keyboardVelocity = 100
@@ -3661,6 +3689,9 @@ final class DocumentModel: ObservableObject {
         static let keyboardVelocity = "FB01Editor.keyboardVelocity"
         static let keyboardStartNote = "FB01Editor.keyboardStartNote"
         static let voiceEditorParadigm = "FB01Editor.voiceEditorParadigm"
+        static let preCacheRAMVoiceBanksOnLaunch = "FB01Editor.preCacheRAMVoiceBanksOnLaunch"
+        static let preCacheROMVoiceBanksOnLaunch = "FB01Editor.preCacheROMVoiceBanksOnLaunch"
+        static let preCacheConfigurationsOnLaunch = "FB01Editor.preCacheConfigurationsOnLaunch"
         static let preferredDeviceCount = "FB01Editor.preferredDeviceCount"
         static let recentLoadedVoiceFiles = "FB01Editor.recentLoadedVoiceFiles"
         static let recentFetchedVoices = "FB01Editor.recentFetchedVoices"
@@ -3694,6 +3725,15 @@ final class DocumentModel: ObservableObject {
            let paradigm = VoiceEditorParadigm(rawValue: rawParadigm) {
             voiceEditorParadigm = paradigm
         }
+        preCacheRAMVoiceBanksOnLaunch = UserDefaults.standard.object(forKey: DefaultsKey.preCacheRAMVoiceBanksOnLaunch) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: DefaultsKey.preCacheRAMVoiceBanksOnLaunch)
+        preCacheROMVoiceBanksOnLaunch = UserDefaults.standard.object(forKey: DefaultsKey.preCacheROMVoiceBanksOnLaunch) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: DefaultsKey.preCacheROMVoiceBanksOnLaunch)
+        preCacheConfigurationsOnLaunch = UserDefaults.standard.object(forKey: DefaultsKey.preCacheConfigurationsOnLaunch) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: DefaultsKey.preCacheConfigurationsOnLaunch)
         recentLoadedVoiceFiles = recentEditorItems(forKey: DefaultsKey.recentLoadedVoiceFiles)
         recentFetchedVoices = recentEditorItems(forKey: DefaultsKey.recentFetchedVoices)
         recentLoadedConfigurationFiles = recentEditorItems(forKey: DefaultsKey.recentLoadedConfigurationFiles)
@@ -3853,10 +3893,18 @@ final class DocumentModel: ObservableObject {
             return
         }
         hasStartedLaunchDeviceCacheRefresh = true
-        refreshDeviceCache(reason: "Reading FB-01 device cache")
+        refreshDeviceCache(
+            reason: "Fetching FB-01 device cache",
+            voiceBanksToFetch: voiceBanksToCacheOnLaunch(),
+            fetchConfigurations: preCacheConfigurationsOnLaunch
+        )
     }
 
-    func refreshDeviceCache(reason: String = "Refreshing device cache") {
+    func refreshDeviceCache(
+        reason: String = "Refreshing device cache",
+        voiceBanksToFetch requestedVoiceBanks: [Int] = Array(1...7),
+        fetchConfigurations: Bool = true
+    ) {
         guard !isBusy else {
             return
         }
@@ -3866,13 +3914,26 @@ final class DocumentModel: ObservableObject {
         let systemChannel = systemChannel
         let sourceName = selectedSourceName
         let destinationName = selectedDestinationName
+        let voiceBanksToFetch = requestedVoiceBanks
+            .filter { (1...7).contains($0) }
+            .sorted()
+        let cacheProgressText = cacheProgressText(
+            voiceBanks: voiceBanksToFetch,
+            fetchConfigurations: fetchConfigurations
+        )
+        guard !voiceBanksToFetch.isEmpty || fetchConfigurations else {
+            deviceCacheStatus = "Launch cache disabled"
+            statusMessage = "Launch device cache skipped by Preferences."
+            errorMessage = nil
+            return
+        }
         isFetchingFromDevice = true
         deviceCacheStatus = "\(reason)..."
         statusMessage = "\(reason) from \(sourceName) -> \(destinationName)..."
         errorMessage = nil
         let progressPanel = EditorProgressPanel(
             title: "Fetching FB-01 Device Cache",
-            message: "The FB-01 voice banks and configurations are being cached. Please wait."
+            message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait."
         )
         progressPanel.show()
 
@@ -3881,30 +3942,33 @@ final class DocumentModel: ObservableObject {
             var loadedConfigurations: [Int: FB01ConfigurationData] = [:]
             var loadedCurrentConfiguration: FB01ConfigurationData?
             var failures: [String] = []
-            let totalRequests = 28.0
+            let configurationRequestCount = fetchConfigurations ? 21 : 0
+            let totalRequests = Double(voiceBanksToFetch.count + configurationRequestCount)
             var completedRequests = 0.0
 
-            statusMessage = "\(reason): reading current configuration..."
-            progressPanel.update(
-                message: "The FB-01 voice banks and configurations are being cached. Please wait.\nReading current configuration...",
-                completed: completedRequests,
-                total: totalRequests
-            )
-            if let currentConfiguration = await Self.fetchCachedCurrentConfiguration(
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel
-            ) {
-                loadedCurrentConfiguration = currentConfiguration
-            } else {
-                failures.append("current configuration")
+            if fetchConfigurations {
+                statusMessage = "\(reason): reading current configuration..."
+                progressPanel.update(
+                    message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nReading current configuration...",
+                    completed: completedRequests,
+                    total: totalRequests
+                )
+                if let currentConfiguration = await Self.fetchCachedCurrentConfiguration(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                ) {
+                    loadedCurrentConfiguration = currentConfiguration
+                } else {
+                    failures.append("current configuration")
+                }
+                completedRequests += 1
             }
-            completedRequests += 1
 
-            for bank in 1...7 {
+            for bank in voiceBanksToFetch {
                 statusMessage = "\(reason): reading Voice Bank \(bank) of 7..."
                 progressPanel.update(
-                    message: "The FB-01 voice banks and configurations are being cached. Please wait.\nReading Voice Bank \(bank) of 7...",
+                    message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nReading Voice Bank \(bank)...",
                     completed: completedRequests,
                     total: totalRequests
                 )
@@ -3921,27 +3985,29 @@ final class DocumentModel: ObservableObject {
                 completedRequests += 1
             }
 
-            for slot in 1...20 {
-                statusMessage = "\(reason): reading Configuration \(slot) of 20..."
-                progressPanel.update(
-                    message: "The FB-01 voice banks and configurations are being cached. Please wait.\nReading Configuration \(slot) of 20...",
-                    completed: completedRequests,
-                    total: totalRequests
-                )
-                if let configuration = await Self.fetchCachedConfiguration(
-                    slot: slot,
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
-                ) {
-                    loadedConfigurations[slot] = configuration
-                } else {
-                    failures.append("Configuration \(slot)")
+            if fetchConfigurations {
+                for slot in 1...20 {
+                    statusMessage = "\(reason): reading Configuration \(slot) of 20..."
+                    progressPanel.update(
+                        message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nReading Configuration \(slot) of 20...",
+                        completed: completedRequests,
+                        total: totalRequests
+                    )
+                    if let configuration = await Self.fetchCachedConfiguration(
+                        slot: slot,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel
+                    ) {
+                        loadedConfigurations[slot] = configuration
+                    } else {
+                        failures.append("Configuration \(slot)")
+                    }
+                    completedRequests += 1
                 }
-                completedRequests += 1
             }
             progressPanel.update(
-                message: "The FB-01 voice banks and configurations are being cached. Please wait.\nFinishing cache update...",
+                message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nFinishing cache update...",
                 completed: totalRequests,
                 total: totalRequests
             )
@@ -3967,6 +4033,45 @@ final class DocumentModel: ObservableObject {
             errorMessage = nil
             progressPanel.dismiss()
             isFetchingFromDevice = false
+        }
+    }
+
+    private func voiceBanksToCacheOnLaunch() -> [Int] {
+        var banks: [Int] = []
+        if preCacheRAMVoiceBanksOnLaunch {
+            banks.append(contentsOf: 1...2)
+        }
+        if preCacheROMVoiceBanksOnLaunch {
+            banks.append(contentsOf: 3...7)
+        }
+        return banks
+    }
+
+    private func cacheProgressText(voiceBanks: [Int], fetchConfigurations: Bool) -> (subject: String, verb: String) {
+        var subjects: [(text: String, isPlural: Bool)] = []
+        if !voiceBanks.isEmpty {
+            subjects.append((voiceBankCacheDescription(for: voiceBanks), true))
+        }
+        if fetchConfigurations {
+            subjects.append(("FB-01 configurations", true))
+        }
+        if subjects.count == 1, let subject = subjects.first {
+            return (subject.text, subject.isPlural ? "are" : "is")
+        }
+        return ("selected FB-01 cache items", "are")
+    }
+
+    private func voiceBankCacheDescription(for banks: [Int]) -> String {
+        let sortedBanks = banks.sorted()
+        switch sortedBanks {
+        case Array(1...2):
+            return "FB-01 RAM voice banks 1-2"
+        case Array(3...7):
+            return "FB-01 ROM voice banks 3-7"
+        case Array(1...7):
+            return "FB-01 voice banks 1-7"
+        default:
+            return "FB-01 voice banks \(sortedBanks.map(String.init).joined(separator: ", "))"
         }
     }
 
@@ -4283,6 +4388,21 @@ final class DocumentModel: ObservableObject {
     func setVoiceEditorParadigm(_ paradigm: VoiceEditorParadigm) {
         voiceEditorParadigm = paradigm
         UserDefaults.standard.set(paradigm.rawValue, forKey: DefaultsKey.voiceEditorParadigm)
+    }
+
+    func setPreCacheRAMVoiceBanksOnLaunch(_ enabled: Bool) {
+        preCacheRAMVoiceBanksOnLaunch = enabled
+        UserDefaults.standard.set(enabled, forKey: DefaultsKey.preCacheRAMVoiceBanksOnLaunch)
+    }
+
+    func setPreCacheROMVoiceBanksOnLaunch(_ enabled: Bool) {
+        preCacheROMVoiceBanksOnLaunch = enabled
+        UserDefaults.standard.set(enabled, forKey: DefaultsKey.preCacheROMVoiceBanksOnLaunch)
+    }
+
+    func setPreCacheConfigurationsOnLaunch(_ enabled: Bool) {
+        preCacheConfigurationsOnLaunch = enabled
+        UserDefaults.standard.set(enabled, forKey: DefaultsKey.preCacheConfigurationsOnLaunch)
     }
 
     func rememberRecentLoadedVoiceFile(_ url: URL) {
@@ -11590,10 +11710,9 @@ struct FMRoutingPatchBayView: View {
 
     private var algorithmChooser: some View {
         OperatorControlGroup(title: "Algorithm") {
-            GreenNumberSegmentedPicker(selection: $algorithm, values: Array(1...8))
-            .frame(width: 420)
+            CompactAlgorithmSelectorView(selection: $algorithm)
         }
-        .frame(width: 500, alignment: .center)
+        .frame(width: 650, alignment: .center)
     }
 
     private var modulationPanel: some View {
@@ -11666,7 +11785,7 @@ private struct FMPatchBayLayout {
     let outputPoint: CGPoint
     let feedbackControlCenter: CGPoint
 
-    static let moduleSize = CGSize(width: 390, height: 980)
+    static let moduleSize = CGSize(width: 390, height: 1240)
     static let margin: CGFloat = 170
     static let horizontalGap: CGFloat = 96
     static let verticalGap: CGFloat = 120
@@ -12025,46 +12144,67 @@ struct FMPatchOperatorModule: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: select)
 
-            LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127)
-                ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15)
-                ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
+            operatorSection(
+                title: "Oscillator",
+                subtitle: "Pitch and frequency source."
+            ) {
+                LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
+                    ParameterKnob(label: "OSC FRQ Multiplier", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15)
+                    ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7)
+                    ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3)
+                }
             }
 
-            keyboardScalingControls
+            operatorSection(
+                title: amplifierTitle,
+                subtitle: operatorData.carrier ? "Audible output loudness." : "Modulation strength and timbre intensity."
+            ) {
+                LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
+                    ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127)
+                    ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15)
+                    ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
+                    ParameterKnob(label: "Keyboard Level\nDepth", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15)
+                }
+
+                keyLevelScalingTypeControl
+            }
 
             timbreMacroSection
 
-            OperatorEnvelopeView(
-                operatorData: operatorData,
-                updateOperator: { updatedOperator in
-                    guard operatorEnabled else {
-                        return
+            operatorSection(
+                title: "Envelope",
+                subtitle: "Time shape of the operator amplifier."
+            ) {
+                OperatorEnvelopeView(
+                    operatorData: operatorData,
+                    updateOperator: { updatedOperator in
+                        guard operatorEnabled else {
+                            return
+                        }
+                        updateOperator(updatedOperator)
                     }
-                    updateOperator(updatedOperator)
+                )
+                .frame(height: 82)
+                .allowsHitTesting(operatorEnabled)
+
+                LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
+                    ParameterKnob(label: "Attack", value: operatorBinding({ $0.attackRate }, update: { try $0.settingAttackRate($1) }), range: 0...31)
+                    ParameterKnob(label: "Vel to Attack", value: operatorBinding({ $0.velocitySensitivityForAttackRate }, update: { try $0.settingVelocitySensitivityForAttackRate($1) }), range: 0...7)
+                    ParameterKnob(label: "Decay 1", value: operatorBinding({ $0.decay1Rate }, update: { try $0.settingDecay1Rate($1) }), range: 0...15)
+                    ParameterKnob(label: "Decay 2", value: operatorBinding({ $0.decay2Rate }, update: { try $0.settingDecay2Rate($1) }), range: 0...31)
+                    ParameterKnob(label: "Sustain", value: operatorBinding({ $0.sustainLevel }, update: { try $0.settingSustainLevel($1) }), range: 0...15)
+                    ParameterKnob(label: "Release", value: operatorBinding({ $0.releaseRate }, update: { try $0.settingReleaseRate($1) }), range: 0...15)
                 }
-            )
-            .frame(height: 82)
-            .allowsHitTesting(operatorEnabled)
-
-            LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                ParameterKnob(label: "Attack", value: operatorBinding({ $0.attackRate }, update: { try $0.settingAttackRate($1) }), range: 0...31)
-                ParameterKnob(label: "Vel to Attack", value: operatorBinding({ $0.velocitySensitivityForAttackRate }, update: { try $0.settingVelocitySensitivityForAttackRate($1) }), range: 0...7)
-                ParameterKnob(label: "Decay 1", value: operatorBinding({ $0.decay1Rate }, update: { try $0.settingDecay1Rate($1) }), range: 0...15)
-                ParameterKnob(label: "Decay 2", value: operatorBinding({ $0.decay2Rate }, update: { try $0.settingDecay2Rate($1) }), range: 0...31)
-                ParameterKnob(label: "Sustain", value: operatorBinding({ $0.sustainLevel }, update: { try $0.settingSustainLevel($1) }), range: 0...15)
-                ParameterKnob(label: "Release", value: operatorBinding({ $0.releaseRate }, update: { try $0.settingReleaseRate($1) }), range: 0...15)
             }
 
-            LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                ParameterKnob(label: "OSC FRQ Multiplier", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15)
-                ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7)
-                ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3)
-            }
-
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 20) {
+                Spacer()
                 RockerSwitch(label: "Enabled", isOn: editableOperatorEnabled, width: 82, height: 58)
+                ParameterKnob(label: "Keyboard Rate\nScaling Depth", value: operatorBinding({ $0.keyboardRateScalingDepth }, update: { try $0.settingKeyboardRateScalingDepth($1) }), range: 0...7)
+                Spacer()
             }
+            .padding(.top, 8)
+            .padding(.bottom, 20)
         }
         .padding(12)
         .frame(
@@ -12083,29 +12223,27 @@ struct FMPatchOperatorModule: View {
         .contentShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var keyboardScalingControls: some View {
-        HStack(alignment: .top, spacing: 12) {
-            ParameterKnob(label: "Keyboard Level\nDepth", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15)
-            ParameterKnob(label: "Keyboard Rate\nScaling Depth", value: operatorBinding({ $0.keyboardRateScalingDepth }, update: { try $0.settingKeyboardRateScalingDepth($1) }), range: 0...7)
+    private var amplifierTitle: String {
+        operatorData.carrier ? "Amplifier - Volume Level" : "Amplifier - Modulation Level"
+    }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Keyboard Level\nScaling Type")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+    private var keyLevelScalingTypeControl: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Keyboard Level\nScaling Type")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
 
-                GreenNumberSegmentedPicker(selection: keyLevelScalingTypeBinding, values: Array(0...3))
-                    .frame(width: 148)
-            }
+            GreenNumberSegmentedPicker(selection: keyLevelScalingTypeBinding, values: Array(0...3))
+                .frame(width: 148)
         }
     }
 
     private var timbreMacroSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Timbre Macro")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
+        operatorSection(
+            title: "Timbre Macro",
+            subtitle: "Quick amplifier and envelope recipes."
+        ) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(FMOperatorTimbreMacro.rows.indices, id: \.self) { rowIndex in
                     HStack(spacing: 6) {
@@ -12116,6 +12254,36 @@ struct FMPatchOperatorModule: View {
                 }
             }
         }
+    }
+
+    private func operatorSection<Content: View>(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Color.blue)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.85)
+            }
+            content()
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.secondary.opacity(0.12), lineWidth: 1)
+        )
     }
 
     private func timbreMacroButton(_ macro: FMOperatorTimbreMacro) -> some View {
@@ -12357,6 +12525,7 @@ struct WaveformPicker: View {
             .frame(minWidth: 78)
             .padding(.vertical, 4)
             .background(isSelected ? Color.green : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+            .contentShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
     }
@@ -12510,6 +12679,60 @@ struct AlgorithmSelectorView: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(selection == algorithm ? Color.green : Color.secondary.opacity(0.18), lineWidth: selection == algorithm ? 1.5 : 1)
             )
+        }
+        .buttonStyle(.plain)
+        .help("Algorithm \(algorithm)")
+    }
+}
+
+struct CompactAlgorithmSelectorView: View {
+    @Binding var selection: Int
+
+    var body: some View {
+        VStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(1...5, id: \.self) { algorithm in
+                    algorithmButton(algorithm, cardWidth: 112, diagramWidth: 92)
+                }
+            }
+
+            HStack(alignment: .top, spacing: 8) {
+                ForEach(6...8, id: \.self) { algorithm in
+                    algorithmButton(algorithm, cardWidth: 184, diagramWidth: 162)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private func algorithmButton(_ algorithm: Int, cardWidth: CGFloat, diagramWidth: CGFloat) -> some View {
+        let isSelected = selection == algorithm
+        return Button {
+            selection = algorithm
+        } label: {
+            VStack(spacing: 5) {
+                AlgorithmDiagramView(algorithm: algorithm, isSelected: isSelected)
+                    .frame(width: diagramWidth, height: 96)
+
+                HStack(spacing: 4) {
+                    Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                        .imageScale(.small)
+                    Text("\(algorithm)")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(isSelected ? .green : .secondary)
+            }
+            .padding(6)
+            .frame(width: cardWidth)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.green.opacity(0.12) : Color.secondary.opacity(0.07))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isSelected ? Color.green : Color.secondary.opacity(0.18), lineWidth: isSelected ? 1.5 : 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .help("Algorithm \(algorithm)")
