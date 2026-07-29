@@ -130,26 +130,27 @@ struct RockerSwitch: View {
     var height: CGFloat = 68
 
     var body: some View {
-        Button {
-            isOn.toggle()
-        } label: {
-            VStack(spacing: 5) {
-                RockerSwitchFace(isOn: isOn)
-                    .frame(width: width * 0.72, height: height)
+        VStack(spacing: 5) {
+            RockerSwitchFace(isOn: isOn)
+                .frame(width: width * 0.72, height: height)
 
-                Text(label)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.75)
-                    .frame(width: width, height: 28, alignment: .top)
-            }
-            .frame(width: width)
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.75)
+                .frame(width: width, height: 28, alignment: .top)
         }
-        .buttonStyle(.plain)
+        .frame(width: width, height: height + 33, alignment: .top)
+        .fixedSize()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isOn.toggle()
+        }
         .accessibilityLabel(label)
         .accessibilityValue(isOn ? "On" : "Off")
+        .accessibilityAddTraits(.isButton)
         .help("\(label): \(isOn ? "On" : "Off")")
     }
 }

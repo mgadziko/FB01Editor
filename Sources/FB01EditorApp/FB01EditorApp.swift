@@ -199,7 +199,7 @@ private final class DeviceVoiceCopyAccessory: NSView {
     }
 }
 
-private let keyboardPreparationStaleAfter: TimeInterval = 10
+private let keyboardPreparationStaleAfter: TimeInterval = 300
 private let keyboardPreparationSettleDelay: TimeInterval = 0.30
 private let voiceBankNameFetchTimeout: TimeInterval = 25
 
@@ -1516,6 +1516,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var statusMessage: String?
     @Published var isBusy = false
     @Published var selectedOperatorIndex = FB01VoiceData.dataIndex(forOperatorNumber: 1)
+    @Published var layoutRevision = 0
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
@@ -1541,6 +1542,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func reset() {
         voice = savedVoice
+        noteVoiceReplacement()
         errorMessage = nil
         statusMessage = "Reverted to last saved version."
     }
@@ -1646,6 +1648,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             savedVoice = importedVoice
             systemChannel = importedSystemChannel
             fileURL = url
+            noteVoiceReplacement()
             rememberEditorLoadDirectory(for: url)
             statusMessage = "Imported \(url.lastPathComponent)."
             errorMessage = nil
@@ -1719,6 +1722,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 savedVoice = cachedResult.voice
                 self.systemChannel = cachedResult.systemChannel
                 fileURL = nil
+                noteVoiceReplacement()
                 let fetchedName = cachedResult.voice.name.isEmpty ? "Untitled" : cachedResult.voice.name
                 statusMessage = "Fetched \(fetchedName) from cached \(cachedResult.title) into this document."
                 device.rememberRecentFetchedVoice(source, title: cachedResult.title)
@@ -1742,6 +1746,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 savedVoice = result.voice
                 self.systemChannel = result.systemChannel
                 fileURL = nil
+                noteVoiceReplacement()
                 let fetchedName = result.voice.name.isEmpty ? "Untitled" : result.voice.name
                 statusMessage = "Fetched \(fetchedName) from \(fetchTitle) into this document."
                 device.rememberRecentFetchedVoice(source, title: fetchTitle)
@@ -1767,6 +1772,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         savedVoice = payload.voice
         systemChannel = payload.systemChannel
         fileURL = nil
+        noteVoiceReplacement()
         preparedKeyboardVoiceSignature = nil
         statusMessage = "Imported selected library voice into this document."
         errorMessage = nil
@@ -2041,6 +2047,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             try artifact.writeSysEx(to: url)
             if savedPayload != voice {
                 voice = savedPayload
+                noteVoiceReplacement()
                 preparedKeyboardVoiceSignature = nil
                 preparedKeyboardVoiceDate = nil
             }
@@ -2082,6 +2089,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private func markKeyboardPrepared(signature: String) {
         preparedKeyboardVoiceSignature = signature
         preparedKeyboardVoiceDate = Date()
+    }
+
+    private func noteVoiceReplacement() {
+        layoutRevision &+= 1
+        preparedKeyboardVoiceSignature = nil
+        preparedKeyboardVoiceDate = nil
     }
 
     private var isKeyboardPreparationStale: Bool {
@@ -9072,6 +9085,71 @@ struct WindowActivationObserver: NSViewRepresentable {
     }
 }
 
+struct VoiceDocumentLayoutInvalidator: NSViewRepresentable {
+    var token: Int
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        PassthroughLayoutInvalidationView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard context.coordinator.lastToken != token else {
+            return
+        }
+        context.coordinator.lastToken = token
+
+        DispatchQueue.main.async {
+            invalidateLayout(from: nsView)
+        }
+    }
+
+    private func invalidateLayout(from nsView: NSView) {
+        var current: NSView? = nsView
+        while let view = current {
+            view.needsLayout = true
+            view.needsDisplay = true
+            current = view.superview
+        }
+
+        if let scrollView = enclosingScrollView(for: nsView) {
+            scrollView.needsLayout = true
+            scrollView.documentView?.needsLayout = true
+            scrollView.contentView.needsLayout = true
+            scrollView.documentView?.layoutSubtreeIfNeeded()
+            scrollView.contentView.layoutSubtreeIfNeeded()
+        }
+
+        nsView.window?.contentView?.needsLayout = true
+        nsView.window?.contentView?.layoutSubtreeIfNeeded()
+        nsView.window?.contentView?.displayIfNeeded()
+    }
+
+    private func enclosingScrollView(for nsView: NSView) -> NSScrollView? {
+        var current: NSView? = nsView
+        while let view = current {
+            if let scrollView = view as? NSScrollView {
+                return scrollView
+            }
+            current = view.superview
+        }
+        return nil
+    }
+
+    final class Coordinator {
+        var lastToken: Int?
+    }
+}
+
+private final class PassthroughLayoutInvalidationView: NSView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
 struct MainWindowSizeConfigurator: NSViewRepresentable {
     var contentSize: CGSize
 
@@ -9362,6 +9440,14 @@ struct VoiceDocumentWindow: View {
         document.voice
     }
 
+    private var layoutInvalidationToken: Int {
+        var hasher = Hasher()
+        hasher.combine(document.layoutRevision)
+        hasher.combine(device.voiceEditorParadigm)
+        hasher.combine(document.isBusy)
+        return hasher.finalize()
+    }
+
     var body: some View {
         ScrollView([.horizontal, .vertical]) {
             VStack(alignment: .leading, spacing: 14) {
@@ -9555,6 +9641,7 @@ struct VoiceDocumentWindow: View {
             }
             .padding(18)
             .frame(minWidth: device.voiceEditorParadigm == .fmRoutingPatchBay ? 980 : 0, maxWidth: .infinity, alignment: .leading)
+            .id(document.layoutRevision)
         }
         .navigationTitle("Voice - \(document.title)")
         .toolbar {
@@ -9614,6 +9701,7 @@ struct VoiceDocumentWindow: View {
             },
             onResignKey: {}
         ))
+        .background(VoiceDocumentLayoutInvalidator(token: layoutInvalidationToken))
         .onAppear {
             registerLiveKeyboardContext()
             document.scheduleKeyboardVoicePreparation(device: device)
@@ -11570,7 +11658,7 @@ private struct FMPatchBayLayout {
     let outputPoint: CGPoint
     let feedbackControlCenter: CGPoint
 
-    static let moduleSize = CGSize(width: 390, height: 740)
+    static let moduleSize = CGSize(width: 390, height: 840)
     static let margin: CGFloat = 170
     static let horizontalGap: CGFloat = 96
     static let verticalGap: CGFloat = 120
