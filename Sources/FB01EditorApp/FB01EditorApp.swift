@@ -1561,6 +1561,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
+    func updateVoiceRefreshingLayout(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
+        let originalVoice = voice
+        updateVoice(edit)
+        if voice != originalVoice {
+            layoutRevision &+= 1
+        }
+    }
+
     func setName(_ value: String) {
         let limited = String(value.prefix(FB01VoiceData.nameLength))
         guard limited != voice.name else { return }
@@ -9544,7 +9552,7 @@ struct VoiceDocumentWindow: View {
                             Binding(
                                 get: { voice.operatorEnabled[index] },
                                 set: { enabled in
-                                    document.updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
+                                    document.updateVoiceRefreshingLayout { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
                                 }
                             )
                         },
@@ -9623,7 +9631,7 @@ struct VoiceDocumentWindow: View {
                             Binding(
                                 get: { voice.operatorEnabled[index] },
                                 set: { enabled in
-                                    document.updateVoice { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
+                                    document.updateVoiceRefreshingLayout { try $0.settingOperatorEnabled(index: index, enabled: enabled) }
                                 }
                             )
                         },
@@ -11658,7 +11666,7 @@ private struct FMPatchBayLayout {
     let outputPoint: CGPoint
     let feedbackControlCenter: CGPoint
 
-    static let moduleSize = CGSize(width: 390, height: 840)
+    static let moduleSize = CGSize(width: 390, height: 980)
     static let margin: CGFloat = 170
     static let horizontalGap: CGFloat = 96
     static let verticalGap: CGFloat = 120
@@ -12019,10 +12027,11 @@ struct FMPatchOperatorModule: View {
 
             LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                 ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127)
-                ParameterKnob(label: "Multiple", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15)
-                ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7)
-                ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3)
+                ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15)
+                ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
             }
+
+            keyboardScalingControls
 
             timbreMacroSection
 
@@ -12040,6 +12049,7 @@ struct FMPatchOperatorModule: View {
 
             LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                 ParameterKnob(label: "Attack", value: operatorBinding({ $0.attackRate }, update: { try $0.settingAttackRate($1) }), range: 0...31)
+                ParameterKnob(label: "Vel to Attack", value: operatorBinding({ $0.velocitySensitivityForAttackRate }, update: { try $0.settingVelocitySensitivityForAttackRate($1) }), range: 0...7)
                 ParameterKnob(label: "Decay 1", value: operatorBinding({ $0.decay1Rate }, update: { try $0.settingDecay1Rate($1) }), range: 0...15)
                 ParameterKnob(label: "Decay 2", value: operatorBinding({ $0.decay2Rate }, update: { try $0.settingDecay2Rate($1) }), range: 0...31)
                 ParameterKnob(label: "Sustain", value: operatorBinding({ $0.sustainLevel }, update: { try $0.settingSustainLevel($1) }), range: 0...15)
@@ -12047,10 +12057,9 @@ struct FMPatchOperatorModule: View {
             }
 
             LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
-                ParameterKnob(label: "Vel to Attack", value: operatorBinding({ $0.velocitySensitivityForAttackRate }, update: { try $0.settingVelocitySensitivityForAttackRate($1) }), range: 0...7)
-                ParameterKnob(label: "Level Scaling", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15)
-                ParameterKnob(label: "Rate Scaling", value: operatorBinding({ $0.keyboardRateScalingDepth }, update: { try $0.settingKeyboardRateScalingDepth($1) }), range: 0...7)
+                ParameterKnob(label: "OSC FRQ Multiplier", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15)
+                ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7)
+                ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3)
             }
 
             HStack(alignment: .top, spacing: 12) {
@@ -12072,6 +12081,23 @@ struct FMPatchOperatorModule: View {
                 .stroke(moduleStroke, lineWidth: operatorEnabled ? 2.2 : 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var keyboardScalingControls: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ParameterKnob(label: "Keyboard Level\nDepth", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15)
+            ParameterKnob(label: "Keyboard Rate\nScaling Depth", value: operatorBinding({ $0.keyboardRateScalingDepth }, update: { try $0.settingKeyboardRateScalingDepth($1) }), range: 0...7)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Keyboard Level\nScaling Type")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                GreenNumberSegmentedPicker(selection: keyLevelScalingTypeBinding, values: Array(0...3))
+                    .frame(width: 148)
+            }
+        }
     }
 
     private var timbreMacroSection: some View {
@@ -12158,6 +12184,28 @@ struct FMPatchOperatorModule: View {
                 }
                 if let updated = try? update(operatorData, newValue) {
                     updateOperator(updated)
+                }
+            }
+        )
+    }
+
+    private var keyLevelScalingTypeBinding: Binding<Int> {
+        Binding(
+            get: {
+                (operatorData.keyboardLevelScalingTypeBit1 ? 2 : 0) +
+                    (operatorData.keyboardLevelScalingTypeBit0 ? 1 : 0)
+            },
+            set: { newValue in
+                guard operatorEnabled else {
+                    return
+                }
+                do {
+                    let updated = try operatorData
+                        .settingKeyboardLevelScalingTypeBit0(newValue & 0x01 == 0x01)
+                        .settingKeyboardLevelScalingTypeBit1(newValue & 0x02 == 0x02)
+                    updateOperator(updated)
+                } catch {
+                    return
                 }
             }
         )
@@ -12847,7 +12895,7 @@ struct OperatorInspector: View {
 
                 OperatorControlGroup(title: "Tuning") {
                     HStack(alignment: .top, spacing: 12) {
-                        operatorKnob("Multiple", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
+                        operatorKnob("OSC FRQ Multiplier", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
                         operatorKnob("Detune 1", value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
                         operatorKnob("Detune 2", value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
                     }
@@ -12874,11 +12922,16 @@ struct OperatorInspector: View {
 
             OperatorControlGroup(title: "Keyboard Scaling") {
                 HStack(alignment: .top, spacing: 12) {
-                    operatorKnob("Level Scaling", value: operatorData.keyboardLevelScalingDepth, range: 0...15) { try operatorData.settingKeyboardLevelScalingDepth($0) }
-                    operatorKnob("Rate Scaling", value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
+                    operatorKnob("Keyboard Level\nDepth", value: operatorData.keyboardLevelScalingDepth, range: 0...15) { try operatorData.settingKeyboardLevelScalingDepth($0) }
+                    operatorKnob("Keyboard Rate\nScaling Depth", value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
                 }
-                operatorToggle("Level Curve Bit 1", binding: keyboardLevelScalingTypeBit0Binding)
-                operatorToggle("Level Curve Bit 2", binding: keyboardLevelScalingTypeBit1Binding)
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("Keyboard Level\nScaling Type")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    GreenNumberSegmentedPicker(selection: keyboardLevelScalingTypeBinding, values: Array(0...3))
+                        .frame(width: 148)
+                }
             }
         }
     }
@@ -12904,22 +12957,16 @@ struct OperatorInspector: View {
         }
     }
 
-    private var keyboardLevelScalingTypeBit0Binding: Binding<Bool> {
+    private var keyboardLevelScalingTypeBinding: Binding<Int> {
         Binding(
-            get: { operatorData.keyboardLevelScalingTypeBit0 },
+            get: {
+                (operatorData.keyboardLevelScalingTypeBit1 ? 2 : 0) +
+                    (operatorData.keyboardLevelScalingTypeBit0 ? 1 : 0)
+            },
             set: { value in
-                if let updated = try? operatorData.settingKeyboardLevelScalingTypeBit0(value) {
-                    updateOperator(updated)
-                }
-            }
-        )
-    }
-
-    private var keyboardLevelScalingTypeBit1Binding: Binding<Bool> {
-        Binding(
-            get: { operatorData.keyboardLevelScalingTypeBit1 },
-            set: { value in
-                if let updated = try? operatorData.settingKeyboardLevelScalingTypeBit1(value) {
+                if let updated = try? operatorData
+                    .settingKeyboardLevelScalingTypeBit0(value & 0x01 == 0x01)
+                    .settingKeyboardLevelScalingTypeBit1(value & 0x02 == 0x02) {
                     updateOperator(updated)
                 }
             }
@@ -12966,9 +13013,6 @@ struct OperatorInspector: View {
         )
     }
 
-    private func operatorToggle(_ label: String, binding: Binding<Bool>) -> some View {
-        RockerSwitch(label: label, isOn: binding)
-    }
 }
 
 struct OperatorEnvelopeView: View {
