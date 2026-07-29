@@ -1909,7 +1909,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 isOn ? velocity : 0,
             ], destinationIndex: destinationIndex)
             if isOn {
-                statusMessage = "Keyboard sent note \(boundedNote) on channel \(Int(channel) + 1) to \(destinationName)."
+                device.externalKeyboardStatus = "Sent note \(boundedNote) on channel \(Int(channel) + 1) to \(destinationName)."
                 errorMessage = nil
             }
         } catch {
@@ -1992,14 +1992,15 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             }
             try FB01MIDI.sendImmediate(rewritten, destinationIndex: device.selectedDestinationIndex)
 
+            let forwardingStatus: String
             if isNoteOn, message.count > 1 {
-                statusMessage = "Keyboard input sent note \(message[1]) on channel \(Int(channel) + 1) to \(device.selectedDestinationName)."
+                forwardingStatus = "Keyboard input sent note \(message[1]) on channel \(Int(channel) + 1) to \(device.selectedDestinationName)."
             } else if event == 0xB0, message.count > 2 {
-                statusMessage = "Keyboard input forwarded CC \(message[1]) value \(message[2]) to \(device.selectedDestinationName)."
+                forwardingStatus = "Keyboard input forwarded CC \(message[1]) value \(message[2]) to \(device.selectedDestinationName)."
             } else {
-                statusMessage = "Keyboard input forwarding to \(device.selectedDestinationName)."
+                forwardingStatus = "Keyboard input forwarding to \(device.selectedDestinationName)."
             }
-            device.externalKeyboardStatus = statusMessage ?? "Keyboard input forwarding"
+            device.externalKeyboardStatus = forwardingStatus
             errorMessage = nil
         } catch {
             errorMessage = "Keyboard input failed: \(error)"
@@ -7918,7 +7919,7 @@ struct ContentView: View {
     @ObservedObject var workspace: EditorDocumentWorkspace
 
     var body: some View {
-        ScrollView([.horizontal, .vertical]) {
+        ScrollView {
             VStack(spacing: 0) {
                 ToolbarView(document: document)
 
@@ -9249,6 +9250,8 @@ struct VoiceDocumentLayoutInvalidator: NSViewRepresentable {
             scrollView.contentView.needsLayout = true
             scrollView.documentView?.layoutSubtreeIfNeeded()
             scrollView.contentView.layoutSubtreeIfNeeded()
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            scrollView.tile()
         }
 
         nsView.window?.contentView?.needsLayout = true
@@ -9568,16 +9571,8 @@ struct VoiceDocumentWindow: View {
         document.voice
     }
 
-    private var layoutInvalidationToken: Int {
-        var hasher = Hasher()
-        hasher.combine(document.layoutRevision)
-        hasher.combine(device.voiceEditorParadigm)
-        hasher.combine(document.isBusy)
-        return hasher.finalize()
-    }
-
     var body: some View {
-        ScrollView([.horizontal, .vertical]) {
+        ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
@@ -9768,7 +9763,7 @@ struct VoiceDocumentWindow: View {
                 DocumentStatusFooter(errorMessage: document.errorMessage, statusMessage: document.statusMessage, isBusy: document.isBusy)
             }
             .padding(18)
-            .frame(minWidth: device.voiceEditorParadigm == .fmRoutingPatchBay ? 980 : 0, maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .id(document.layoutRevision)
         }
         .navigationTitle("Voice - \(document.title)")
@@ -9829,7 +9824,6 @@ struct VoiceDocumentWindow: View {
             },
             onResignKey: {}
         ))
-        .background(VoiceDocumentLayoutInvalidator(token: layoutInvalidationToken))
         .onAppear {
             registerLiveKeyboardContext()
             document.scheduleKeyboardVoicePreparation(device: device)
@@ -10376,7 +10370,7 @@ struct ConfigurationEditorControls: View {
         } label: {
             SectionTitle("Identity")
         }
-        .frame(width: 220, height: 132, alignment: .topLeading)
+        .frame(width: 220, height: 190, alignment: .topLeading)
     }
 
     private var receiveAndWaveformControls: some View {
@@ -10397,14 +10391,14 @@ struct ConfigurationEditorControls: View {
                 VStack(alignment: .leading, spacing: 6) {
                     label("Waveform")
                     WaveformPicker(selection: $lfoWaveform)
-                        .frame(width: 340)
+                        .frame(width: 342)
                 }
             }
             .padding(.top, 4)
         } label: {
             SectionTitle("Receive and Waveform")
         }
-        .frame(width: 370, height: 132, alignment: .topLeading)
+        .frame(width: 370, height: 190, alignment: .topLeading)
     }
 
     private var lfoAndModulationControls: some View {
@@ -10418,7 +10412,7 @@ struct ConfigurationEditorControls: View {
         } label: {
             SectionTitle("LFO and Modulation")
         }
-        .frame(width: 330, height: 132, alignment: .topLeading)
+        .frame(width: 330, height: 190, alignment: .topLeading)
     }
 
     private func label(_ text: String) -> some View {
@@ -11584,7 +11578,7 @@ struct VoiceEditorControls: View {
                         GridRow {
                             label("Waveform")
                             WaveformPicker(selection: $lfoWaveform)
-                                .frame(width: 340)
+                                .frame(width: 342)
                         }
 
                         GridRow {
@@ -11663,16 +11657,9 @@ struct FMRoutingPatchBayView: View {
         VStack(alignment: .leading, spacing: 14) {
             SectionTitle("FM Routing Patch Bay")
 
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 14) {
-                    modulationPanel
-                    globalVoicePanel
-                }
-
-                VStack(alignment: .leading, spacing: 14) {
-                    modulationPanel
-                    globalVoicePanel
-                }
+            HStack(alignment: .top, spacing: 14) {
+                modulationPanel
+                globalVoicePanel
             }
 
             algorithmChooser
@@ -11712,7 +11699,7 @@ struct FMRoutingPatchBayView: View {
         OperatorControlGroup(title: "Algorithm") {
             CompactAlgorithmSelectorView(selection: $algorithm)
         }
-        .frame(width: 650, alignment: .center)
+        .frame(width: 780, alignment: .center)
     }
 
     private var modulationPanel: some View {
@@ -11727,7 +11714,7 @@ struct FMRoutingPatchBayView: View {
 
             HStack(alignment: .top, spacing: 14) {
                 WaveformPicker(selection: $lfoWaveform)
-                    .frame(width: 340)
+                    .frame(width: 342)
 
                 RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58)
                 RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58)
@@ -11738,16 +11725,19 @@ struct FMRoutingPatchBayView: View {
 
     private var routedOperatorPatchBay: some View {
         let layout = FMPatchBayLayout(algorithm: algorithm)
-        return FMPatchBayCanvas(
-            layout: layout,
-            operatorsByNumber: operatorsByNumber,
-            operatorEnabledBinding: operatorEnabledBinding,
-            feedback: $feedback,
-            selectedOperatorIndex: $selectedOperatorIndex,
-            updateOperator: updateOperator
-        )
-        .frame(width: layout.size.width, height: layout.size.height)
-        .frame(maxWidth: .infinity, alignment: .center)
+        return ScrollView(.horizontal) {
+            FMPatchBayCanvas(
+                layout: layout,
+                operatorsByNumber: operatorsByNumber,
+                operatorEnabledBinding: operatorEnabledBinding,
+                feedback: $feedback,
+                selectedOperatorIndex: $selectedOperatorIndex,
+                updateOperator: updateOperator
+            )
+            .frame(width: layout.size.width, height: layout.size.height)
+        }
+        .frame(height: layout.size.height)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var operatorsByNumber: [Int: FB01VoiceOperatorData] {
@@ -12001,13 +11991,16 @@ private struct FMPatchBayCanvas: View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color.secondary.opacity(0.045))
+                .allowsHitTesting(false)
 
             FMPatchBayRouteCanvas(layout: layout)
+                .allowsHitTesting(false)
 
             Text("Output")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .position(x: layout.outputPoint.x, y: layout.outputPoint.y + 22)
+                .allowsHitTesting(false)
 
             ParameterKnob(label: "OP4 Feedback", value: $feedback, range: 0...7)
                 .position(layout.feedbackControlCenter)
@@ -12159,14 +12152,18 @@ struct FMPatchOperatorModule: View {
                 title: amplifierTitle,
                 subtitle: operatorData.carrier ? "Audible output loudness." : "Modulation strength and timbre intensity."
             ) {
-                LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                    ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127)
-                    ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15)
-                    ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
-                    ParameterKnob(label: "Keyboard Level\nDepth", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15)
-                }
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127)
+                        ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15)
+                        ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
+                    }
 
-                keyLevelScalingTypeControl
+                    HStack(alignment: .top, spacing: 16) {
+                        ParameterKnob(label: "Keyboard Level\nDepth", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15)
+                        keyLevelScalingTypeControl
+                    }
+                }
             }
 
             timbreMacroSection
@@ -12228,15 +12225,21 @@ struct FMPatchOperatorModule: View {
     }
 
     private var keyLevelScalingTypeControl: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .center, spacing: 6) {
+            Spacer()
+                .frame(height: 29)
+
+            GreenNumberSegmentedPicker(selection: keyLevelScalingTypeBinding, values: Array(0...3))
+                .frame(width: 148)
+
             Text("Keyboard Level\nScaling Type")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
-
-            GreenNumberSegmentedPicker(selection: keyLevelScalingTypeBinding, values: Array(0...3))
-                .frame(width: 148)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(width: 190, alignment: .top)
     }
 
     private var timbreMacroSection: some View {
@@ -12490,6 +12493,7 @@ enum FMOperatorTimbreMacro: String, CaseIterable, Identifiable {
 struct WaveformPicker: View {
     @Binding var selection: Int
     @Environment(\.colorScheme) private var colorScheme
+    private let optionSize = CGSize(width: 84, height: 86)
 
     private let options: [(title: String, waveform: WaveformShape.Kind, tag: Int)] = [
         ("Sawtooth", .sawtooth, 0),
@@ -12505,7 +12509,9 @@ struct WaveformPicker: View {
             }
         }
         .padding(3)
+        .fixedSize()
         .background(Color.secondary.opacity(colorScheme == .light ? 0.16 : 0.12), in: RoundedRectangle(cornerRadius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private func waveformOption(_ title: String, waveform: WaveformShape.Kind, tag: Int) -> some View {
@@ -12522,12 +12528,13 @@ struct WaveformPicker: View {
                     .frame(width: 44, height: 16)
                     .padding(.bottom, 1)
             }
-            .frame(minWidth: 78)
-            .padding(.vertical, 4)
+            .frame(width: optionSize.width, height: optionSize.height)
             .background(isSelected ? Color.green : Color.clear, in: RoundedRectangle(cornerRadius: 5))
             .contentShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
+        .frame(width: optionSize.width, height: optionSize.height)
+        .contentShape(Rectangle())
     }
 }
 
@@ -12535,6 +12542,7 @@ struct GreenNumberSegmentedPicker: View {
     @Binding var selection: Int
     var values: [Int]
     @Environment(\.colorScheme) private var colorScheme
+    private let segmentSize = CGSize(width: 34, height: 32)
 
     var body: some View {
         HStack(spacing: 0) {
@@ -12545,15 +12553,19 @@ struct GreenNumberSegmentedPicker: View {
                     Text("\(value)")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(selection == value ? Color.black : Color.primary)
-                        .frame(minWidth: 32)
-                        .padding(.vertical, 5)
+                        .frame(width: segmentSize.width, height: segmentSize.height)
                         .background(selection == value ? Color.green : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                        .contentShape(RoundedRectangle(cornerRadius: 5))
                 }
                 .buttonStyle(.plain)
+                .frame(width: segmentSize.width, height: segmentSize.height)
+                .contentShape(Rectangle())
             }
         }
         .padding(3)
+        .fixedSize()
         .background(Color.secondary.opacity(colorScheme == .light ? 0.16 : 0.12), in: RoundedRectangle(cornerRadius: 6))
+        .contentShape(RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -12689,30 +12701,30 @@ struct CompactAlgorithmSelectorView: View {
     @Binding var selection: Int
 
     var body: some View {
-        VStack(alignment: .center, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
                 ForEach(1...5, id: \.self) { algorithm in
-                    algorithmButton(algorithm, cardWidth: 112, diagramWidth: 92)
+                    algorithmButton(algorithm, cardWidth: 138, diagramWidth: 112, diagramHeight: 126)
                 }
             }
 
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
                 ForEach(6...8, id: \.self) { algorithm in
-                    algorithmButton(algorithm, cardWidth: 184, diagramWidth: 162)
+                    algorithmButton(algorithm, cardWidth: 232, diagramWidth: 202, diagramHeight: 126)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .center)
     }
 
-    private func algorithmButton(_ algorithm: Int, cardWidth: CGFloat, diagramWidth: CGFloat) -> some View {
+    private func algorithmButton(_ algorithm: Int, cardWidth: CGFloat, diagramWidth: CGFloat, diagramHeight: CGFloat) -> some View {
         let isSelected = selection == algorithm
         return Button {
             selection = algorithm
         } label: {
-            VStack(spacing: 5) {
+            VStack(spacing: 7) {
                 AlgorithmDiagramView(algorithm: algorithm, isSelected: isSelected)
-                    .frame(width: diagramWidth, height: 96)
+                    .frame(width: diagramWidth, height: diagramHeight)
 
                 HStack(spacing: 4) {
                     Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
@@ -12722,7 +12734,7 @@ struct CompactAlgorithmSelectorView: View {
                 }
                 .foregroundStyle(isSelected ? .green : .secondary)
             }
-            .padding(6)
+            .padding(10)
             .frame(width: cardWidth)
             .background(
                 RoundedRectangle(cornerRadius: 6)
