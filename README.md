@@ -112,6 +112,11 @@ service, and configuration service through shared protocols. App-level document
 code talks to small bridge services instead of constructing FB-01 SysEx details
 directly.
 
+Module metadata now also includes device vocabulary, supported document
+descriptors, and a neutral parameter descriptor catalogue. See
+`Docs/ModuleBoundary.md` for the working rule of thumb about what belongs to the
+app shell and what belongs to a synth module.
+
 This is deliberately not a DX100 implementation. The boundary is present so the
 FB-01 behavior can stay stable while other Yamaha 4-operator devices are studied
 later with real hardware attached.

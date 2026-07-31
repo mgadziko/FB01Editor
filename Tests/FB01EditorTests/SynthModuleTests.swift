@@ -8,6 +8,9 @@ import Testing
     #expect(module.identity.manufacturer == "Yamaha")
     #expect(module.identity.modelName == "FB-01")
     #expect(module.identity.editorDisplayName == "Forest FB-01 Editor")
+    #expect(module.vocabulary.deviceDisplayName == "FB-01")
+    #expect(module.vocabulary.writableVoiceBankSuffix == "RAM")
+    #expect(module.vocabulary.readOnlyVoiceBankSuffixPrefix == "ROM")
     #expect(module.capabilities.supportsVoices)
     #expect(module.capabilities.supportsConfigurations)
     #expect(module.capabilities.supportsMultiInstrumentConfigurations)
@@ -17,6 +20,10 @@ import Testing
     #expect(module.capabilities.supportsLiveAuditionBuffer)
     #expect(module.capabilities.supportsGeneralMIDIInstall)
     #expect(module.supportedDocumentKinds == [.voice, .configuration, .voiceBank, .configurationBank])
+    #expect(module.supportedDocumentDescriptors.map(\.kind) == module.supportedDocumentKinds)
+    #expect(module.supportedDocumentDescriptors.first { $0.kind == .voice }?.supportsFetchFromDevice == true)
+    #expect(module.parameterDescriptors.contains { $0.id == "voice.operator.totalLevel" && $0.displayName == "Total Level" })
+    #expect(module.parameterDescriptors.contains { $0.id == "configuration.instrument.noteCount" && $0.displayName == "Active Notes" })
     #expect(module.writableVoiceBanks == [1, 2])
     #expect(module.readOnlyVoiceBanks == [3, 4, 5, 6, 7])
     #expect(module.allVoiceBanks == [1, 2, 3, 4, 5, 6, 7])
@@ -39,6 +46,64 @@ import Testing
     #expect(!module.isValidConfigurationSlot(21))
     #expect(module.displayVoiceBank(forStorageBank: 0) == 1)
     #expect(module.storageVoiceBank(forDisplayBank: 1) == 0)
+}
+
+private struct MockFourOperatorModule: SynthModule {
+    let identity = SynthModuleIdentity(
+        manufacturer: "Test",
+        modelName: "Mock-4OP",
+        editorDisplayName: "Mock 4-OP Editor"
+    )
+    let capabilities = SynthModuleCapabilities(
+        supportsVoices: true,
+        supportsConfigurations: false,
+        supportsMultiInstrumentConfigurations: false,
+        supportsWritableVoiceBanks: true,
+        supportsReadOnlyVoiceBanks: false,
+        supportsMemoryProtect: false,
+        supportsLiveAuditionBuffer: true,
+        supportsGeneralMIDIInstall: false
+    )
+    let vocabulary = SynthModuleVocabulary(deviceDisplayName: "Mock-4OP")
+    let supportedDocumentKinds: [SynthDocumentKind] = [.voice]
+    let supportedDocumentDescriptors: [SynthDocumentDescriptor] = [
+        SynthDocumentDescriptor(
+            kind: .voice,
+            displayName: "Voice",
+            supportsLoadFromFile: true,
+            supportsSaveToFile: true,
+            supportsFetchFromDevice: true,
+            supportsStoreToDevice: true
+        ),
+    ]
+    let parameterDescriptors: [SynthParameterDescriptor] = [
+        SynthParameterDescriptor(
+            id: "voice.operator.totalLevel",
+            displayName: "Total Level",
+            valueKind: .integer,
+            range: SynthSlotRange(0...99),
+            defaultValue: 0,
+            group: "Operator"
+        ),
+    ]
+    let writableVoiceBanks = [1]
+    let readOnlyVoiceBanks: [Int] = []
+    let voicesPerBank = 32
+    let writableConfigurationSlots = SynthSlotRange(1...1)
+    let readOnlyConfigurationSlots = SynthSlotRange(1...1)
+}
+
+@Test func mockModuleExercisesDeviceNeutralBoundary() {
+    let module = MockFourOperatorModule()
+
+    #expect(module.identity.modelName == "Mock-4OP")
+    #expect(module.capabilities.supportsVoices)
+    #expect(!module.capabilities.supportsConfigurations)
+    #expect(module.supportedDocumentKinds == [.voice])
+    #expect(module.supportedDocumentDescriptors.first?.displayName == "Voice")
+    #expect(module.parameterDescriptors.first?.range?.closedRange == 0...99)
+    #expect(module.writableVoiceBanks == [1])
+    #expect(module.voicesPerBank == 32)
 }
 
 @Test func fb01ModuleServicesExposeCurrentModuleServices() {

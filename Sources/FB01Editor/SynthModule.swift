@@ -50,6 +50,43 @@ public struct SynthModuleCapabilities: Equatable, Sendable {
     }
 }
 
+public struct SynthModuleVocabulary: Equatable, Sendable {
+    public var deviceDisplayName: String
+    public var voiceDisplayName: String
+    public var configurationDisplayName: String
+    public var voiceBankDisplayName: String
+    public var configurationBankDisplayName: String
+    public var memoryProtectDisplayName: String
+    public var writableVoiceBankSuffix: String
+    public var readOnlyVoiceBankSuffixPrefix: String
+    public var currentConfigurationDisplayName: String
+    public var liveAuditionBufferDisplayName: String
+
+    public init(
+        deviceDisplayName: String,
+        voiceDisplayName: String = "Voice",
+        configurationDisplayName: String = "Configuration",
+        voiceBankDisplayName: String = "Voice Bank",
+        configurationBankDisplayName: String = "Configuration Bank",
+        memoryProtectDisplayName: String = "Memory Protect",
+        writableVoiceBankSuffix: String = "RAM",
+        readOnlyVoiceBankSuffixPrefix: String = "ROM",
+        currentConfigurationDisplayName: String = "Current Configuration",
+        liveAuditionBufferDisplayName: String = "Current Voice Buffer"
+    ) {
+        self.deviceDisplayName = deviceDisplayName
+        self.voiceDisplayName = voiceDisplayName
+        self.configurationDisplayName = configurationDisplayName
+        self.voiceBankDisplayName = voiceBankDisplayName
+        self.configurationBankDisplayName = configurationBankDisplayName
+        self.memoryProtectDisplayName = memoryProtectDisplayName
+        self.writableVoiceBankSuffix = writableVoiceBankSuffix
+        self.readOnlyVoiceBankSuffixPrefix = readOnlyVoiceBankSuffixPrefix
+        self.currentConfigurationDisplayName = currentConfigurationDisplayName
+        self.liveAuditionBufferDisplayName = liveAuditionBufferDisplayName
+    }
+}
+
 public struct SynthSlotRange: Equatable, Sendable {
     public var lowerBound: Int
     public var upperBound: Int
@@ -72,10 +109,75 @@ public struct SynthSlotRange: Equatable, Sendable {
     }
 }
 
+public enum SynthParameterValueKind: Equatable, Sendable {
+    case integer
+    case signedInteger
+    case toggle
+    case option([String])
+    case text(maxLength: Int)
+}
+
+public struct SynthParameterDescriptor: Equatable, Identifiable, Sendable {
+    public var id: String
+    public var displayName: String
+    public var valueKind: SynthParameterValueKind
+    public var range: SynthSlotRange?
+    public var defaultValue: Int?
+    public var isEditable: Bool
+    public var group: String
+
+    public init(
+        id: String,
+        displayName: String,
+        valueKind: SynthParameterValueKind,
+        range: SynthSlotRange? = nil,
+        defaultValue: Int? = nil,
+        isEditable: Bool = true,
+        group: String
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.valueKind = valueKind
+        self.range = range
+        self.defaultValue = defaultValue
+        self.isEditable = isEditable
+        self.group = group
+    }
+}
+
+public struct SynthDocumentDescriptor: Equatable, Identifiable, Sendable {
+    public var id: SynthDocumentKind { kind }
+    public var kind: SynthDocumentKind
+    public var displayName: String
+    public var supportsLoadFromFile: Bool
+    public var supportsSaveToFile: Bool
+    public var supportsFetchFromDevice: Bool
+    public var supportsStoreToDevice: Bool
+
+    public init(
+        kind: SynthDocumentKind,
+        displayName: String,
+        supportsLoadFromFile: Bool,
+        supportsSaveToFile: Bool,
+        supportsFetchFromDevice: Bool,
+        supportsStoreToDevice: Bool
+    ) {
+        self.kind = kind
+        self.displayName = displayName
+        self.supportsLoadFromFile = supportsLoadFromFile
+        self.supportsSaveToFile = supportsSaveToFile
+        self.supportsFetchFromDevice = supportsFetchFromDevice
+        self.supportsStoreToDevice = supportsStoreToDevice
+    }
+}
+
 public protocol SynthModule: Sendable {
     var identity: SynthModuleIdentity { get }
     var capabilities: SynthModuleCapabilities { get }
+    var vocabulary: SynthModuleVocabulary { get }
     var supportedDocumentKinds: [SynthDocumentKind] { get }
+    var supportedDocumentDescriptors: [SynthDocumentDescriptor] { get }
+    var parameterDescriptors: [SynthParameterDescriptor] { get }
     var writableVoiceBanks: [Int] { get }
     var readOnlyVoiceBanks: [Int] { get }
     var voicesPerBank: Int { get }

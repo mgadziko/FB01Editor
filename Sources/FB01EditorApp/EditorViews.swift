@@ -53,7 +53,7 @@ struct ToolbarView: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Text("MIDI In from FB-01")
+            Text("MIDI In from \(EditorSynthModule.vocabulary.deviceDisplayName)")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -70,7 +70,7 @@ struct ToolbarView: View {
             }
             .disabled(document.midiSources.isEmpty || document.isBusy)
 
-            Text("MIDI Out to FB-01")
+            Text("MIDI Out to \(EditorSynthModule.vocabulary.deviceDisplayName)")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -820,7 +820,7 @@ struct GlobalStatusView: View {
                     .font(.title2.weight(.semibold))
 
                 HStack(alignment: .top, spacing: 14) {
-                    statusCard(title: "FB-01 Connection", rows: [
+                    statusCard(title: "\(EditorSynthModule.vocabulary.deviceDisplayName) Connection", rows: [
                         KeyValueRow("MIDI In", document.selectedSourceName),
                         KeyValueRow("MIDI Out", document.selectedDestinationName),
                         KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
@@ -926,7 +926,7 @@ struct SystemSettingsView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        RockerSwitch(label: "Memory Protect", isOn: Binding(
+                        RockerSwitch(label: EditorSynthModule.vocabulary.memoryProtectDisplayName, isOn: Binding(
                             get: { document.systemMemoryProtectEnabled },
                             set: { document.setMemoryProtect($0) }
                         ))

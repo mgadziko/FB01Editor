@@ -36,6 +36,16 @@ struct FB01DevicePreference: Equatable, Identifiable {
     var memoryProtectEnabled: Bool
 }
 
+private enum AppStrings {
+    static var editorDisplayName: String {
+        EditorSynthModule.identity.editorDisplayName
+    }
+
+    static var deviceDisplayName: String {
+        EditorSynthModule.vocabulary.deviceDisplayName
+    }
+}
+
 func voiceBankLoadMessage(bank: FB01VoiceBankData, systemChannel: Int) throws -> [UInt8] {
     try FB01ModuleServices.shared.voiceService.voiceBankLoadMessage(bank: bank, systemChannel: systemChannel)
 }
@@ -64,7 +74,7 @@ struct FB01EditorApplication: App {
     @StateObject private var documentWorkspace = EditorDocumentWorkspace()
 
     var body: some Scene {
-        WindowGroup("Forest FB-01 Editor") {
+        WindowGroup(AppStrings.editorDisplayName) {
             ContentView(document: document, workspace: documentWorkspace)
                 .frame(minWidth: 1080, minHeight: 760)
                 .onAppear {
@@ -99,7 +109,7 @@ struct FB01EditorApplication: App {
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About Forest FB-01 Editor") {
+                Button("About \(AppStrings.editorDisplayName)") {
                     AboutBoxController.shared.show()
                 }
 
@@ -154,25 +164,25 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Voice") {
-                Button("Copy Voice to Slot...") {
+                Button("Copy \(EditorSynthModule.vocabulary.voiceDisplayName) to Slot...") {
                     document.copySelectedVoiceToLocalSlot()
                 }
                 .disabled(document.isBusy)
 
                 if document.voiceEditorParadigm == .consoleSections {
-                    Button("Swap Voice with Slot...") {
+                    Button("Swap \(EditorSynthModule.vocabulary.voiceDisplayName) with Slot...") {
                         document.swapSelectedVoiceWithLocalSlot()
                     }
                     .disabled(!document.canUseSelectedVoiceLibrarianActions)
 
                     Divider()
 
-                    Button("Reset Selected Voice") {
+                    Button("Reset Selected \(EditorSynthModule.vocabulary.voiceDisplayName)") {
                         document.resetSelectedVoiceEdit()
                     }
                     .disabled(!document.canResetSelectedVoice)
 
-                    Button("Reset All Voice Edits") {
+                    Button("Reset All \(EditorSynthModule.vocabulary.voiceDisplayName) Edits") {
                         document.resetAllSelectedVoiceEdits()
                     }
                     .disabled(!document.canResetAllSelectedVoiceEdits)
@@ -194,7 +204,7 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Configuration") {
-                Button("Copy Configuration to Slot ...") {
+                Button("Copy \(EditorSynthModule.vocabulary.configurationDisplayName) to Slot ...") {
                     document.copyConfigurationSlotOnDevice()
                 }
                 .disabled(document.isBusy || !FB01UIFeatureAvailability.supportsConfigurations)

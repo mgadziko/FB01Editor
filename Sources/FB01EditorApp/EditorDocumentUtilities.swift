@@ -147,13 +147,13 @@ enum VoiceDocumentFetchLocation: Sendable {
     }
 
     var menuTitle: String {
-        switch self {
-        case .bank(1):
-            "Bank 1 RAM"
-        case .bank(2):
-            "Bank 2 RAM"
+        let module = EditorSynthModule.module
+        let vocabulary = module.vocabulary
+        return switch self {
+        case .bank(let bank) where module.isWritableVoiceBank(bank):
+            "Bank \(bank) \(vocabulary.writableVoiceBankSuffix)"
         case .bank(let bank):
-            "Bank \(bank) ROM\(bank - 2)"
+            "Bank \(bank) \(vocabulary.readOnlyVoiceBankSuffixPrefix)\(bank - module.writableVoiceBanks.count)"
         case .voiceRAM1:
             "Voice RAM 1"
         }
@@ -224,8 +224,9 @@ struct VoiceDocumentFetchNameLookup: Sendable {
     }
 
     func statusTitle(for location: VoiceDocumentFetchLocation) -> String {
+        let module = EditorSynthModule.module
         switch location {
-        case .bank(let bank) where bank <= 2:
+        case .bank(let bank) where module.isWritableVoiceBank(bank):
             return ramBankNames[bank] == nil
                 ? "RAM names not loaded for Bank \(bank)"
                 : "RAM names loaded for Bank \(bank)"
@@ -238,7 +239,7 @@ struct VoiceDocumentFetchNameLookup: Sendable {
 
     func name(location: VoiceDocumentFetchLocation, voiceNumber: Int) -> String? {
         switch location {
-        case .bank(let bank) where bank <= 2:
+        case .bank(let bank) where EditorSynthModule.module.isWritableVoiceBank(bank):
             guard let names = ramBankNames[bank],
                   (1...names.count).contains(voiceNumber) else {
                 return nil
@@ -253,7 +254,7 @@ struct VoiceDocumentFetchNameLookup: Sendable {
 
     func voiceMenuTitle(location: VoiceDocumentFetchLocation, voiceNumber: Int) -> String {
         guard let name = name(location: location, voiceNumber: voiceNumber), !name.isEmpty else {
-            if case .bank(let bank) = location, bank <= 2 {
+            if case .bank(let bank) = location, EditorSynthModule.module.isWritableVoiceBank(bank) {
                 return String(format: "%02d RAM name not loaded", voiceNumber)
             }
             return "Voice \(voiceNumber)"
@@ -292,7 +293,7 @@ struct ConfigurationFetchNameLookup: Sendable {
     }
 
     func menuTitle(slot: Int) -> String {
-        let readOnly = slot >= 17 ? " Read Only" : ""
+        let readOnly = EditorSynthModule.module.isWritableConfigurationSlot(slot) ? "" : " Read Only"
         guard let name = name(slot: slot), !name.isEmpty else {
             return "Configuration \(slot)\(readOnly)"
         }
