@@ -3598,7 +3598,7 @@ struct VoiceDetailView: View {
         let panel = NSSavePanel()
         panel.allowedContentTypes = UTType.fb01VoiceFileTypes
         panel.directoryURL = document.preferredSaveDirectoryURL()
-        panel.nameFieldStringValue = "voice-\(summary.number)-\(safeFileName(editableVoice.name)).fb01voice"
+        panel.nameFieldStringValue = "voice-\(summary.number)-\(safeFileName(editableVoice.name)).\(EditorSynthModule.fileProfile.singleVoiceExtension)"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return

@@ -24,6 +24,7 @@ device facts such as writable bank numbers or read-only slot ranges.
 A synth module owns:
 
 - identity and user-facing device vocabulary
+- file extension profiles and document type declarations
 - supported document kinds
 - capability flags
 - slot ranges and bank rules
@@ -43,6 +44,17 @@ behind module-facing protocols.
 
 The adapter is not a DX100 module. It is a boundary around the working FB-01
 implementation.
+
+The current FB-01 file profile is:
+
+- `.fbv`: single voice document
+- `.fbc`: single configuration document
+- `.fbvb`: voice bank document
+- `.fbcb`: configuration bank document
+- `.fbx`: generic FB-01 SysEx
+
+`.syx` remains useful as a raw SysEx import/debugging format, but module-owned
+extensions are the preferred Forest document convention.
 
 ## Future Devices
 

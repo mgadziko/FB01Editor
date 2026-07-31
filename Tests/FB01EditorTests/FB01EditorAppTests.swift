@@ -108,10 +108,10 @@ import Testing
 
 @MainActor
 @Test func voiceSaveAsDocumentNameUsesSelectedFileStem() {
-    let popcornURL = URL(fileURLWithPath: "/tmp/popcorn.fb01voice")
+    let popcornURL = URL(fileURLWithPath: "/tmp/popcorn.fbv")
     #expect(editorDocumentName(fromFileURL: popcornURL, maxLength: FB01VoiceData.nameLength, fallback: "voice") == "popcorn")
 
-    let longURL = URL(fileURLWithPath: "/tmp/LongVoiceName.fb01voice")
+    let longURL = URL(fileURLWithPath: "/tmp/LongVoiceName.fbv")
     #expect(editorDocumentName(fromFileURL: longURL, maxLength: FB01VoiceData.nameLength, fallback: "voice") == "LongVoi")
 }
 

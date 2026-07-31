@@ -42,16 +42,16 @@ add_exported_type() {
 
 plist "Delete :CFBundleDocumentTypes" 2>/dev/null || true
 plist "Add :CFBundleDocumentTypes array"
-add_document_type 0 "Forest FB-01 Single Voice" "SingleVoiceDocumentIcon.icns" "fb01voice" "com.gadzikowski.fb01.single-voice"
-add_document_type 1 "Forest FB-01 Single Configuration" "SingleConfigurationDocumentIcon.icns" "fb01config" "com.gadzikowski.fb01.single-configuration"
-add_document_type 2 "Forest FB-01 Voice Bank" "VoiceBankDocumentIcon.icns" "fb01voicebank" "com.gadzikowski.fb01.voice-bank"
-add_document_type 3 "Forest FB-01 Configuration Bank" "ConfigurationBankDocumentIcon.icns" "fb01configbank" "com.gadzikowski.fb01.configuration-bank"
-add_document_type 4 "Yamaha FB-01 SysEx" "AppIcon.icns" "syx" "com.gadzikowski.fb01.sysex"
+add_document_type 0 "Forest FB-01 Single Voice" "SingleVoiceDocumentIcon.icns" "fbv" "com.gadzikowski.fb01.single-voice"
+add_document_type 1 "Forest FB-01 Single Configuration" "SingleConfigurationDocumentIcon.icns" "fbc" "com.gadzikowski.fb01.single-configuration"
+add_document_type 2 "Forest FB-01 Voice Bank" "VoiceBankDocumentIcon.icns" "fbvb" "com.gadzikowski.fb01.voice-bank"
+add_document_type 3 "Forest FB-01 Configuration Bank" "ConfigurationBankDocumentIcon.icns" "fbcb" "com.gadzikowski.fb01.configuration-bank"
+add_document_type 4 "Yamaha FB-01 SysEx" "AppIcon.icns" "fbx" "com.gadzikowski.fb01.sysex"
 
 plist "Delete :UTExportedTypeDeclarations" 2>/dev/null || true
 plist "Add :UTExportedTypeDeclarations array"
-add_exported_type 0 "Forest FB-01 Single Voice" "fb01voice" "com.gadzikowski.fb01.single-voice"
-add_exported_type 1 "Forest FB-01 Single Configuration" "fb01config" "com.gadzikowski.fb01.single-configuration"
-add_exported_type 2 "Forest FB-01 Voice Bank" "fb01voicebank" "com.gadzikowski.fb01.voice-bank"
-add_exported_type 3 "Forest FB-01 Configuration Bank" "fb01configbank" "com.gadzikowski.fb01.configuration-bank"
-add_exported_type 4 "Yamaha FB-01 SysEx" "syx" "com.gadzikowski.fb01.sysex"
+add_exported_type 0 "Forest FB-01 Single Voice" "fbv" "com.gadzikowski.fb01.single-voice"
+add_exported_type 1 "Forest FB-01 Single Configuration" "fbc" "com.gadzikowski.fb01.single-configuration"
+add_exported_type 2 "Forest FB-01 Voice Bank" "fbvb" "com.gadzikowski.fb01.voice-bank"
+add_exported_type 3 "Forest FB-01 Configuration Bank" "fbcb" "com.gadzikowski.fb01.configuration-bank"
+add_exported_type 4 "Yamaha FB-01 SysEx" "fbx" "com.gadzikowski.fb01.sysex"

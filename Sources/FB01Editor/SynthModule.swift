@@ -171,12 +171,51 @@ public struct SynthDocumentDescriptor: Equatable, Identifiable, Sendable {
     }
 }
 
+public struct SynthFileProfile: Equatable, Sendable {
+    public var singleVoiceExtension: String
+    public var singleConfigurationExtension: String
+    public var voiceBankExtension: String
+    public var configurationBankExtension: String
+    public var genericSysExExtension: String
+    public var importExtensions: [String]
+
+    public init(
+        singleVoiceExtension: String,
+        singleConfigurationExtension: String,
+        voiceBankExtension: String,
+        configurationBankExtension: String,
+        genericSysExExtension: String,
+        importExtensions: [String]
+    ) {
+        self.singleVoiceExtension = singleVoiceExtension
+        self.singleConfigurationExtension = singleConfigurationExtension
+        self.voiceBankExtension = voiceBankExtension
+        self.configurationBankExtension = configurationBankExtension
+        self.genericSysExExtension = genericSysExExtension
+        self.importExtensions = importExtensions
+    }
+
+    public func preferredExtension(for kind: SynthDocumentKind) -> String {
+        switch kind {
+        case .voice:
+            singleVoiceExtension
+        case .configuration:
+            singleConfigurationExtension
+        case .voiceBank:
+            voiceBankExtension
+        case .configurationBank:
+            configurationBankExtension
+        }
+    }
+}
+
 public protocol SynthModule: Sendable {
     var identity: SynthModuleIdentity { get }
     var capabilities: SynthModuleCapabilities { get }
     var vocabulary: SynthModuleVocabulary { get }
     var supportedDocumentKinds: [SynthDocumentKind] { get }
     var supportedDocumentDescriptors: [SynthDocumentDescriptor] { get }
+    var fileProfile: SynthFileProfile { get }
     var parameterDescriptors: [SynthParameterDescriptor] { get }
     var writableVoiceBanks: [Int] { get }
     var readOnlyVoiceBanks: [Int] { get }

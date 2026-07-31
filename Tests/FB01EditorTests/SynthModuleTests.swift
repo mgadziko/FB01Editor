@@ -11,6 +11,12 @@ import Testing
     #expect(module.vocabulary.deviceDisplayName == "FB-01")
     #expect(module.vocabulary.writableVoiceBankSuffix == "RAM")
     #expect(module.vocabulary.readOnlyVoiceBankSuffixPrefix == "ROM")
+    #expect(module.fileProfile.singleVoiceExtension == "fbv")
+    #expect(module.fileProfile.singleConfigurationExtension == "fbc")
+    #expect(module.fileProfile.voiceBankExtension == "fbvb")
+    #expect(module.fileProfile.configurationBankExtension == "fbcb")
+    #expect(module.fileProfile.genericSysExExtension == "fbx")
+    #expect(module.fileProfile.importExtensions.contains("syx"))
     #expect(module.capabilities.supportsVoices)
     #expect(module.capabilities.supportsConfigurations)
     #expect(module.capabilities.supportsMultiInstrumentConfigurations)
@@ -24,6 +30,12 @@ import Testing
     #expect(module.supportedDocumentDescriptors.first { $0.kind == .voice }?.supportsFetchFromDevice == true)
     #expect(module.parameterDescriptors.contains { $0.id == "voice.operator.totalLevel" && $0.displayName == "Total Level" })
     #expect(module.parameterDescriptors.contains { $0.id == "configuration.instrument.noteCount" && $0.displayName == "Active Notes" })
+    #expect(module.factoryVoiceNamesByBank.keys.sorted() == [3, 4, 5, 6, 7])
+    #expect(module.factoryVoiceNamesByBank.values.allSatisfy { $0.count == module.voicesPerBank })
+    #expect(module.factoryVoiceName(bank: 3, voiceNumber: 1) == "Brass")
+    #expect(module.factoryVoiceName(bank: 7, voiceNumber: 40) == "Wave")
+    #expect(module.factoryConfigurationName(slot: 17) == "single")
+    #expect(module.factoryConfigurationName(slot: 20) == "split")
     #expect(module.writableVoiceBanks == [1, 2])
     #expect(module.readOnlyVoiceBanks == [3, 4, 5, 6, 7])
     #expect(module.allVoiceBanks == [1, 2, 3, 4, 5, 6, 7])
@@ -66,6 +78,14 @@ private struct MockFourOperatorModule: SynthModule {
     )
     let vocabulary = SynthModuleVocabulary(deviceDisplayName: "Mock-4OP")
     let supportedDocumentKinds: [SynthDocumentKind] = [.voice]
+    let fileProfile = SynthFileProfile(
+        singleVoiceExtension: "mockv",
+        singleConfigurationExtension: "mockc",
+        voiceBankExtension: "mockvb",
+        configurationBankExtension: "mockcb",
+        genericSysExExtension: "mockx",
+        importExtensions: ["mockv", "mockx"]
+    )
     let supportedDocumentDescriptors: [SynthDocumentDescriptor] = [
         SynthDocumentDescriptor(
             kind: .voice,

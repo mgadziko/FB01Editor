@@ -125,11 +125,14 @@ later with real hardware attached.
 
 The app supports FB-01-specific document types and Finder icons for:
 
-- single voice documents
-- single configuration documents
-- voice bank documents
-- configuration bank documents
-- generic SysEx files
+- `.fbv`: single voice documents
+- `.fbc`: single configuration documents
+- `.fbvb`: voice bank documents
+- `.fbcb`: configuration bank documents
+- `.fbx`: generic FB-01 SysEx files
+
+Generic `.syx` files remain readable for import and troubleshooting, but Forest's
+preferred FB-01 document naming uses the module-owned extensions above.
 
 The default save/load folder is:
 

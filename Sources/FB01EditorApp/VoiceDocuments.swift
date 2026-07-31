@@ -150,7 +150,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let panel = NSSavePanel()
         panel.allowedContentTypes = UTType.fb01VoiceFileTypes
         panel.directoryURL = preferredEditorSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeEditorFileName(voice.name, fallback: "voice")).fb01voice"
+        panel.nameFieldStringValue = "\(safeEditorFileName(voice.name, fallback: "voice")).\(EditorSynthModule.fileProfile.singleVoiceExtension)"
         panel.message = "Save this voice document to a voice file."
         panel.prompt = "Save Voice to File"
 

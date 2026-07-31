@@ -70,7 +70,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         let panel = NSSavePanel()
         panel.allowedContentTypes = UTType.fb01ConfigurationFileTypes
         panel.directoryURL = preferredEditorSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeEditorFileName(configuration.name, fallback: "configuration")).fb01config"
+        panel.nameFieldStringValue = "\(safeEditorFileName(configuration.name, fallback: "configuration")).\(EditorSynthModule.fileProfile.singleConfigurationExtension)"
         panel.message = "Save this configuration document to a configuration file."
         panel.prompt = "Save Configuration to File"
 

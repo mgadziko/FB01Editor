@@ -1261,7 +1261,7 @@ final class DocumentModel: ObservableObject {
         let panel = NSSavePanel()
         panel.allowedContentTypes = UTType.fb01ConfigurationFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).fb01config"
+        panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).\(EditorSynthModule.fileProfile.singleConfigurationExtension)"
         panel.message = "Save this configuration to a configuration file."
         panel.prompt = "Save Configuration to File"
 
@@ -1349,8 +1349,8 @@ final class DocumentModel: ObservableObject {
         panel.allowedContentTypes = [.fb01ConfigurationBank, .sysex]
         panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = configurationSources.count == 20
-            ? "fb01-configurations-1-20.fb01configbank"
-            : "fb01-configurations.fb01configbank"
+            ? "fb01-configurations-1-20.\(EditorSynthModule.fileProfile.configurationBankExtension)"
+            : "fb01-configurations.\(EditorSynthModule.fileProfile.configurationBankExtension)"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -1385,7 +1385,7 @@ final class DocumentModel: ObservableObject {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.fb01VoiceBank, .sysex]
         panel.directoryURL = preferredSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeFileName(sources[index].title))-edited.fb01voicebank"
+        panel.nameFieldStringValue = "\(safeFileName(sources[index].title))-edited.\(EditorSynthModule.fileProfile.voiceBankExtension)"
         panel.message = "Save the edited voice bank as a SysEx file."
         panel.prompt = "Save Edited Bank"
 
@@ -2061,9 +2061,9 @@ final class DocumentModel: ObservableObject {
 
     private func chooseConfigurationBackupURL(slot: Int) -> URL? {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.sysex]
+        panel.allowedContentTypes = [.fb01GenericSysEx]
         panel.directoryURL = preferredSaveDirectoryURL()
-        panel.nameFieldStringValue = "configuration-\(slot + 1)-backup.syx"
+        panel.nameFieldStringValue = "configuration-\(slot + 1)-backup.\(EditorSynthModule.fileProfile.genericSysExExtension)"
         panel.message = "Choose where to save the current contents of Configuration \(slot + 1) before overwriting it."
         panel.prompt = "Save Backup"
 
@@ -2823,10 +2823,11 @@ final class DocumentModel: ObservableObject {
 
     private func uniqueFileName(for title: String, usedNames: inout Set<String>) -> String {
         let base = safeFileName(title)
-        var candidate = "\(base).syx"
+        let fileExtension = EditorSynthModule.fileProfile.genericSysExExtension
+        var candidate = "\(base).\(fileExtension)"
         var suffix = 2
         while usedNames.contains(candidate) {
-            candidate = "\(base)-\(suffix).syx"
+            candidate = "\(base)-\(suffix).\(fileExtension)"
             suffix += 1
         }
         usedNames.insert(candidate)
@@ -3553,7 +3554,7 @@ final class DocumentModel: ObservableObject {
         }
 
         for number in candidateNumbers {
-            if let name = FB01FactoryVoiceNames.name(bank: bank, voiceNumber: number), !name.isEmpty {
+            if let name = EditorSynthModule.module.factoryVoiceName(bank: bank, voiceNumber: number), !name.isEmpty {
                 return name
             }
         }
@@ -4171,38 +4172,59 @@ struct LibrarySource: Identifiable, Equatable {
 }
 
 extension UTType {
-    static let sysex = UTType(filenameExtension: "syx")!
-    static let fb01SingleVoice = UTType(filenameExtension: "fb01voice")!
-    static let fb01SingleConfiguration = UTType(filenameExtension: "fb01config")!
-    static let fb01VoiceBank = UTType(filenameExtension: "fb01voicebank")!
-    static let fb01ConfigurationBank = UTType(filenameExtension: "fb01configbank")!
+    private static var synthFileProfile: SynthFileProfile {
+        EditorSynthModule.fileProfile
+    }
 
-    static let fb01VoiceFileTypes: [UTType] = [.fb01SingleVoice, .sysex]
-    static let fb01ConfigurationFileTypes: [UTType] = [.fb01SingleConfiguration, .sysex]
-    static let fb01ReadableVoiceFileTypes: [UTType] = [.fb01SingleVoice, .fb01VoiceBank, .sysex, .data]
-    static let fb01ReadableConfigurationFileTypes: [UTType] = [.fb01SingleConfiguration, .fb01ConfigurationBank, .sysex, .data]
-    static let fb01ReadableFileTypes: [UTType] = [
-        .fb01SingleVoice,
-        .fb01SingleConfiguration,
-        .fb01VoiceBank,
-        .fb01ConfigurationBank,
-        .sysex,
-        .data,
-    ]
+    static let sysex = UTType(filenameExtension: "syx")!
+    static var fb01GenericSysEx: UTType { UTType(filenameExtension: synthFileProfile.genericSysExExtension)! }
+    static var fb01SingleVoice: UTType { UTType(filenameExtension: synthFileProfile.singleVoiceExtension)! }
+    static var fb01SingleConfiguration: UTType { UTType(filenameExtension: synthFileProfile.singleConfigurationExtension)! }
+    static var fb01VoiceBank: UTType { UTType(filenameExtension: synthFileProfile.voiceBankExtension)! }
+    static var fb01ConfigurationBank: UTType { UTType(filenameExtension: synthFileProfile.configurationBankExtension)! }
+
+    static var fb01VoiceFileTypes: [UTType] {
+        [.fb01SingleVoice, .fb01GenericSysEx]
+    }
+
+    static var fb01ConfigurationFileTypes: [UTType] {
+        [.fb01SingleConfiguration, .fb01GenericSysEx]
+    }
+
+    static var fb01ReadableVoiceFileTypes: [UTType] {
+        [.fb01SingleVoice, .fb01VoiceBank, .fb01GenericSysEx, .sysex, .data]
+    }
+
+    static var fb01ReadableConfigurationFileTypes: [UTType] {
+        [.fb01SingleConfiguration, .fb01ConfigurationBank, .fb01GenericSysEx, .sysex, .data]
+    }
+
+    static var fb01ReadableFileTypes: [UTType] {
+        [
+            .fb01SingleVoice,
+            .fb01SingleConfiguration,
+            .fb01VoiceBank,
+            .fb01ConfigurationBank,
+            .fb01GenericSysEx,
+            .sysex,
+            .data,
+        ]
+    }
 }
 
 private func preferredFileExtension(for kind: FB01ArtifactKind) -> String {
+    let profile = EditorSynthModule.fileProfile
     switch kind {
     case .singleVoice:
-        return "fb01voice"
+        return profile.singleVoiceExtension
     case .voiceBank:
-        return "fb01voicebank"
+        return profile.voiceBankExtension
     case .currentConfiguration, .storedConfiguration:
-        return "fb01config"
+        return profile.singleConfigurationExtension
     case .configurationSet:
-        return "fb01configbank"
+        return profile.configurationBankExtension
     case .unitID, .rawSysEx:
-        return "syx"
+        return profile.genericSysExExtension
     }
 }
 
@@ -4211,13 +4233,13 @@ private func allowedContentTypes(for kind: FB01ArtifactKind) -> [UTType] {
     case .singleVoice:
         return UTType.fb01VoiceFileTypes
     case .voiceBank:
-        return [.fb01VoiceBank, .sysex]
+        return [.fb01VoiceBank, .fb01GenericSysEx]
     case .currentConfiguration, .storedConfiguration:
         return UTType.fb01ConfigurationFileTypes
     case .configurationSet:
-        return [.fb01ConfigurationBank, .sysex]
+        return [.fb01ConfigurationBank, .fb01GenericSysEx]
     case .unitID, .rawSysEx:
-        return [.sysex, .data]
+        return [.fb01GenericSysEx, .sysex, .data]
     }
 }
 

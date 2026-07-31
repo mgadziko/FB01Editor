@@ -64,7 +64,7 @@ func keyboardAuditionPreparationMessages(systemChannel: Int, midiChannel: Int) t
 func backupFileName(prefix: String, timestamp: Date = Date()) -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyMMdd-HHmmss"
-    return "\(prefix)-backup-\(formatter.string(from: timestamp)).syx"
+    return "\(prefix)-backup-\(formatter.string(from: timestamp)).\(EditorSynthModule.fileProfile.genericSysExExtension)"
 }
 
 @main

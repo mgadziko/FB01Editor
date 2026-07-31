@@ -25,6 +25,10 @@ enum EditorSynthModule {
         module.supportedDocumentDescriptors
     }
 
+    static var fileProfile: SynthFileProfile {
+        module.fileProfile
+    }
+
     static func documentDescriptor(for kind: SynthDocumentKind) -> SynthDocumentDescriptor? {
         supportedDocumentDescriptors.first { $0.kind == kind }
     }
