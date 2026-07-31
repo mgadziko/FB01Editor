@@ -780,7 +780,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        let fetchLocations: [VoiceDocumentFetchLocation] = (1...7).map { .bank($0) } + [.voiceRAM1]
+        let fetchLocations: [VoiceDocumentFetchLocation] = FB01SynthModule.shared.allVoiceBanks.map { .bank($0) } + [.voiceRAM1]
         for location in fetchLocations {
             bankPopup.addItem(withTitle: location.menuTitle)
         }
@@ -800,10 +800,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             let location = fetchLocations[selectedIndex]
             let selectedVoice = max(0, voicePopup.indexOfSelectedItem)
             voicePopup.removeAllItems()
-            for voiceNumber in 1...FB01VoiceBankData.voiceCount {
+            for voiceNumber in 1...FB01SynthModule.shared.voicesPerBank {
                 voicePopup.addItem(withTitle: nameLookup.voiceMenuTitle(location: location, voiceNumber: voiceNumber))
             }
-            voicePopup.selectItem(at: min(selectedVoice, FB01VoiceBankData.voiceCount - 1))
+            voicePopup.selectItem(at: min(selectedVoice, FB01SynthModule.shared.voicesPerBank - 1))
             if let selectedTitle = voicePopup.selectedItem?.title {
                 voicePopup.setTitle(selectedTitle)
             }
@@ -907,11 +907,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         stack.alignment = .leading
 
         let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        bankPopup.addItem(withTitle: "Bank 1")
-        bankPopup.addItem(withTitle: "Bank 2")
+        for bank in FB01SynthModule.shared.writableVoiceBanks {
+            bankPopup.addItem(withTitle: "Bank \(bank)")
+        }
 
         let voicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for voice in 1...FB01VoiceBankData.voiceCount {
+        for voice in 1...FB01SynthModule.shared.voicesPerBank {
             voicePopup.addItem(withTitle: "Voice \(voice)")
         }
 
@@ -973,7 +974,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     nonisolated private static func fetchRAMVoiceNames(sourceIndex: Int, destinationIndex: Int, systemChannel: Int) -> VoiceDocumentFetchNameLookup {
         var namesByBank: [Int: [String]] = [:]
-        for bank in 1...2 {
+        for bank in FB01SynthModule.shared.writableVoiceBanks {
             guard let bytes = try? FB01MIDI.request(
                 .voiceBank(bank),
                 sourceIndex: sourceIndex,

@@ -298,8 +298,8 @@ final class DocumentModel: ObservableObject {
     var deviceCacheSummaryRows: [KeyValueRow] {
         [
             KeyValueRow("Status", deviceCacheStatus),
-            KeyValueRow("Voice Banks", "\(cachedVoiceBanks.count)/7"),
-            KeyValueRow("Configurations", "\(cachedConfigurations.count)/20"),
+            KeyValueRow("Voice Banks", "\(cachedVoiceBanks.count)/\(FB01SynthModule.shared.allVoiceBanks.count)"),
+            KeyValueRow("Configurations", "\(cachedConfigurations.count)/\(FB01SynthModule.shared.allConfigurationSlots.upperBound)"),
         ]
     }
 
@@ -317,7 +317,7 @@ final class DocumentModel: ObservableObject {
 
     func refreshDeviceCache(
         reason: String = "Refreshing device cache",
-        voiceBanksToFetch requestedVoiceBanks: [Int] = Array(1...7),
+        voiceBanksToFetch requestedVoiceBanks: [Int] = FB01SynthModule.shared.allVoiceBanks,
         fetchConfigurations: Bool = true
     ) {
         guard !isBusy else {
@@ -330,7 +330,7 @@ final class DocumentModel: ObservableObject {
         let sourceName = selectedSourceName
         let destinationName = selectedDestinationName
         let voiceBanksToFetch = requestedVoiceBanks
-            .filter { (1...7).contains($0) }
+            .filter { FB01SynthModule.shared.isValidVoiceBank($0) }
             .sorted()
         let cacheProgressText = cacheProgressText(
             voiceBanks: voiceBanksToFetch,
@@ -357,7 +357,7 @@ final class DocumentModel: ObservableObject {
             var loadedConfigurations: [Int: FB01ConfigurationData] = [:]
             var loadedCurrentConfiguration: FB01ConfigurationData?
             var failures: [String] = []
-            let configurationRequestCount = fetchConfigurations ? 21 : 0
+            let configurationRequestCount = fetchConfigurations ? FB01SynthModule.shared.allConfigurationSlots.count + 1 : 0
             let totalRequests = Double(voiceBanksToFetch.count + configurationRequestCount)
             var completedRequests = 0.0
 
@@ -381,7 +381,7 @@ final class DocumentModel: ObservableObject {
             }
 
             for bank in voiceBanksToFetch {
-                statusMessage = "\(reason): reading Voice Bank \(bank) of 7..."
+                statusMessage = "\(reason): reading Voice Bank \(bank) of \(FB01SynthModule.shared.allVoiceBanks.count)..."
                 progressPanel.update(
                     message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nReading Voice Bank \(bank)...",
                     completed: completedRequests,
@@ -401,10 +401,10 @@ final class DocumentModel: ObservableObject {
             }
 
             if fetchConfigurations {
-                for slot in 1...20 {
-                    statusMessage = "\(reason): reading Configuration \(slot) of 20..."
+                for slot in FB01SynthModule.shared.allConfigurationSlots.closedRange {
+                    statusMessage = "\(reason): reading Configuration \(slot) of \(FB01SynthModule.shared.allConfigurationSlots.upperBound)..."
                     progressPanel.update(
-                        message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nReading Configuration \(slot) of 20...",
+                        message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nReading Configuration \(slot) of \(FB01SynthModule.shared.allConfigurationSlots.upperBound)...",
                         completed: completedRequests,
                         total: totalRequests
                     )
@@ -432,7 +432,7 @@ final class DocumentModel: ObservableObject {
             if let loadedCurrentConfiguration {
                 cachedCurrentConfiguration = loadedCurrentConfiguration
             }
-            for (bank, bankData) in loadedVoiceBanks where (1...2).contains(bank) {
+            for (bank, bankData) in loadedVoiceBanks where FB01SynthModule.shared.isWritableVoiceBank(bank) {
                 ramVoiceNameCache[bank] = bankData.voices.map { summary in
                     summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
                 }
@@ -454,10 +454,10 @@ final class DocumentModel: ObservableObject {
     private func voiceBanksToCacheOnLaunch() -> [Int] {
         var banks: [Int] = []
         if preCacheRAMVoiceBanksOnLaunch {
-            banks.append(contentsOf: 1...2)
+            banks.append(contentsOf: FB01SynthModule.shared.writableVoiceBanks)
         }
         if preCacheROMVoiceBanksOnLaunch {
-            banks.append(contentsOf: 3...7)
+            banks.append(contentsOf: FB01SynthModule.shared.readOnlyVoiceBanks)
         }
         return banks
     }
@@ -479,11 +479,11 @@ final class DocumentModel: ObservableObject {
     private func voiceBankCacheDescription(for banks: [Int]) -> String {
         let sortedBanks = banks.sorted()
         switch sortedBanks {
-        case Array(1...2):
+        case FB01SynthModule.shared.writableVoiceBanks:
             return "FB-01 RAM voice banks 1-2"
-        case Array(3...7):
+        case FB01SynthModule.shared.readOnlyVoiceBanks:
             return "FB-01 ROM voice banks 3-7"
-        case Array(1...7):
+        case FB01SynthModule.shared.allVoiceBanks:
             return "FB-01 voice banks 1-7"
         default:
             return "FB-01 voice banks \(sortedBanks.map(String.init).joined(separator: ", "))"
@@ -572,7 +572,7 @@ final class DocumentModel: ObservableObject {
     ) async -> String? {
         let referencedBanks = Array(Set(configuration.instruments.compactMap { instrument -> Int? in
             guard instrument.noteCount > 0,
-                  (1...2).contains(instrument.voiceBank) else {
+                  FB01SynthModule.shared.isWritableVoiceBank(instrument.voiceBank) else {
                 return nil
             }
             return instrument.voiceBank
@@ -671,7 +671,7 @@ final class DocumentModel: ObservableObject {
 
     func voiceNameLookupFromCache() -> VoiceDocumentFetchNameLookup {
         var namesByBank: [Int: [String]] = [:]
-        for bank in 1...2 {
+        for bank in FB01SynthModule.shared.writableVoiceBanks {
             if let voiceBank = cachedVoiceBanks[bank] {
                 namesByBank[bank] = voiceBank.voices.map { summary in
                     summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
@@ -693,7 +693,7 @@ final class DocumentModel: ObservableObject {
 
     func cacheVoiceBank(_ voiceBank: FB01VoiceBankData, userBankNumber: Int) {
         cachedVoiceBanks[userBankNumber] = voiceBank
-        if (1...2).contains(userBankNumber) {
+        if FB01SynthModule.shared.isWritableVoiceBank(userBankNumber) {
             ramVoiceNameCache[userBankNumber] = voiceBank.voices.map { summary in
                 summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
             }
@@ -1024,7 +1024,7 @@ final class DocumentModel: ObservableObject {
         operationTask = Task {
             do {
                 var responses: [[UInt8]] = []
-                let requests: [FB01MIDIRequestKind] = [.currentConfiguration] + (1...7).map { .voiceBank($0) } + [.voiceRAM1]
+                let requests = FB01DeviceService.shared.allBankRequestKinds
                 for (index, request) in requests.enumerated() {
                     try Task.checkCancellation()
                     let detail = "Requesting \(request.displayName) (\(index + 1) of \(requests.count))..."
@@ -1094,9 +1094,9 @@ final class DocumentModel: ObservableObject {
         operationTask = Task {
             do {
                 var responses: [[UInt8]] = []
-                for number in 1...20 {
+                for number in FB01SynthModule.shared.allConfigurationSlots.closedRange {
                     try Task.checkCancellation()
-                    let detail = "Requesting configuration \(number) of 20..."
+                    let detail = "Requesting configuration \(number) of \(FB01SynthModule.shared.allConfigurationSlots.upperBound)..."
                     statusMessage = detail
                     progressPanel.update(message: "The configurations are being fetched. Please wait.\n\(detail)")
                     let response = try await Task.detached(priority: .userInitiated) {
@@ -2103,10 +2103,11 @@ final class DocumentModel: ObservableObject {
         stack.alignment = .leading
 
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
-        for number in 1...16 {
+        for number in FB01SynthModule.shared.writableConfigurationSlots.closedRange {
             popup.addItem(withTitle: configurationSlotMenuTitle(slot: number - 1))
         }
-        if let storedNumber = selectedSource.storedConfigurationNumber, storedNumber < 16 {
+        if let storedNumber = selectedSource.storedConfigurationNumber,
+           FB01SynthModule.shared.isWritableConfigurationSlot(storedNumber + 1) {
             popup.selectItem(at: storedNumber)
         }
         let backupCheckbox = NSButton(checkboxWithTitle: "Fetch and save a backup of the destination slot before overwriting", target: nil, action: nil)
@@ -2238,7 +2239,7 @@ final class DocumentModel: ObservableObject {
     }
 
     func storeConfigurationMessages(payload: FB01ConfigurationData, systemChannel: Int, slot: Int) throws -> [[UInt8]] {
-        guard (0...15).contains(slot) else {
+        guard FB01SynthModule.shared.isWritableConfigurationSlot(slot + 1) else {
             throw FB01AppError.readOnlyConfigurationSlot
         }
 
@@ -2435,16 +2436,17 @@ final class DocumentModel: ObservableObject {
         stack.alignment = .leading
 
         let bankPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
-        bankPopup.addItem(withTitle: "Bank 1")
-        bankPopup.addItem(withTitle: "Bank 2")
-        let preferredSlot = min(max(currentNumber - 1, 0), FB01VoiceBankData.voiceCount * 2 - 1)
-        bankPopup.selectItem(at: preferredSlot / FB01VoiceBankData.voiceCount)
+        for bank in FB01SynthModule.shared.writableVoiceBanks {
+            bankPopup.addItem(withTitle: "Bank \(bank)")
+        }
+        let preferredSlot = min(max(currentNumber - 1, 0), FB01SynthModule.shared.writableVoiceSlotCount - 1)
+        bankPopup.selectItem(at: preferredSlot / FB01SynthModule.shared.voicesPerBank)
 
         let voicePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
-        for voiceNumber in 1...FB01VoiceBankData.voiceCount {
+        for voiceNumber in 1...FB01SynthModule.shared.voicesPerBank {
             voicePopup.addItem(withTitle: "Voice \(voiceNumber)")
         }
-        voicePopup.selectItem(at: preferredSlot % FB01VoiceBankData.voiceCount)
+        voicePopup.selectItem(at: preferredSlot % FB01SynthModule.shared.voicesPerBank)
 
         stack.addArrangedSubview(labelledPopup(label: "Bank:", popup: bankPopup))
         stack.addArrangedSubview(labelledPopup(label: "Voice:", popup: voicePopup))
@@ -2502,7 +2504,7 @@ final class DocumentModel: ObservableObject {
         systemChannel: Int
     ) -> ConfigurationFetchNameLookup {
         var names: [Int: String] = [:]
-        for slot in 1...16 {
+        for slot in FB01SynthModule.shared.writableConfigurationSlots.closedRange {
             guard let bytes = try? FB01MIDI.request(
                 .configuration(slot),
                 sourceIndex: sourceIndex,
@@ -2587,7 +2589,7 @@ final class DocumentModel: ObservableObject {
         systemChannel: Int
     ) -> VoiceDocumentFetchNameLookup {
         var namesByBank: [Int: [String]] = [:]
-        for bank in 1...2 {
+        for bank in FB01SynthModule.shared.writableVoiceBanks {
             guard let bytes = try? FB01MIDI.request(
                 .voiceBank(bank),
                 sourceIndex: sourceIndex,
@@ -3190,14 +3192,7 @@ final class DocumentModel: ObservableObject {
     }
 
     func voiceRAMBankRequestKind(forVoiceSlot voiceSlot: Int) throws -> FB01MIDIRequestKind {
-        guard (0..<FB01VoiceBankData.voiceCount * 2).contains(voiceSlot) else {
-            throw FB01SysExError.valueOutOfRange(
-                name: "voiceSlot",
-                value: voiceSlot,
-                range: 0...(FB01VoiceBankData.voiceCount * 2 - 1)
-            )
-        }
-        return .voiceBank(voiceSlot / FB01VoiceBankData.voiceCount + 1)
+        try FB01DeviceService.shared.writableVoiceBankRequestKind(forVoiceSlot: voiceSlot)
     }
 
     func storedVoicePayload(from messages: [[UInt8]], voiceSlot: Int) throws -> FB01VoiceData? {
@@ -3646,7 +3641,7 @@ final class DocumentModel: ObservableObject {
     private func writableVoiceSlotTargets(sourceID: LibrarySource.ID, currentNumber: Int) -> [VoiceSlotTarget] {
         sources.flatMap { source -> [VoiceSlotTarget] in
             guard let voiceBank = source.voiceBankData,
-                  (0...1).contains(voiceBank.bank) else {
+                  FB01SynthModule.shared.isWritableVoiceBank(FB01SynthModule.shared.displayVoiceBank(forStorageBank: voiceBank.bank)) else {
                 return []
             }
 
@@ -3677,7 +3672,7 @@ final class DocumentModel: ObservableObject {
     private func voiceName(bank: Int, voiceNumber: Int) -> String? {
         let candidateNumbers = candidateVoiceNumbers(fromStoredNumber: voiceNumber)
 
-        if (1...2).contains(bank) {
+        if FB01SynthModule.shared.isWritableVoiceBank(bank) {
             for number in candidateNumbers {
                 if let names = ramVoiceNameCache[bank],
                    (1...names.count).contains(number) {
@@ -3772,10 +3767,10 @@ final class DocumentModel: ObservableObject {
         alert.addButton(withTitle: "Cancel")
 
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
-        popup.addItem(withTitle: "Bank 1")
-        popup.lastItem?.representedObject = 1
-        popup.addItem(withTitle: "Bank 2")
-        popup.lastItem?.representedObject = 2
+        for bank in FB01SynthModule.shared.writableVoiceBanks {
+            popup.addItem(withTitle: "Bank \(bank)")
+            popup.lastItem?.representedObject = bank
+        }
         alert.accessoryView = labelledEditorPopup(label: "Bank:", popup: popup)
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -3909,12 +3904,12 @@ final class DocumentModel: ObservableObject {
     }
 
     private func knownVoiceSlotDescription(slot: Int) -> String? {
-        guard (0..<FB01VoiceBankData.voiceCount * 2).contains(slot) else {
+        guard (0..<FB01SynthModule.shared.writableVoiceSlotCount).contains(slot) else {
             return nil
         }
 
-        let bank = slot / FB01VoiceBankData.voiceCount
-        let number = slot % FB01VoiceBankData.voiceCount + 1
+        let bank = slot / FB01SynthModule.shared.voicesPerBank
+        let number = slot % FB01SynthModule.shared.voicesPerBank + 1
 
         guard let voice = knownVoice(bank: bank, number: number) else {
             return nil

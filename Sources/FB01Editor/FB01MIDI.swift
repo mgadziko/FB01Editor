@@ -141,7 +141,7 @@ public enum FB01MIDI {
         timeoutPerRequest: TimeInterval = 20
     ) throws -> [[UInt8]] {
         try requestBatch(
-            [.currentConfiguration] + (1...7).map { .voiceBank($0) } + [.voiceRAM1],
+            FB01DeviceService.shared.allBankRequestKinds,
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
             systemChannel: systemChannel,
@@ -156,7 +156,7 @@ public enum FB01MIDI {
         timeoutPerRequest: TimeInterval = 15
     ) throws -> [[UInt8]] {
         try requestBatch(
-            (1...20).map { .configuration($0) },
+            FB01DeviceService.shared.storedConfigurationRequestKinds,
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
             systemChannel: systemChannel,

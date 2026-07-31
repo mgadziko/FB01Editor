@@ -50,8 +50,8 @@ final class DeviceConfigurationCopyAccessory: NSView {
 
         addSectionTitle("Fetch source:", x: 0)
         addSectionTitle("Store target:", x: 322)
-        addSlotPopup(sourceSlotPopup, x: 0, slots: 1...20)
-        addSlotPopup(targetSlotPopup, x: 322, slots: 1...16)
+        addSlotPopup(sourceSlotPopup, x: 0, slots: FB01SynthModule.shared.allConfigurationSlots.closedRange)
+        addSlotPopup(targetSlotPopup, x: 322, slots: FB01SynthModule.shared.writableConfigurationSlots.closedRange)
     }
 
     required init?(coder: NSCoder) {
@@ -105,14 +105,14 @@ final class DeviceVoiceCopyAccessory: NSView {
             bankPopup: sourceBankPopup,
             voicePopup: sourceVoicePopup,
             x: 0,
-            bankRange: 1...7,
+            bankRange: FB01SynthModule.shared.voiceBankRange.closedRange,
             bankTitle: { nameLookupBankTitle($0) }
         )
         addPopupRows(
             bankPopup: targetBankPopup,
             voicePopup: targetVoicePopup,
             x: 322,
-            bankRange: 1...2,
+            bankRange: FB01SynthModule.shared.writableVoiceBankRange.closedRange,
             bankTitle: { "Bank \($0)" }
         )
 
@@ -182,13 +182,13 @@ final class DeviceVoiceCopyAccessory: NSView {
     private func populateVoices(in popup: NSPopUpButton, bank: Int, includeNames: Bool) {
         let selectedVoice = max(0, popup.indexOfSelectedItem)
         popup.removeAllItems()
-        for voiceNumber in 1...FB01VoiceBankData.voiceCount {
+        for voiceNumber in 1...FB01SynthModule.shared.voicesPerBank {
             let title = includeNames
                 ? nameLookup.voiceMenuTitle(location: .bank(bank), voiceNumber: voiceNumber)
                 : "Voice \(voiceNumber)"
             popup.addItem(withTitle: title)
         }
-        popup.selectItem(at: min(selectedVoice, FB01VoiceBankData.voiceCount - 1))
+        popup.selectItem(at: min(selectedVoice, FB01SynthModule.shared.voicesPerBank - 1))
     }
 
     private func nameLookupBankTitle(_ bank: Int) -> String {

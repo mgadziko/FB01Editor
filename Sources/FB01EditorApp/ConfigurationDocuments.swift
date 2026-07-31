@@ -496,7 +496,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     nonisolated private static func fetchConfigurationNames(sourceIndex: Int, destinationIndex: Int, systemChannel: Int) -> ConfigurationFetchNameLookup {
         var names: [Int: String] = [:]
-        for slot in 1...16 {
+        for slot in FB01SynthModule.shared.writableConfigurationSlots.closedRange {
             guard let bytes = try? FB01MIDI.request(
                 .configuration(slot),
                 sourceIndex: sourceIndex,
@@ -540,7 +540,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         stack.alignment = .leading
 
         let slotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for slot in 1...16 {
+        for slot in FB01SynthModule.shared.writableConfigurationSlots.closedRange {
             slotPopup.addItem(withTitle: "Configuration \(slot)")
         }
         let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored slot after writing and compare it to this document", target: nil, action: nil)
@@ -562,7 +562,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
     }
 
     private static func storeMessages(configuration: FB01ConfigurationData, systemChannel: Int, slot: Int) throws -> [[UInt8]] {
-        guard (0...15).contains(slot) else {
+        guard FB01SynthModule.shared.isWritableConfigurationSlot(slot + 1) else {
             throw FB01AppError.readOnlyConfigurationSlot
         }
         let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off))
