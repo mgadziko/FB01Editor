@@ -34,6 +34,13 @@
 		100000000000000000000019 /* ParameterKnob.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000001F /* ParameterKnob.swift */; };
 		10000000000000000000001A /* EditorViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000020 /* EditorViews.swift */; };
 		10000000000000000000001B /* LiveMIDIPlaybackController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000021 /* LiveMIDIPlaybackController.swift */; };
+		10000000000000000000001C /* PatchBayViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000022 /* PatchBayViews.swift */; };
+		10000000000000000000001D /* Dialogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000023 /* Dialogs.swift */; };
+		10000000000000000000001E /* EditorDocumentWorkspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000024 /* EditorDocumentWorkspace.swift */; };
+		10000000000000000000001F /* EditorDocumentUtilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000025 /* EditorDocumentUtilities.swift */; };
+		100000000000000000000020 /* VoiceDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000026 /* VoiceDocuments.swift */; };
+		100000000000000000000021 /* ConfigurationDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000027 /* ConfigurationDocuments.swift */; };
+		100000000000000000000022 /* DocumentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000028 /* DocumentModels.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -108,6 +115,13 @@
 		20000000000000000000001F /* ParameterKnob.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ParameterKnob.swift; sourceTree = "<group>"; };
 		200000000000000000000020 /* EditorViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorViews.swift; sourceTree = "<group>"; };
 		200000000000000000000021 /* LiveMIDIPlaybackController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveMIDIPlaybackController.swift; sourceTree = "<group>"; };
+		200000000000000000000022 /* PatchBayViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchBayViews.swift; sourceTree = "<group>"; };
+		200000000000000000000023 /* Dialogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Dialogs.swift; sourceTree = "<group>"; };
+		200000000000000000000024 /* EditorDocumentWorkspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentWorkspace.swift; sourceTree = "<group>"; };
+		200000000000000000000025 /* EditorDocumentUtilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentUtilities.swift; sourceTree = "<group>"; };
+		200000000000000000000026 /* VoiceDocuments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceDocuments.swift; sourceTree = "<group>"; };
+		200000000000000000000027 /* ConfigurationDocuments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationDocuments.swift; sourceTree = "<group>"; };
+		200000000000000000000028 /* DocumentModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentModels.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -185,11 +199,18 @@
 		700000000000000000000004 /* FB01EditorApp */ = {
 			isa = PBXGroup;
 			children = (
+				200000000000000000000027 /* ConfigurationDocuments.swift */,
+				200000000000000000000023 /* Dialogs.swift */,
+				200000000000000000000024 /* EditorDocumentWorkspace.swift */,
 				200000000000000000000007 /* EditorDocumentExtraction.swift */,
+				200000000000000000000025 /* EditorDocumentUtilities.swift */,
 				200000000000000000000020 /* EditorViews.swift */,
 				200000000000000000000008 /* FB01EditorApp.swift */,
 				200000000000000000000021 /* LiveMIDIPlaybackController.swift */,
 				20000000000000000000001F /* ParameterKnob.swift */,
+				200000000000000000000022 /* PatchBayViews.swift */,
+				200000000000000000000026 /* VoiceDocuments.swift */,
+				200000000000000000000028 /* DocumentModels.swift */,
 			);
 			path = FB01EditorApp;
 			sourceTree = "<group>";
@@ -461,10 +482,17 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000007 /* EditorDocumentExtraction.swift in Sources */,
+				10000000000000000000001F /* EditorDocumentUtilities.swift in Sources */,
 				10000000000000000000001A /* EditorViews.swift in Sources */,
 				100000000000000000000008 /* FB01EditorApp.swift in Sources */,
+				10000000000000000000001E /* EditorDocumentWorkspace.swift in Sources */,
+				10000000000000000000001D /* Dialogs.swift in Sources */,
 				10000000000000000000001B /* LiveMIDIPlaybackController.swift in Sources */,
 				100000000000000000000019 /* ParameterKnob.swift in Sources */,
+				10000000000000000000001C /* PatchBayViews.swift in Sources */,
+				100000000000000000000020 /* VoiceDocuments.swift in Sources */,
+				100000000000000000000021 /* ConfigurationDocuments.swift in Sources */,
+				100000000000000000000022 /* DocumentModels.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
