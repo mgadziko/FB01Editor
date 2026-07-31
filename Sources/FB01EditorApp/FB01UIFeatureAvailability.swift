@@ -2,7 +2,7 @@ import FB01Editor
 
 enum FB01UIFeatureAvailability {
     private static var capabilities: SynthModuleCapabilities {
-        FB01ModuleServices.shared.module.capabilities
+        FB01ModuleAdapter.shared.capabilities
     }
 
     static var supportsConfigurations: Bool {

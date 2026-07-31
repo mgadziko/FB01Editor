@@ -296,10 +296,11 @@ final class DocumentModel: ObservableObject {
     }
 
     var deviceCacheSummaryRows: [KeyValueRow] {
-        [
+        let module = FB01ModuleServices.shared.module
+        return [
             KeyValueRow("Status", deviceCacheStatus),
-            KeyValueRow("Voice Banks", "\(cachedVoiceBanks.count)/\(FB01SynthModule.shared.allVoiceBanks.count)"),
-            KeyValueRow("Configurations", "\(cachedConfigurations.count)/\(FB01SynthModule.shared.allConfigurationSlots.upperBound)"),
+            KeyValueRow("Voice Banks", "\(cachedVoiceBanks.count)/\(module.allVoiceBanks.count)"),
+            KeyValueRow("Configurations", "\(cachedConfigurations.count)/\(module.allConfigurationSlots.upperBound)"),
         ]
     }
 
@@ -317,7 +318,7 @@ final class DocumentModel: ObservableObject {
 
     func refreshDeviceCache(
         reason: String = "Refreshing device cache",
-        voiceBanksToFetch requestedVoiceBanks: [Int] = FB01SynthModule.shared.allVoiceBanks,
+        voiceBanksToFetch requestedVoiceBanks: [Int] = FB01ModuleServices.shared.module.allVoiceBanks,
         fetchConfigurations: Bool = true
     ) {
         guard !isBusy else {
@@ -400,7 +401,7 @@ final class DocumentModel: ObservableObject {
         case .voiceBank(let bank):
             "Reading Voice Bank \(bank)..."
         case .configuration(let slot):
-            "Reading Configuration \(slot) of \(FB01SynthModule.shared.allConfigurationSlots.upperBound)..."
+            "Reading Configuration \(slot) of \(FB01ModuleServices.shared.module.allConfigurationSlots.upperBound)..."
         case .finishing:
             "Finishing cache update..."
         }
@@ -408,11 +409,12 @@ final class DocumentModel: ObservableObject {
 
     private func voiceBanksToCacheOnLaunch() -> [Int] {
         var banks: [Int] = []
+        let module = FB01ModuleServices.shared.module
         if preCacheRAMVoiceBanksOnLaunch {
-            banks.append(contentsOf: FB01SynthModule.shared.writableVoiceBanks)
+            banks.append(contentsOf: module.writableVoiceBanks)
         }
         if preCacheROMVoiceBanksOnLaunch {
-            banks.append(contentsOf: FB01SynthModule.shared.readOnlyVoiceBanks)
+            banks.append(contentsOf: module.readOnlyVoiceBanks)
         }
         return banks
     }
@@ -433,12 +435,13 @@ final class DocumentModel: ObservableObject {
 
     private func voiceBankCacheDescription(for banks: [Int]) -> String {
         let sortedBanks = banks.sorted()
+        let module = FB01ModuleServices.shared.module
         switch sortedBanks {
-        case FB01SynthModule.shared.writableVoiceBanks:
+        case module.writableVoiceBanks:
             return "FB-01 RAM voice banks 1-2"
-        case FB01SynthModule.shared.readOnlyVoiceBanks:
+        case module.readOnlyVoiceBanks:
             return "FB-01 ROM voice banks 3-7"
-        case FB01SynthModule.shared.allVoiceBanks:
+        case module.allVoiceBanks:
             return "FB-01 voice banks 1-7"
         default:
             return "FB-01 voice banks \(sortedBanks.map(String.init).joined(separator: ", "))"
@@ -452,7 +455,7 @@ final class DocumentModel: ObservableObject {
         systemChannel: Int
     ) async -> FB01ConfigurationData? {
         await Task.detached(priority: .userInitiated) {
-            try? FB01ConfigurationService.shared.fetchStoredConfiguration(
+            try? FB01ModuleServices.shared.configurationService.fetchStoredConfiguration(
                 zeroBasedSlot: slot - 1,
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
@@ -468,7 +471,7 @@ final class DocumentModel: ObservableObject {
         systemChannel: Int
     ) async -> FB01ConfigurationData? {
         await Task.detached(priority: .userInitiated) {
-            try? FB01ConfigurationService.shared.fetchCurrentConfiguration(
+            try? FB01ModuleServices.shared.configurationService.fetchCurrentConfiguration(
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
                 systemChannel: systemChannel,
@@ -485,7 +488,7 @@ final class DocumentModel: ObservableObject {
     ) async -> String? {
         let referencedBanks = Array(Set(configuration.instruments.compactMap { instrument -> Int? in
             guard instrument.noteCount > 0,
-                  FB01SynthModule.shared.isWritableVoiceBank(instrument.voiceBank) else {
+                  FB01ModuleServices.shared.module.isWritableVoiceBank(instrument.voiceBank) else {
                 return nil
             }
             return instrument.voiceBank
@@ -584,7 +587,7 @@ final class DocumentModel: ObservableObject {
 
     func voiceNameLookupFromCache() -> VoiceDocumentFetchNameLookup {
         var namesByBank: [Int: [String]] = [:]
-        for bank in FB01SynthModule.shared.writableVoiceBanks {
+        for bank in FB01ModuleServices.shared.module.writableVoiceBanks {
             if let voiceBank = cachedVoiceBanks[bank] {
                 namesByBank[bank] = voiceBank.voices.map { summary in
                     summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
@@ -606,7 +609,7 @@ final class DocumentModel: ObservableObject {
 
     func cacheVoiceBank(_ voiceBank: FB01VoiceBankData, userBankNumber: Int) {
         cachedVoiceBanks[userBankNumber] = voiceBank
-        if FB01SynthModule.shared.isWritableVoiceBank(userBankNumber) {
+        if FB01ModuleServices.shared.module.isWritableVoiceBank(userBankNumber) {
             ramVoiceNameCache[userBankNumber] = voiceBank.voices.map { summary in
                 summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
             }
@@ -937,7 +940,7 @@ final class DocumentModel: ObservableObject {
         operationTask = Task {
             do {
                 var responses: [[UInt8]] = []
-                let requests = FB01DeviceService.shared.allBankRequestKinds
+                let requests = FB01ModuleServices.shared.deviceService.allBankRequestKinds
                 for (index, request) in requests.enumerated() {
                     try Task.checkCancellation()
                     let detail = "Requesting \(request.displayName) (\(index + 1) of \(requests.count))..."
@@ -1007,9 +1010,10 @@ final class DocumentModel: ObservableObject {
         operationTask = Task {
             do {
                 var responses: [[UInt8]] = []
-                for number in FB01SynthModule.shared.allConfigurationSlots.closedRange {
+                let module = FB01ModuleServices.shared.module
+                for number in module.allConfigurationSlots.closedRange {
                     try Task.checkCancellation()
-                    let detail = "Requesting configuration \(number) of \(FB01SynthModule.shared.allConfigurationSlots.upperBound)..."
+                    let detail = "Requesting configuration \(number) of \(module.allConfigurationSlots.upperBound)..."
                     statusMessage = detail
                     progressPanel.update(message: "The configurations are being fetched. Please wait.\n\(detail)")
                     let response = try await Task.detached(priority: .userInitiated) {
@@ -2016,11 +2020,12 @@ final class DocumentModel: ObservableObject {
         stack.alignment = .leading
 
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 260, height: 26), pullsDown: false)
-        for number in FB01SynthModule.shared.writableConfigurationSlots.closedRange {
+        let module = FB01ModuleServices.shared.module
+        for number in module.writableConfigurationSlots.closedRange {
             popup.addItem(withTitle: configurationSlotMenuTitle(slot: number - 1))
         }
         if let storedNumber = selectedSource.storedConfigurationNumber,
-           FB01SynthModule.shared.isWritableConfigurationSlot(storedNumber + 1) {
+           module.isWritableConfigurationSlot(storedNumber + 1) {
             popup.selectItem(at: storedNumber)
         }
         let backupCheckbox = NSButton(checkboxWithTitle: "Fetch and save a backup of the destination slot before overwriting", target: nil, action: nil)
@@ -2153,7 +2158,7 @@ final class DocumentModel: ObservableObject {
 
     func storeConfigurationMessages(payload: FB01ConfigurationData, systemChannel: Int, slot: Int) throws -> [[UInt8]] {
         do {
-            return try FB01ConfigurationService.shared.storeMessages(
+            return try FB01ModuleServices.shared.configurationService.storeMessages(
                 configuration: payload,
                 systemChannel: systemChannel,
                 zeroBasedSlot: slot
@@ -2341,17 +2346,18 @@ final class DocumentModel: ObservableObject {
         stack.alignment = .leading
 
         let bankPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
-        for bank in FB01SynthModule.shared.writableVoiceBanks {
+        let module = FB01ModuleServices.shared.module
+        for bank in module.writableVoiceBanks {
             bankPopup.addItem(withTitle: "Bank \(bank)")
         }
-        let preferredSlot = min(max(currentNumber - 1, 0), FB01SynthModule.shared.writableVoiceSlotCount - 1)
-        bankPopup.selectItem(at: preferredSlot / FB01SynthModule.shared.voicesPerBank)
+        let preferredSlot = min(max(currentNumber - 1, 0), module.writableVoiceSlotCount - 1)
+        bankPopup.selectItem(at: preferredSlot / module.voicesPerBank)
 
         let voicePopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 26), pullsDown: false)
-        for voiceNumber in 1...FB01SynthModule.shared.voicesPerBank {
+        for voiceNumber in 1...module.voicesPerBank {
             voicePopup.addItem(withTitle: "Voice \(voiceNumber)")
         }
-        voicePopup.selectItem(at: preferredSlot % FB01SynthModule.shared.voicesPerBank)
+        voicePopup.selectItem(at: preferredSlot % module.voicesPerBank)
 
         stack.addArrangedSubview(labelledPopup(label: "Bank:", popup: bankPopup))
         stack.addArrangedSubview(labelledPopup(label: "Voice:", popup: voicePopup))
@@ -2391,7 +2397,7 @@ final class DocumentModel: ObservableObject {
         systemChannel: Int
     ) throws -> FB01ConfigurationData {
         do {
-            return try FB01ConfigurationService.shared.fetchStoredConfiguration(
+            return try FB01ModuleServices.shared.configurationService.fetchStoredConfiguration(
                 zeroBasedSlot: slot,
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
@@ -2408,7 +2414,7 @@ final class DocumentModel: ObservableObject {
         destinationIndex: Int,
         systemChannel: Int
     ) -> ConfigurationFetchNameLookup {
-        let names = FB01ConfigurationService.shared.fetchWritableConfigurationNames(
+        let names = FB01ModuleServices.shared.configurationService.fetchWritableConfigurationNames(
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
             systemChannel: systemChannel,
@@ -2418,11 +2424,11 @@ final class DocumentModel: ObservableObject {
     }
 
     nonisolated private static func configurationName(fromDump bytes: [UInt8]) throws -> String? {
-        try FB01ConfigurationService.shared.configurationName(fromDump: bytes)
+        try FB01ModuleServices.shared.configurationService.configurationName(fromDump: bytes)
     }
 
     nonisolated private static func storedConfigurationPayload(from bytes: [UInt8], slot: Int) throws -> FB01ConfigurationData? {
-        try FB01ConfigurationService.shared.storedConfiguration(fromDump: bytes, zeroBasedSlot: slot)
+        try FB01ModuleServices.shared.configurationService.storedConfiguration(fromDump: bytes, zeroBasedSlot: slot)
     }
 
     private static func chooseDeviceVoiceCopySelection(nameLookup: VoiceDocumentFetchNameLookup) -> DeviceVoiceCopySelection? {
@@ -2448,7 +2454,7 @@ final class DocumentModel: ObservableObject {
         destinationIndex: Int,
         systemChannel: Int
     ) throws -> FB01VoiceData {
-        try FB01VoiceService.shared.fetchStoredVoice(
+        try FB01ModuleServices.shared.voiceService.fetchStoredVoice(
             bank: bank,
             zeroBasedVoiceNumber: voiceNumber,
             sourceIndex: sourceIndex,
@@ -2462,7 +2468,7 @@ final class DocumentModel: ObservableObject {
         destinationIndex: Int,
         systemChannel: Int
     ) -> VoiceDocumentFetchNameLookup {
-        let namesByBank = FB01VoiceService.shared.fetchWritableRAMVoiceNames(
+        let namesByBank = FB01ModuleServices.shared.voiceService.fetchWritableRAMVoiceNames(
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
             systemChannel: systemChannel,
@@ -3051,7 +3057,7 @@ final class DocumentModel: ObservableObject {
     }
 
     func voiceRAMBankRequestKind(forVoiceSlot voiceSlot: Int) throws -> FB01MIDIRequestKind {
-        try FB01DeviceService.shared.writableVoiceBankRequestKind(forVoiceSlot: voiceSlot)
+        try FB01ModuleServices.shared.deviceService.writableVoiceBankRequestKind(forVoiceSlot: voiceSlot)
     }
 
     func storedVoicePayload(from messages: [[UInt8]], voiceSlot: Int) throws -> FB01VoiceData? {
@@ -3502,7 +3508,7 @@ final class DocumentModel: ObservableObject {
     private func writableVoiceSlotTargets(sourceID: LibrarySource.ID, currentNumber: Int) -> [VoiceSlotTarget] {
         sources.flatMap { source -> [VoiceSlotTarget] in
             guard let voiceBank = source.voiceBankData,
-                  FB01SynthModule.shared.isWritableVoiceBank(FB01SynthModule.shared.displayVoiceBank(forStorageBank: voiceBank.bank)) else {
+                  FB01ModuleServices.shared.module.isWritableVoiceBank(FB01ModuleServices.shared.module.displayVoiceBank(forStorageBank: voiceBank.bank)) else {
                 return []
             }
 
@@ -3533,7 +3539,7 @@ final class DocumentModel: ObservableObject {
     private func voiceName(bank: Int, voiceNumber: Int) -> String? {
         let candidateNumbers = candidateVoiceNumbers(fromStoredNumber: voiceNumber)
 
-        if FB01SynthModule.shared.isWritableVoiceBank(bank) {
+        if FB01ModuleServices.shared.module.isWritableVoiceBank(bank) {
             for number in candidateNumbers {
                 if let names = ramVoiceNameCache[bank],
                    (1...names.count).contains(number) {
@@ -3628,7 +3634,7 @@ final class DocumentModel: ObservableObject {
         alert.addButton(withTitle: "Cancel")
 
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 220, height: 26), pullsDown: false)
-        for bank in FB01SynthModule.shared.writableVoiceBanks {
+        for bank in FB01ModuleServices.shared.module.writableVoiceBanks {
             popup.addItem(withTitle: "Bank \(bank)")
             popup.lastItem?.representedObject = bank
         }
@@ -3765,12 +3771,13 @@ final class DocumentModel: ObservableObject {
     }
 
     private func knownVoiceSlotDescription(slot: Int) -> String? {
-        guard (0..<FB01SynthModule.shared.writableVoiceSlotCount).contains(slot) else {
+        let module = FB01ModuleServices.shared.module
+        guard (0..<module.writableVoiceSlotCount).contains(slot) else {
             return nil
         }
 
-        let bank = slot / FB01SynthModule.shared.voicesPerBank
-        let number = slot % FB01SynthModule.shared.voicesPerBank + 1
+        let bank = slot / module.voicesPerBank
+        let number = slot % module.voicesPerBank + 1
 
         guard let voice = knownVoice(bank: bank, number: number) else {
             return nil

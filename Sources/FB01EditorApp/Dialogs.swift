@@ -48,10 +48,11 @@ final class DeviceConfigurationCopyAccessory: NSView {
         self.nameLookup = nameLookup
         super.init(frame: NSRect(x: 0, y: 0, width: 620, height: 108))
 
+        let module = FB01ModuleServices.shared.module
         addSectionTitle("Fetch source:", x: 0)
         addSectionTitle("Store target:", x: 322)
-        addSlotPopup(sourceSlotPopup, x: 0, slots: FB01SynthModule.shared.allConfigurationSlots.closedRange)
-        addSlotPopup(targetSlotPopup, x: 322, slots: FB01SynthModule.shared.writableConfigurationSlots.closedRange)
+        addSlotPopup(sourceSlotPopup, x: 0, slots: module.allConfigurationSlots.closedRange)
+        addSlotPopup(targetSlotPopup, x: 322, slots: module.writableConfigurationSlots.closedRange)
     }
 
     required init?(coder: NSCoder) {
@@ -99,20 +100,21 @@ final class DeviceVoiceCopyAccessory: NSView {
         self.nameLookup = nameLookup
         super.init(frame: NSRect(x: 0, y: 0, width: 620, height: 146))
 
+        let module = FB01ModuleServices.shared.module
         addSectionTitle("Fetch source:", x: 0)
         addSectionTitle("Store target:", x: 322)
         addPopupRows(
             bankPopup: sourceBankPopup,
             voicePopup: sourceVoicePopup,
             x: 0,
-            bankRange: FB01SynthModule.shared.voiceBankRange.closedRange,
+            bankRange: module.voiceBankRange.closedRange,
             bankTitle: { nameLookupBankTitle($0) }
         )
         addPopupRows(
             bankPopup: targetBankPopup,
             voicePopup: targetVoicePopup,
             x: 322,
-            bankRange: FB01SynthModule.shared.writableVoiceBankRange.closedRange,
+            bankRange: module.writableVoiceBankRange.closedRange,
             bankTitle: { "Bank \($0)" }
         )
 
@@ -181,14 +183,15 @@ final class DeviceVoiceCopyAccessory: NSView {
 
     private func populateVoices(in popup: NSPopUpButton, bank: Int, includeNames: Bool) {
         let selectedVoice = max(0, popup.indexOfSelectedItem)
+        let module = FB01ModuleServices.shared.module
         popup.removeAllItems()
-        for voiceNumber in 1...FB01SynthModule.shared.voicesPerBank {
+        for voiceNumber in 1...module.voicesPerBank {
             let title = includeNames
                 ? nameLookup.voiceMenuTitle(location: .bank(bank), voiceNumber: voiceNumber)
                 : "Voice \(voiceNumber)"
             popup.addItem(withTitle: title)
         }
-        popup.selectItem(at: min(selectedVoice, FB01SynthModule.shared.voicesPerBank - 1))
+        popup.selectItem(at: min(selectedVoice, module.voicesPerBank - 1))
     }
 
     private func nameLookupBankTitle(_ bank: Int) -> String {

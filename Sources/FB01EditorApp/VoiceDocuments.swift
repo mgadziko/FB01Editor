@@ -258,7 +258,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     )
                     progressPanel.show()
                     nameLookup = await Task.detached(priority: .userInitiated) {
-                        Self.fetchRAMVoiceNames(
+                        FB01VoiceDocumentService.fetchRAMVoiceNames(
                             sourceIndex: sourceIndex,
                             destinationIndex: destinationIndex,
                             systemChannel: systemChannel
@@ -311,7 +311,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             fetchProgressPanel.show()
             do {
                 let result = try await Task.detached(priority: .userInitiated) {
-                    try Self.fetchVoice(source: source, sourceIndex: sourceIndex, destinationIndex: destinationIndex, systemChannel: systemChannel)
+                    try FB01VoiceDocumentService.fetchVoice(source: source, sourceIndex: sourceIndex, destinationIndex: destinationIndex, systemChannel: systemChannel)
                 }.value
                 voice = result.voice
                 savedVoice = result.voice
@@ -666,8 +666,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     private func buildKeyboardPreparationMessages(midiChannel: Int) throws -> [[UInt8]] {
-        let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
-        return [try artifact.sysexBytes] + (try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel))
+        try FB01VoiceDocumentService.auditionPreparationMessages(
+            voice: voice,
+            systemChannel: systemChannel,
+            midiChannel: midiChannel
+        )
     }
 
     private func keyboardPreparationSignature(midiChannel: Int) -> String {
@@ -737,34 +740,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         return candidates[popup.indexOfSelectedItem]
     }
 
-    nonisolated private static func fetchVoice(source: VoiceDocumentFetchSource, sourceIndex: Int, destinationIndex: Int, systemChannel: Int) throws -> (voice: FB01VoiceData, systemChannel: Int, title: String) {
-        switch source {
-        case .instrument(let instrument):
-            let bytes = try FB01MIDI.request(
-                .instrumentVoice(instrument + 1),
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel,
-                timeout: 8
-            )
-            let artifact = try FB01Artifact(sysexBytes: bytes)
-            let payload = try extractVoice(from: artifact)
-            return (payload.voice, payload.systemChannel, "instrument \(instrument + 1) voice")
-        case let .storedSlot(location, voiceNumber):
-            let bytes = try FB01MIDI.request(
-                location.requestKind,
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel,
-                timeout: 15
-            )
-            guard let voice = try storedVoice(from: bytes, location: location, voiceNumber: voiceNumber) else {
-                throw FB01AppError.noVoiceSource
-            }
-            return (voice, systemChannel, "\(location.title) Voice \(voiceNumber + 1)")
-        }
-    }
-
     private static func chooseFetchSource(
         title: String,
         actionTitle: String,
@@ -782,7 +757,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        let fetchLocations: [VoiceDocumentFetchLocation] = FB01SynthModule.shared.allVoiceBanks.map { .bank($0) } + [.voiceRAM1]
+        let module = FB01ModuleServices.shared.module
+        let fetchLocations: [VoiceDocumentFetchLocation] = module.allVoiceBanks.map { .bank($0) } + [.voiceRAM1]
         for location in fetchLocations {
             bankPopup.addItem(withTitle: location.menuTitle)
         }
@@ -802,10 +778,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             let location = fetchLocations[selectedIndex]
             let selectedVoice = max(0, voicePopup.indexOfSelectedItem)
             voicePopup.removeAllItems()
-            for voiceNumber in 1...FB01SynthModule.shared.voicesPerBank {
+            for voiceNumber in 1...module.voicesPerBank {
                 voicePopup.addItem(withTitle: nameLookup.voiceMenuTitle(location: location, voiceNumber: voiceNumber))
             }
-            voicePopup.selectItem(at: min(selectedVoice, FB01SynthModule.shared.voicesPerBank - 1))
+            voicePopup.selectItem(at: min(selectedVoice, module.voicesPerBank - 1))
             if let selectedTitle = voicePopup.selectedItem?.title {
                 voicePopup.setTitle(selectedTitle)
             }
@@ -909,12 +885,13 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         stack.alignment = .leading
 
         let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for bank in FB01SynthModule.shared.writableVoiceBanks {
+        let module = FB01ModuleServices.shared.module
+        for bank in module.writableVoiceBanks {
             bankPopup.addItem(withTitle: "Bank \(bank)")
         }
 
         let voicePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for voice in 1...FB01SynthModule.shared.voicesPerBank {
+        for voice in 1...module.voicesPerBank {
             voicePopup.addItem(withTitle: "Voice \(voice)")
         }
 
@@ -935,48 +912,4 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         )
     }
 
-    private static func storeMessages(voice: FB01VoiceData, systemChannel: Int, instrument: Int, voiceSlot: Int) throws -> [[UInt8]] {
-        let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off))
-        let voiceMessage = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument).messages[0]
-        let storeCommand = FB01SysExMessage.command(.storeCurrentInstrumentVoice(
-            systemChannel: systemChannel,
-            instrument: instrument,
-            voiceNumber: voiceSlot
-        ))
-        return try [protectOffCommand.bytes, voiceMessage.bytes, storeCommand.bytes]
-    }
-
-    nonisolated private static func storedVoice(from bytes: [UInt8], bank: Int, voiceNumber: Int) throws -> FB01VoiceData? {
-        try FB01VoiceService.shared.storedVoice(
-            fromVoiceBankDump: bytes,
-            expectedDisplayBank: FB01SynthModule.shared.displayVoiceBank(forStorageBank: bank),
-            zeroBasedVoiceNumber: voiceNumber
-        )
-    }
-
-    nonisolated private static func storedVoice(from bytes: [UInt8], location: VoiceDocumentFetchLocation, voiceNumber: Int) throws -> FB01VoiceData? {
-        switch location {
-        case .bank(let bank):
-            return try FB01VoiceService.shared.storedVoice(
-                fromVoiceBankDump: bytes,
-                expectedDisplayBank: bank,
-                zeroBasedVoiceNumber: voiceNumber
-            )
-        case .voiceRAM1:
-            return try FB01VoiceService.shared.storedVoice(
-                fromVoiceRAMDump: bytes,
-                zeroBasedVoiceNumber: voiceNumber
-            )
-        }
-    }
-
-    nonisolated private static func fetchRAMVoiceNames(sourceIndex: Int, destinationIndex: Int, systemChannel: Int) -> VoiceDocumentFetchNameLookup {
-        let namesByBank = FB01VoiceService.shared.fetchWritableRAMVoiceNames(
-            sourceIndex: sourceIndex,
-            destinationIndex: destinationIndex,
-            systemChannel: systemChannel,
-            timeout: voiceBankNameFetchTimeout
-        )
-        return VoiceDocumentFetchNameLookup(ramBankNames: namesByBank)
-    }
 }

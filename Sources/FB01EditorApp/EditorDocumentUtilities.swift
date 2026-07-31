@@ -137,6 +137,15 @@ enum VoiceDocumentFetchLocation: Sendable {
         }
     }
 
+    var serviceLocation: FB01VoiceFetchLocation {
+        switch self {
+        case .bank(let bank):
+            .bank(bank)
+        case .voiceRAM1:
+            .voiceRAM1
+        }
+    }
+
     var menuTitle: String {
         switch self {
         case .bank(1):

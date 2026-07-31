@@ -36,68 +36,19 @@ struct FB01DevicePreference: Equatable, Identifiable {
     var memoryProtectEnabled: Bool
 }
 
-private enum FB01InstrumentParameter {
-    static let noteCount = 0x00
-    static let midiChannel = 0x01
-    static let highKeyLimit = 0x02
-    static let lowKeyLimit = 0x03
-    static let outputLevel = 0x08
-}
-
 func voiceBankLoadMessage(bank: FB01VoiceBankData, systemChannel: Int) throws -> [UInt8] {
-    try FB01VoiceService.shared.voiceBankLoadMessage(bank: bank, systemChannel: systemChannel)
+    try FB01ModuleServices.shared.voiceService.voiceBankLoadMessage(bank: bank, systemChannel: systemChannel)
 }
 
 func voiceBankData(from bytes: [UInt8], expectedBankNumber: Int) throws -> FB01VoiceBankData {
-    try FB01VoiceService.shared.voiceBankData(from: bytes, expectedDisplayBank: expectedBankNumber)
+    try FB01ModuleServices.shared.voiceService.voiceBankData(from: bytes, expectedDisplayBank: expectedBankNumber)
 }
 
 func keyboardAuditionPreparationMessages(systemChannel: Int, midiChannel: Int) throws -> [[UInt8]] {
-    var messages: [[UInt8]] = []
-
-    for instrument in 1..<FB01ConfigurationData.instrumentCount {
-        messages.append(try FB01SysExMessage.command(.instrumentParameterChange(
-            systemChannel: systemChannel,
-            instrument: instrument,
-            parameter: FB01InstrumentParameter.noteCount,
-            value: .oneByte(0)
-        )).bytes)
-    }
-
-    messages += [
-        try FB01SysExMessage.command(.instrumentParameterChange(
-            systemChannel: systemChannel,
-            instrument: 0,
-            parameter: FB01InstrumentParameter.noteCount,
-            value: .oneByte(8)
-        )).bytes,
-        try FB01SysExMessage.command(.instrumentParameterChange(
-            systemChannel: systemChannel,
-            instrument: 0,
-            parameter: FB01InstrumentParameter.midiChannel,
-            value: .oneByte(UInt8(min(max(midiChannel, 0), 15)))
-        )).bytes,
-        try FB01SysExMessage.command(.instrumentParameterChange(
-            systemChannel: systemChannel,
-            instrument: 0,
-            parameter: FB01InstrumentParameter.highKeyLimit,
-            value: .oneByte(127)
-        )).bytes,
-        try FB01SysExMessage.command(.instrumentParameterChange(
-            systemChannel: systemChannel,
-            instrument: 0,
-            parameter: FB01InstrumentParameter.lowKeyLimit,
-            value: .oneByte(0)
-        )).bytes,
-        try FB01SysExMessage.command(.instrumentParameterChange(
-            systemChannel: systemChannel,
-            instrument: 0,
-            parameter: FB01InstrumentParameter.outputLevel,
-            value: .oneByte(127)
-        )).bytes,
-    ]
-
-    return messages
+    try FB01ModuleServices.shared.voiceService.keyboardAuditionPreparationMessages(
+        systemChannel: systemChannel,
+        midiChannel: midiChannel
+    )
 }
 
 func backupFileName(prefix: String, timestamp: Date = Date()) -> String {

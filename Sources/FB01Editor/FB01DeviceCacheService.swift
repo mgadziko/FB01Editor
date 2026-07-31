@@ -28,7 +28,10 @@ public struct FB01DeviceCacheResult: Sendable {
     }
 }
 
-public struct FB01DeviceCacheService: Sendable {
+public struct FB01DeviceCacheService: SynthDeviceCacheServicing {
+    public typealias CacheResult = FB01DeviceCacheResult
+    public typealias CacheEvent = FB01DeviceCacheEvent
+
     public static let shared = FB01DeviceCacheService(
         module: .shared,
         voiceService: .shared,

@@ -8,6 +8,12 @@ individual voices and configurations without having to treat the whole FB-01 as
 one giant library file. A status/library window remains available for global
 MIDI state, open documents, and legacy source-library browsing.
 
+The codebase is also beginning to separate the editor shell from the concrete
+FB-01 module implementation. Current releases remain FB-01-specific, but module
+capabilities, cache behavior, voice/configuration services, and document fetch
+bridges now sit behind a clearer boundary so future 4-operator FM modules can be
+evaluated without disturbing the working FB-01 editor.
+
 ## Current App
 
 Forest FB-01 Editor can:
@@ -22,7 +28,7 @@ Forest FB-01 Editor can:
 - copy a configuration directly from one FB-01 slot to another without opening an editor window
 - install a General MIDI-oriented 48-voice set into Bank 1 or Bank 2
 - display reset instructions for restoring the FB-01 from the front panel
-- use a live on-screen keyboard and an external MIDI keyboard for auditioning
+- use a floating live on-screen keyboard and an external MIDI keyboard for auditioning
 - pass through external MIDI performance messages such as notes, modulation, and pitch bend
 
 The app uses the terminology:
@@ -45,6 +51,12 @@ an FM signal-flow patch bay, with operators arranged by algorithm, arrows showin
 modulator/carrier routing, operator enable highlighting, OP4 feedback routing,
 ADSR envelope displays, rotary knob controls, rocker switches, and green LED
 numeric readouts.
+
+When a voice document comes to the foreground, Forest prepares the FB-01 current
+voice buffer for that document so the floating Live Keyboard auditions the voice
+the user is looking at. The Live Keyboard reports both the visible document voice
+name and the current FB-01 voice-buffer status to make audition state easier to
+reason about.
 
 The editor includes controls for voice identity, feedback, user code, transpose,
 stereo output assignment, LFO and modulation settings, algorithm selection, and
@@ -88,6 +100,21 @@ This distinction matters when using a synth module and a separate controller
 keyboard at the same time. For example, the FB-01 can remain connected through
 one MIDI interface while an M-Audio Oxygen keyboard supplies note and controller
 input over USB.
+
+Live MIDI playback and forwarding are handled outside the main UI path to keep
+mouse interaction and note auditioning responsive.
+
+## Module Boundary
+
+The current module adapter is `FB01ModuleAdapter`. It exposes the FB-01 identity,
+capabilities, supported document kinds, cache service, device service, voice
+service, and configuration service through shared protocols. App-level document
+code talks to small bridge services instead of constructing FB-01 SysEx details
+directly.
+
+This is deliberately not a DX100 implementation. The boundary is present so the
+FB-01 behavior can stay stable while other Yamaha 4-operator devices are studied
+later with real hardware attached.
 
 ## Files And Document Types
 

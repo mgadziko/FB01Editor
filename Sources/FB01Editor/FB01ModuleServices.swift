@@ -1,4 +1,6 @@
-public struct FB01ModuleServices: Sendable {
+public struct FB01ModuleServices: SynthModuleServiceProviding {
+    public typealias Module = FB01SynthModule
+
     public static let shared = FB01ModuleServices()
 
     public let module = FB01SynthModule.shared

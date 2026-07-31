@@ -1,4 +1,41 @@
-public struct FB01VoiceService: Sendable {
+public enum FB01VoiceFetchLocation: Sendable {
+    case bank(Int)
+    case voiceRAM1
+
+    public var requestKind: FB01MIDIRequestKind {
+        switch self {
+        case .bank(let bank):
+            .voiceBank(bank)
+        case .voiceRAM1:
+            .voiceRAM1
+        }
+    }
+}
+
+public enum FB01InstrumentParameter {
+    public static let noteCount = 0x00
+    public static let midiChannel = 0x01
+    public static let highKeyLimit = 0x02
+    public static let lowKeyLimit = 0x03
+    public static let outputLevel = 0x08
+}
+
+public struct FB01FetchedVoice: Sendable {
+    public var voice: FB01VoiceData
+    public var systemChannel: Int
+    public var title: String
+
+    public init(voice: FB01VoiceData, systemChannel: Int, title: String) {
+        self.voice = voice
+        self.systemChannel = systemChannel
+        self.title = title
+    }
+}
+
+public struct FB01VoiceService: SynthVoiceServicing {
+    public typealias Voice = FB01VoiceData
+    public typealias VoiceBank = FB01VoiceBankData
+
     public static let shared = FB01VoiceService(module: .shared)
 
     public var module: FB01SynthModule
@@ -60,6 +97,57 @@ public struct FB01VoiceService: Sendable {
         return nil
     }
 
+    public func currentInstrumentVoice(fromDump bytes: [UInt8]) throws -> (voice: FB01VoiceData, systemChannel: Int)? {
+        let artifact = try FB01Artifact(sysexBytes: bytes)
+        for message in artifact.messages {
+            if case let .instrumentVoiceDump(systemChannel, _, packet) = message {
+                return (try FB01VoiceData(bytes: FB01.nibbleDecode(packet.payload)), systemChannel)
+            }
+        }
+        return nil
+    }
+
+    public func storedVoice(fromDump bytes: [UInt8], location: FB01VoiceFetchLocation, zeroBasedVoiceNumber: Int) throws -> FB01VoiceData? {
+        switch location {
+        case .bank(let bank):
+            return try storedVoice(
+                fromVoiceBankDump: bytes,
+                expectedDisplayBank: bank,
+                zeroBasedVoiceNumber: zeroBasedVoiceNumber
+            )
+        case .voiceRAM1:
+            return try storedVoice(
+                fromVoiceRAMDump: bytes,
+                zeroBasedVoiceNumber: zeroBasedVoiceNumber
+            )
+        }
+    }
+
+    public func fetchInstrumentVoice(
+        instrument: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        timeout: Double = 8
+    ) throws -> FB01FetchedVoice {
+        let displayInstrument = instrument + 1
+        let bytes = try FB01MIDI.request(
+            .instrumentVoice(displayInstrument),
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            timeout: timeout
+        )
+        guard let payload = try currentInstrumentVoice(fromDump: bytes) else {
+            throw FB01SysExError.unsupportedSysEx
+        }
+        return FB01FetchedVoice(
+            voice: payload.voice,
+            systemChannel: payload.systemChannel,
+            title: "instrument \(displayInstrument) voice"
+        )
+    }
+
     public func fetchStoredVoice(
         bank: Int,
         zeroBasedVoiceNumber: Int,
@@ -83,6 +171,44 @@ public struct FB01VoiceService: Sendable {
             throw FB01SysExError.unsupportedSysEx
         }
         return voice
+    }
+
+    public func fetchStoredVoice(
+        location: FB01VoiceFetchLocation,
+        zeroBasedVoiceNumber: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        timeout: Double = 15
+    ) throws -> FB01FetchedVoice {
+        let bytes = try FB01MIDI.request(
+            location.requestKind,
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            timeout: timeout
+        )
+        guard let voice = try storedVoice(
+            fromDump: bytes,
+            location: location,
+            zeroBasedVoiceNumber: zeroBasedVoiceNumber
+        ) else {
+            throw FB01SysExError.unsupportedSysEx
+        }
+
+        let title: String
+        switch location {
+        case .bank(let bank):
+            title = "Bank \(bank) Voice \(zeroBasedVoiceNumber + 1)"
+        case .voiceRAM1:
+            title = "Voice RAM 1 Voice \(zeroBasedVoiceNumber + 1)"
+        }
+
+        return FB01FetchedVoice(
+            voice: voice,
+            systemChannel: systemChannel,
+            title: title
+        )
     }
 
     public func fetchWritableRAMVoiceNames(
@@ -116,5 +242,74 @@ public struct FB01VoiceService: Sendable {
             data: bank.data,
             checksum: FB01.checksum(for: bank.data)
         ).bytes
+    }
+
+    public func storeCurrentInstrumentVoiceMessages(
+        voice: FB01VoiceData,
+        systemChannel: Int,
+        instrument: Int,
+        voiceSlot: Int
+    ) throws -> [[UInt8]] {
+        let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off))
+        let voiceMessage = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument).messages[0]
+        let storeCommand = FB01SysExMessage.command(.storeCurrentInstrumentVoice(
+            systemChannel: systemChannel,
+            instrument: instrument,
+            voiceNumber: voiceSlot
+        ))
+        return try [protectOffCommand.bytes, voiceMessage.bytes, storeCommand.bytes]
+    }
+
+    public func auditionPreparationMessages(voice: FB01VoiceData, systemChannel: Int, midiChannel: Int) throws -> [[UInt8]] {
+        let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
+        return [try artifact.sysexBytes] + (try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel))
+    }
+
+    public func keyboardAuditionPreparationMessages(systemChannel: Int, midiChannel: Int) throws -> [[UInt8]] {
+        var messages: [[UInt8]] = []
+
+        for instrument in 1..<FB01ConfigurationData.instrumentCount {
+            messages.append(try FB01SysExMessage.command(.instrumentParameterChange(
+                systemChannel: systemChannel,
+                instrument: instrument,
+                parameter: FB01InstrumentParameter.noteCount,
+                value: .oneByte(0)
+            )).bytes)
+        }
+
+        messages += [
+            try FB01SysExMessage.command(.instrumentParameterChange(
+                systemChannel: systemChannel,
+                instrument: 0,
+                parameter: FB01InstrumentParameter.noteCount,
+                value: .oneByte(8)
+            )).bytes,
+            try FB01SysExMessage.command(.instrumentParameterChange(
+                systemChannel: systemChannel,
+                instrument: 0,
+                parameter: FB01InstrumentParameter.midiChannel,
+                value: .oneByte(UInt8(min(max(midiChannel, 0), 15)))
+            )).bytes,
+            try FB01SysExMessage.command(.instrumentParameterChange(
+                systemChannel: systemChannel,
+                instrument: 0,
+                parameter: FB01InstrumentParameter.highKeyLimit,
+                value: .oneByte(127)
+            )).bytes,
+            try FB01SysExMessage.command(.instrumentParameterChange(
+                systemChannel: systemChannel,
+                instrument: 0,
+                parameter: FB01InstrumentParameter.lowKeyLimit,
+                value: .oneByte(0)
+            )).bytes,
+            try FB01SysExMessage.command(.instrumentParameterChange(
+                systemChannel: systemChannel,
+                instrument: 0,
+                parameter: FB01InstrumentParameter.outputLevel,
+                value: .oneByte(127)
+            )).bytes,
+        ]
+
+        return messages
     }
 }

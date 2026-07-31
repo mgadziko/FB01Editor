@@ -82,3 +82,26 @@ public protocol SynthModule: Sendable {
     var writableConfigurationSlots: SynthSlotRange { get }
     var readOnlyConfigurationSlots: SynthSlotRange { get }
 }
+
+public protocol SynthModuleServiceProviding: Sendable {
+    associatedtype Module: SynthModule
+
+    var module: Module { get }
+}
+
+public protocol SynthDeviceCacheServicing: Sendable {
+    associatedtype CacheResult: Sendable
+    associatedtype CacheEvent: Sendable
+
+    func totalRequestCount(voiceBanks: [Int], fetchConfigurations: Bool) -> Int
+    func normalizedVoiceBanks(_ requestedVoiceBanks: [Int]) -> [Int]
+}
+
+public protocol SynthVoiceServicing: Sendable {
+    associatedtype Voice: Sendable
+    associatedtype VoiceBank: Sendable
+}
+
+public protocol SynthConfigurationServicing: Sendable {
+    associatedtype Configuration: Sendable
+}

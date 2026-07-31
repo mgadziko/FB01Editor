@@ -170,7 +170,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                     )
                     progressPanel.show()
                     nameLookup = await Task.detached(priority: .userInitiated) {
-                        Self.fetchConfigurationNames(
+                        FB01ConfigurationDocumentService.fetchConfigurationNames(
                             sourceIndex: sourceIndex,
                             destinationIndex: destinationIndex,
                             systemChannel: systemChannel
@@ -226,17 +226,13 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
             )
             fetchProgressPanel.show()
             do {
-                let kind: FB01MIDIRequestKind = options.isCurrent ? .currentConfiguration : .configuration(options.slot + 1)
                 let result = try await Task.detached(priority: .userInitiated) { () -> (FB01ConfigurationData, Int) in
-                    let bytes = try FB01MIDI.request(
-                        kind,
+                    try FB01ConfigurationDocumentService.fetchConfiguration(
+                        options: options,
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
-                        systemChannel: systemChannel,
-                        timeout: 8
+                        systemChannel: systemChannel
                     )
-                    let artifact = try FB01Artifact(sysexBytes: bytes)
-                    return try Self.extractConfiguration(from: artifact)
                 }.value
                 configuration = result.0
                 savedConfiguration = result.0
@@ -393,14 +389,6 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         return (candidate.configuration, candidate.systemChannel)
     }
 
-    nonisolated private static func extractConfiguration(from artifact: FB01Artifact) throws -> (configuration: FB01ConfigurationData, systemChannel: Int) {
-        let candidates = try EditorDocumentExtraction.configurationCandidates(from: artifact)
-        guard let candidate = candidates.first else {
-            throw FB01AppError.noConfigurationSource
-        }
-        return (candidate.configuration, candidate.systemChannel)
-    }
-
     private static func chooseConfigurationCandidate(_ candidates: [ConfigurationDocumentCandidate], title: String) -> ConfigurationDocumentCandidate? {
         guard candidates.count > 1 else {
             return candidates.first
@@ -494,25 +482,6 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         return popup.selectedItem?.representedObject as? ConfigurationFetchOptions
     }
 
-    nonisolated private static func fetchConfigurationNames(sourceIndex: Int, destinationIndex: Int, systemChannel: Int) -> ConfigurationFetchNameLookup {
-        var names: [Int: String] = [:]
-        for slot in FB01SynthModule.shared.writableConfigurationSlots.closedRange {
-            guard let bytes = try? FB01MIDI.request(
-                .configuration(slot),
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel,
-                timeout: 1.25
-            ),
-                  let name = try? FB01ConfigurationService.shared.configurationName(fromDump: bytes),
-                  !name.isEmpty else {
-                continue
-            }
-            names[slot] = name
-        }
-        return ConfigurationFetchNameLookup(storedNames: names)
-    }
-
     @MainActor
     private static func chooseStoreOptions(defaultConfigurationName: String) -> ConfigurationDocumentStoreOptions? {
         let alert = NSAlert()
@@ -529,7 +498,8 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         stack.alignment = .leading
 
         let slotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for slot in FB01SynthModule.shared.writableConfigurationSlots.closedRange {
+        let module = FB01ModuleServices.shared.module
+        for slot in module.writableConfigurationSlots.closedRange {
             slotPopup.addItem(withTitle: "Configuration \(slot)")
         }
         let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored slot after writing and compare it to this document", target: nil, action: nil)
@@ -552,7 +522,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     private static func storeMessages(configuration: FB01ConfigurationData, systemChannel: Int, slot: Int) throws -> [[UInt8]] {
         do {
-            return try FB01ConfigurationService.shared.storeMessages(
+            return try FB01ModuleServices.shared.configurationService.storeMessages(
                 configuration: configuration,
                 systemChannel: systemChannel,
                 zeroBasedSlot: slot
@@ -563,6 +533,6 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
     }
 
     nonisolated private static func storedConfiguration(from bytes: [UInt8], slot: Int) throws -> FB01ConfigurationData? {
-        try FB01ConfigurationService.shared.storedConfiguration(fromDump: bytes, zeroBasedSlot: slot)
+        try FB01ModuleServices.shared.configurationService.storedConfiguration(fromDump: bytes, zeroBasedSlot: slot)
     }
 }

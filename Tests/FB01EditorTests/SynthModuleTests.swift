@@ -51,6 +51,15 @@ import Testing
     #expect(services.cacheService.module.identity == services.module.identity)
 }
 
+@Test func fb01ModuleAdapterExposesCurrentModuleBoundary() {
+    let adapter = FB01ModuleAdapter.shared
+
+    #expect(adapter.identity == FB01SynthModule.shared.identity)
+    #expect(adapter.capabilities == FB01SynthModule.shared.capabilities)
+    #expect(adapter.supportedDocumentKinds == FB01SynthModule.shared.supportedDocumentKinds)
+    #expect(adapter.module.writableVoiceBanks == [1, 2])
+}
+
 @Test func fb01DeviceServiceBuildsModuleScopedRequestLists() throws {
     let service = FB01DeviceService.shared
 
@@ -101,6 +110,19 @@ import Testing
 
     let voice = try service.storedVoice(fromVoiceBankDump: bytes, expectedDisplayBank: 1, zeroBasedVoiceNumber: 7)
     #expect(voice?.name == "EGrand")
+
+    let locationVoice = try service.storedVoice(fromDump: bytes, location: .bank(1), zeroBasedVoiceNumber: 7)
+    #expect(locationVoice?.name == "EGrand")
+
+    let prepMessages = try service.keyboardAuditionPreparationMessages(systemChannel: 0, midiChannel: 0)
+    #expect(prepMessages.count == FB01ConfigurationData.instrumentCount + 4)
+
+    let voicePrepMessages = try service.auditionPreparationMessages(
+        voice: try #require(voice),
+        systemChannel: 0,
+        midiChannel: 0
+    )
+    #expect(voicePrepMessages.count == prepMessages.count + 1)
 }
 
 @Test func fb01ConfigurationServiceExtractsNamesAndBuildsStoreMessages() throws {
