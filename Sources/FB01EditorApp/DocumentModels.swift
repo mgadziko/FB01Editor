@@ -2565,22 +2565,13 @@ final class DocumentModel: ObservableObject {
         destinationIndex: Int,
         systemChannel: Int
     ) throws -> FB01VoiceData {
-        let bytes = try FB01MIDI.request(
-            .voiceBank(bank),
+        try FB01VoiceService.shared.fetchStoredVoice(
+            bank: bank,
+            zeroBasedVoiceNumber: voiceNumber,
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
-            systemChannel: systemChannel,
-            timeout: 15
+            systemChannel: systemChannel
         )
-        let bankData = try voiceBankData(from: bytes, expectedBankNumber: bank)
-        guard bankData.voices.indices.contains(voiceNumber) else {
-            throw FB01SysExError.valueOutOfRange(
-                name: "voiceNumber",
-                value: voiceNumber,
-                range: 0...(FB01VoiceBankData.voiceCount - 1)
-            )
-        }
-        return bankData.voices[voiceNumber].voice
     }
 
     nonisolated private static func fetchRAMVoiceNamesForDeviceCopy(
@@ -2588,28 +2579,13 @@ final class DocumentModel: ObservableObject {
         destinationIndex: Int,
         systemChannel: Int
     ) -> VoiceDocumentFetchNameLookup {
-        var namesByBank: [Int: [String]] = [:]
-        for bank in FB01SynthModule.shared.writableVoiceBanks {
-            guard let bytes = try? FB01MIDI.request(
-                .voiceBank(bank),
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel,
-                timeout: voiceBankNameFetchTimeout
-            ),
-                  let names = try? voiceNames(fromVoiceBankDump: bytes, expectedBankNumber: bank) else {
-                continue
-            }
-            namesByBank[bank] = names
-        }
+        let namesByBank = FB01VoiceService.shared.fetchWritableRAMVoiceNames(
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            timeout: voiceBankNameFetchTimeout
+        )
         return VoiceDocumentFetchNameLookup(ramBankNames: namesByBank)
-    }
-
-    nonisolated private static func voiceNames(fromVoiceBankDump bytes: [UInt8], expectedBankNumber: Int) throws -> [String] {
-        let bankData = try voiceBankData(from: bytes, expectedBankNumber: expectedBankNumber)
-        return bankData.voices.map { summary in
-            summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
-        }
     }
 
     private func storeVoicePayloadByBankImage(_ voice: FB01VoiceData, systemChannel: Int, options: VoiceDocumentStoreOptions) {

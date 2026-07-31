@@ -45,28 +45,11 @@ private enum FB01InstrumentParameter {
 }
 
 func voiceBankLoadMessage(bank: FB01VoiceBankData, systemChannel: Int) throws -> [UInt8] {
-    try FB01SysExMessage.voiceBankDumpData(
-        systemChannel: systemChannel,
-        bank: bank.bank,
-        byteCount: FB01VoiceBankData.bankHeaderByteCount,
-        data: bank.data,
-        checksum: FB01.checksum(for: bank.data)
-    ).bytes
+    try FB01VoiceService.shared.voiceBankLoadMessage(bank: bank, systemChannel: systemChannel)
 }
 
 func voiceBankData(from bytes: [UInt8], expectedBankNumber: Int) throws -> FB01VoiceBankData {
-    let artifact = try FB01Artifact(sysexBytes: bytes)
-    for message in artifact.messages {
-        if case let .voiceBankDumpData(_, bank, _, data, _) = message,
-           bank == expectedBankNumber - 1 {
-            return try FB01VoiceBankData(bank: bank, data: data)
-        }
-        if case let .voiceRAMDumpData(_, _, data, _) = message,
-           expectedBankNumber == 1 {
-            return try FB01VoiceBankData(bank: 0, data: data)
-        }
-    }
-    throw FB01AppError.message("Response did not contain Bank \(expectedBankNumber)")
+    try FB01VoiceService.shared.voiceBankData(from: bytes, expectedDisplayBank: expectedBankNumber)
 }
 
 func keyboardAuditionPreparationMessages(systemChannel: Int, midiChannel: Int) throws -> [[UInt8]] {

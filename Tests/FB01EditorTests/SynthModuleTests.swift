@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import FB01Editor
 
@@ -54,4 +55,24 @@ import Testing
     #expect(throws: FB01SysExError.self) {
         _ = try service.writableVoiceBankRequestKind(forVoiceSlot: 96)
     }
+}
+
+@Test func fb01VoiceServiceExtractsBankDataNamesAndStoredVoices() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "voice-bank-1",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let bytes = Array(try Data(contentsOf: fixtureURL))
+    let service = FB01VoiceService.shared
+
+    let bank = try service.voiceBankData(from: bytes, expectedDisplayBank: 1)
+    #expect(bank.bank == 0)
+    #expect(bank.voices.count == FB01SynthModule.shared.voicesPerBank)
+
+    let names = try service.voiceNames(fromVoiceBankDump: bytes, expectedDisplayBank: 1)
+    #expect(names.prefix(3) == ["Brass", "Horn", "Trumpet"])
+
+    let voice = try service.storedVoice(fromVoiceBankDump: bytes, expectedDisplayBank: 1, zeroBasedVoiceNumber: 7)
+    #expect(voice?.name == "EGrand")
 }

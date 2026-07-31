@@ -16,6 +16,7 @@
 		100000000000000000000023 /* FB01Module.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000029 /* FB01Module.swift */; };
 		100000000000000000000024 /* SynthModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002A /* SynthModule.swift */; };
 		100000000000000000000026 /* FB01DeviceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002C /* FB01DeviceService.swift */; };
+		100000000000000000000027 /* FB01VoiceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002D /* FB01VoiceService.swift */; };
 		100000000000000000000007 /* EditorDocumentExtraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* EditorDocumentExtraction.swift */; };
 		100000000000000000000008 /* FB01EditorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* FB01EditorApp.swift */; };
 		100000000000000000000009 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* AppIcon.icns */; };
@@ -95,6 +96,7 @@
 		200000000000000000000029 /* FB01Module.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01Module.swift; sourceTree = "<group>"; };
 		20000000000000000000002A /* SynthModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthModule.swift; sourceTree = "<group>"; };
 		20000000000000000000002C /* FB01DeviceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01DeviceService.swift; sourceTree = "<group>"; };
+		20000000000000000000002D /* FB01VoiceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01VoiceService.swift; sourceTree = "<group>"; };
 		200000000000000000000007 /* EditorDocumentExtraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentExtraction.swift; sourceTree = "<group>"; };
 		200000000000000000000008 /* FB01EditorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01EditorApp.swift; sourceTree = "<group>"; };
 		200000000000000000000009 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
@@ -202,6 +204,7 @@
 				200000000000000000000029 /* FB01Module.swift */,
 				200000000000000000000005 /* FB01SysEx.swift */,
 				200000000000000000000006 /* FB01SysExParser.swift */,
+				20000000000000000000002D /* FB01VoiceService.swift */,
 				20000000000000000000002A /* SynthModule.swift */,
 			);
 			path = FB01Editor;
@@ -488,6 +491,7 @@
 				100000000000000000000023 /* FB01Module.swift in Sources */,
 				100000000000000000000005 /* FB01SysEx.swift in Sources */,
 				100000000000000000000006 /* FB01SysExParser.swift in Sources */,
+				100000000000000000000027 /* FB01VoiceService.swift in Sources */,
 				100000000000000000000024 /* SynthModule.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

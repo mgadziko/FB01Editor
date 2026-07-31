@@ -945,55 +945,36 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     nonisolated private static func storedVoice(from bytes: [UInt8], bank: Int, voiceNumber: Int) throws -> FB01VoiceData? {
-        let artifact = try FB01Artifact(sysexBytes: bytes)
-        for message in artifact.messages {
-            if case let .voiceBankDumpData(_, fetchedBank, _, data, _) = message, fetchedBank == bank {
-                let bankData = try FB01VoiceBankData(bank: fetchedBank, data: data)
-                return bankData.voices.first { $0.number == voiceNumber + 1 }?.voice
-            }
-        }
-        return nil
+        try FB01VoiceService.shared.storedVoice(
+            fromVoiceBankDump: bytes,
+            expectedDisplayBank: FB01SynthModule.shared.displayVoiceBank(forStorageBank: bank),
+            zeroBasedVoiceNumber: voiceNumber
+        )
     }
 
     nonisolated private static func storedVoice(from bytes: [UInt8], location: VoiceDocumentFetchLocation, voiceNumber: Int) throws -> FB01VoiceData? {
-        let artifact = try FB01Artifact(sysexBytes: bytes)
-        for message in artifact.messages {
-            switch (location, message) {
-            case let (.bank(bank), .voiceBankDumpData(_, fetchedBank, _, data, _)) where fetchedBank == bank - 1:
-                let bankData = try FB01VoiceBankData(bank: fetchedBank, data: data)
-                return bankData.voices.first { $0.number == voiceNumber + 1 }?.voice
-            case let (.voiceRAM1, .voiceRAMDumpData(_, _, data, _)):
-                let bankData = try FB01VoiceBankData(bank: 0, data: data)
-                return bankData.voices.first { $0.number == voiceNumber + 1 }?.voice
-            default:
-                break
-            }
+        switch location {
+        case .bank(let bank):
+            return try FB01VoiceService.shared.storedVoice(
+                fromVoiceBankDump: bytes,
+                expectedDisplayBank: bank,
+                zeroBasedVoiceNumber: voiceNumber
+            )
+        case .voiceRAM1:
+            return try FB01VoiceService.shared.storedVoice(
+                fromVoiceRAMDump: bytes,
+                zeroBasedVoiceNumber: voiceNumber
+            )
         }
-        return nil
     }
 
     nonisolated private static func fetchRAMVoiceNames(sourceIndex: Int, destinationIndex: Int, systemChannel: Int) -> VoiceDocumentFetchNameLookup {
-        var namesByBank: [Int: [String]] = [:]
-        for bank in FB01SynthModule.shared.writableVoiceBanks {
-            guard let bytes = try? FB01MIDI.request(
-                .voiceBank(bank),
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel,
-                timeout: voiceBankNameFetchTimeout
-            ),
-                  let names = try? voiceNames(fromVoiceBankDump: bytes, expectedBankNumber: bank) else {
-                continue
-            }
-            namesByBank[bank] = names
-        }
+        let namesByBank = FB01VoiceService.shared.fetchWritableRAMVoiceNames(
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            timeout: voiceBankNameFetchTimeout
+        )
         return VoiceDocumentFetchNameLookup(ramBankNames: namesByBank)
-    }
-
-    nonisolated private static func voiceNames(fromVoiceBankDump bytes: [UInt8], expectedBankNumber: Int) throws -> [String] {
-        let bankData = try voiceBankData(from: bytes, expectedBankNumber: expectedBankNumber)
-        return bankData.voices.map { summary in
-            summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
-        }
     }
 }
