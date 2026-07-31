@@ -504,24 +504,13 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                 systemChannel: systemChannel,
                 timeout: 1.25
             ),
-                  let name = try? configurationName(fromDump: bytes),
+                  let name = try? FB01ConfigurationService.shared.configurationName(fromDump: bytes),
                   !name.isEmpty else {
                 continue
             }
             names[slot] = name
         }
         return ConfigurationFetchNameLookup(storedNames: names)
-    }
-
-    nonisolated private static func configurationName(fromDump bytes: [UInt8]) throws -> String? {
-        let artifact = try FB01Artifact(sysexBytes: bytes)
-        for message in artifact.messages {
-            if case let .configurationDump(_, _, packet) = message {
-                let configuration = try FB01ConfigurationData(bytes: packet.payload)
-                return configuration.name.isEmpty ? "Untitled" : configuration.name
-            }
-        }
-        return nil
     }
 
     @MainActor
@@ -562,28 +551,18 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
     }
 
     private static func storeMessages(configuration: FB01ConfigurationData, systemChannel: Int, slot: Int) throws -> [[UInt8]] {
-        guard FB01SynthModule.shared.isWritableConfigurationSlot(slot + 1) else {
+        do {
+            return try FB01ConfigurationService.shared.storeMessages(
+                configuration: configuration,
+                systemChannel: systemChannel,
+                zeroBasedSlot: slot
+            )
+        } catch is FB01SysExError {
             throw FB01AppError.readOnlyConfigurationSlot
         }
-        let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off))
-        let currentMessage = FB01SysExMessage.currentConfigurationDump(
-            systemChannel: systemChannel,
-            packet: try FB01SysExPacket(payload: configuration.bytes)
-        )
-        let storeCommand = FB01SysExMessage.command(.storeCurrentConfiguration(
-            systemChannel: systemChannel,
-            number: slot
-        ))
-        return try [protectOffCommand.bytes, currentMessage.bytes, storeCommand.bytes]
     }
 
     nonisolated private static func storedConfiguration(from bytes: [UInt8], slot: Int) throws -> FB01ConfigurationData? {
-        let artifact = try FB01Artifact(sysexBytes: bytes)
-        for message in artifact.messages {
-            if case let .configurationDump(_, number, packet) = message, number == slot {
-                return try FB01ConfigurationData(bytes: packet.payload)
-            }
-        }
-        return nil
+        try FB01ConfigurationService.shared.storedConfiguration(fromDump: bytes, zeroBasedSlot: slot)
     }
 }

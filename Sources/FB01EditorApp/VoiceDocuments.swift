@@ -486,7 +486,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    func scheduleKeyboardVoicePreparation(device: DocumentModel, delayNanoseconds: UInt64 = 150_000_000) {
+    func scheduleKeyboardVoicePreparation(device: DocumentModel, delayNanoseconds: UInt64 = 0) {
         keyboardPreparationTask?.cancel()
 
         let destinationIndex = device.selectedDestinationIndex
@@ -501,12 +501,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             let messages = try buildKeyboardPreparationMessages(midiChannel: channel)
             keyboardPreparationTask = Task(priority: .userInitiated) { [weak self] in
                 do {
-                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                    if delayNanoseconds > 0 {
+                        try await Task.sleep(nanoseconds: delayNanoseconds)
+                    }
                     try Task.checkCancellation()
                     try await LiveMIDIPlaybackController.shared.sendPreparedMessages(
                         messages,
                         destinationIndex: destinationIndex,
-                        settleDelay: keyboardPreparationSettleDelay
+                        settleDelay: 0
                     )
                     try Task.checkCancellation()
                     await MainActor.run {

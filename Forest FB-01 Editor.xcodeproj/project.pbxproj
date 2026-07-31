@@ -17,6 +17,9 @@
 		100000000000000000000024 /* SynthModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002A /* SynthModule.swift */; };
 		100000000000000000000026 /* FB01DeviceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002C /* FB01DeviceService.swift */; };
 		100000000000000000000027 /* FB01VoiceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002D /* FB01VoiceService.swift */; };
+		100000000000000000000028 /* FB01ConfigurationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002E /* FB01ConfigurationService.swift */; };
+		100000000000000000000029 /* FB01DeviceCacheService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002F /* FB01DeviceCacheService.swift */; };
+		10000000000000000000002A /* FB01ModuleServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000030 /* FB01ModuleServices.swift */; };
 		100000000000000000000007 /* EditorDocumentExtraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* EditorDocumentExtraction.swift */; };
 		100000000000000000000008 /* FB01EditorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* FB01EditorApp.swift */; };
 		100000000000000000000009 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* AppIcon.icns */; };
@@ -45,6 +48,7 @@
 		100000000000000000000020 /* VoiceDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000026 /* VoiceDocuments.swift */; };
 		100000000000000000000021 /* ConfigurationDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000027 /* ConfigurationDocuments.swift */; };
 		100000000000000000000022 /* DocumentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000028 /* DocumentModels.swift */; };
+		10000000000000000000002B /* FB01UIFeatureAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000031 /* FB01UIFeatureAvailability.swift */; };
 		100000000000000000000025 /* SynthModuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002B /* SynthModuleTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -97,6 +101,9 @@
 		20000000000000000000002A /* SynthModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthModule.swift; sourceTree = "<group>"; };
 		20000000000000000000002C /* FB01DeviceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01DeviceService.swift; sourceTree = "<group>"; };
 		20000000000000000000002D /* FB01VoiceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01VoiceService.swift; sourceTree = "<group>"; };
+		20000000000000000000002E /* FB01ConfigurationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01ConfigurationService.swift; sourceTree = "<group>"; };
+		20000000000000000000002F /* FB01DeviceCacheService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01DeviceCacheService.swift; sourceTree = "<group>"; };
+		200000000000000000000030 /* FB01ModuleServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01ModuleServices.swift; sourceTree = "<group>"; };
 		200000000000000000000007 /* EditorDocumentExtraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentExtraction.swift; sourceTree = "<group>"; };
 		200000000000000000000008 /* FB01EditorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01EditorApp.swift; sourceTree = "<group>"; };
 		200000000000000000000009 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
@@ -131,6 +138,7 @@
 		200000000000000000000026 /* VoiceDocuments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceDocuments.swift; sourceTree = "<group>"; };
 		200000000000000000000027 /* ConfigurationDocuments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationDocuments.swift; sourceTree = "<group>"; };
 		200000000000000000000028 /* DocumentModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentModels.swift; sourceTree = "<group>"; };
+		200000000000000000000031 /* FB01UIFeatureAvailability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01UIFeatureAvailability.swift; sourceTree = "<group>"; };
 		20000000000000000000002B /* SynthModuleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthModuleTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -197,11 +205,14 @@
 			isa = PBXGroup;
 			children = (
 				200000000000000000000001 /* FB01Artifact.swift */,
+				20000000000000000000002E /* FB01ConfigurationService.swift */,
 				200000000000000000000002 /* FB01Data.swift */,
+				20000000000000000000002F /* FB01DeviceCacheService.swift */,
 				20000000000000000000002C /* FB01DeviceService.swift */,
 				200000000000000000000003 /* FB01GeneralMIDI.swift */,
 				200000000000000000000004 /* FB01MIDI.swift */,
 				200000000000000000000029 /* FB01Module.swift */,
+				200000000000000000000030 /* FB01ModuleServices.swift */,
 				200000000000000000000005 /* FB01SysEx.swift */,
 				200000000000000000000006 /* FB01SysExParser.swift */,
 				20000000000000000000002D /* FB01VoiceService.swift */,
@@ -220,6 +231,7 @@
 				200000000000000000000025 /* EditorDocumentUtilities.swift */,
 				200000000000000000000020 /* EditorViews.swift */,
 				200000000000000000000008 /* FB01EditorApp.swift */,
+				200000000000000000000031 /* FB01UIFeatureAvailability.swift */,
 				200000000000000000000021 /* LiveMIDIPlaybackController.swift */,
 				20000000000000000000001F /* ParameterKnob.swift */,
 				200000000000000000000022 /* PatchBayViews.swift */,
@@ -484,11 +496,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000001 /* FB01Artifact.swift in Sources */,
+				100000000000000000000028 /* FB01ConfigurationService.swift in Sources */,
 				100000000000000000000002 /* FB01Data.swift in Sources */,
+				100000000000000000000029 /* FB01DeviceCacheService.swift in Sources */,
 				100000000000000000000026 /* FB01DeviceService.swift in Sources */,
 				100000000000000000000003 /* FB01GeneralMIDI.swift in Sources */,
 				100000000000000000000004 /* FB01MIDI.swift in Sources */,
 				100000000000000000000023 /* FB01Module.swift in Sources */,
+				10000000000000000000002A /* FB01ModuleServices.swift in Sources */,
 				100000000000000000000005 /* FB01SysEx.swift in Sources */,
 				100000000000000000000006 /* FB01SysExParser.swift in Sources */,
 				100000000000000000000027 /* FB01VoiceService.swift in Sources */,
@@ -504,6 +519,7 @@
 				10000000000000000000001F /* EditorDocumentUtilities.swift in Sources */,
 				10000000000000000000001A /* EditorViews.swift in Sources */,
 				100000000000000000000008 /* FB01EditorApp.swift in Sources */,
+				10000000000000000000002B /* FB01UIFeatureAvailability.swift in Sources */,
 				10000000000000000000001E /* EditorDocumentWorkspace.swift in Sources */,
 				10000000000000000000001D /* Dialogs.swift in Sources */,
 				10000000000000000000001B /* LiveMIDIPlaybackController.swift in Sources */,

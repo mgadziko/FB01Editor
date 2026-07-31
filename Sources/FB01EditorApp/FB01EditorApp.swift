@@ -160,7 +160,7 @@ struct FB01EditorApplication: App {
                 Button("Reset Instructions...") {
                     document.resetDeviceToFactorySettings()
                 }
-                .disabled(document.isBusy)
+                .disabled(document.isBusy || !FB01UIFeatureAvailability.supportsMemoryProtect)
             }
 
             CommandGroup(replacing: .newItem) {
@@ -239,19 +239,19 @@ struct FB01EditorApplication: App {
                 Button("Store General MIDI voices...") {
                     document.storeGeneralMIDIVoicesToDevice()
                 }
-                .disabled(document.isBusy)
+                .disabled(document.isBusy || !FB01UIFeatureAvailability.supportsGeneralMIDIInstall)
             }
 
             CommandMenu("Configuration") {
                 Button("Copy Configuration to Slot ...") {
                     document.copyConfigurationSlotOnDevice()
                 }
-                .disabled(document.isBusy)
+                .disabled(document.isBusy || !FB01UIFeatureAvailability.supportsConfigurations)
 
                 Button("Refresh Device Cache") {
                     document.refreshDeviceCache(reason: "Refreshing device cache")
                 }
-                .disabled(document.isBusy)
+                .disabled(document.isBusy || !FB01UIFeatureAvailability.supportsConfigurations)
 
                 if document.voiceEditorParadigm == .consoleSections {
                     Divider()

@@ -204,7 +204,7 @@ final class DeviceVoiceCopyAccessory: NSView {
 }
 
 let keyboardPreparationStaleAfter: TimeInterval = 300
-let keyboardPreparationSettleDelay: TimeInterval = 0.30
+let keyboardPreparationSettleDelay: TimeInterval = 0.05
 let voiceBankNameFetchTimeout: TimeInterval = 25
 
 final class VoiceSlotPickerAccessory: NSView {

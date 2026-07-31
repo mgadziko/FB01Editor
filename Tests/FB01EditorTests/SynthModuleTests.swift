@@ -8,6 +8,14 @@ import Testing
     #expect(module.identity.manufacturer == "Yamaha")
     #expect(module.identity.modelName == "FB-01")
     #expect(module.identity.editorDisplayName == "Forest FB-01 Editor")
+    #expect(module.capabilities.supportsVoices)
+    #expect(module.capabilities.supportsConfigurations)
+    #expect(module.capabilities.supportsMultiInstrumentConfigurations)
+    #expect(module.capabilities.supportsWritableVoiceBanks)
+    #expect(module.capabilities.supportsReadOnlyVoiceBanks)
+    #expect(module.capabilities.supportsMemoryProtect)
+    #expect(module.capabilities.supportsLiveAuditionBuffer)
+    #expect(module.capabilities.supportsGeneralMIDIInstall)
     #expect(module.supportedDocumentKinds == [.voice, .configuration, .voiceBank, .configurationBank])
     #expect(module.writableVoiceBanks == [1, 2])
     #expect(module.readOnlyVoiceBanks == [3, 4, 5, 6, 7])
@@ -31,6 +39,16 @@ import Testing
     #expect(!module.isValidConfigurationSlot(21))
     #expect(module.displayVoiceBank(forStorageBank: 0) == 1)
     #expect(module.storageVoiceBank(forDisplayBank: 1) == 0)
+}
+
+@Test func fb01ModuleServicesExposeCurrentModuleServices() {
+    let services = FB01ModuleServices.shared
+
+    #expect(services.module.identity.modelName == "FB-01")
+    #expect(services.module.capabilities.supportsConfigurations)
+    #expect(services.voiceService.module.identity == services.module.identity)
+    #expect(services.configurationService.module.identity == services.module.identity)
+    #expect(services.cacheService.module.identity == services.module.identity)
 }
 
 @Test func fb01DeviceServiceBuildsModuleScopedRequestLists() throws {
@@ -57,6 +75,14 @@ import Testing
     }
 }
 
+@Test func fb01DeviceCacheServiceScopesRequestsToModule() {
+    let service = FB01DeviceCacheService.shared
+
+    #expect(service.normalizedVoiceBanks([7, 99, 1, 3, 1]) == [1, 3, 7])
+    #expect(service.totalRequestCount(voiceBanks: [1, 2], fetchConfigurations: false) == 2)
+    #expect(service.totalRequestCount(voiceBanks: [1, 2], fetchConfigurations: true) == 23)
+}
+
 @Test func fb01VoiceServiceExtractsBankDataNamesAndStoredVoices() throws {
     let fixtureURL = Bundle.module.url(
         forResource: "voice-bank-1",
@@ -75,4 +101,33 @@ import Testing
 
     let voice = try service.storedVoice(fromVoiceBankDump: bytes, expectedDisplayBank: 1, zeroBasedVoiceNumber: 7)
     #expect(voice?.name == "EGrand")
+}
+
+@Test func fb01ConfigurationServiceExtractsNamesAndBuildsStoreMessages() throws {
+    let fixtureURL = Bundle.module.url(
+        forResource: "current-configuration-single",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let bytes = Array(try Data(contentsOf: fixtureURL))
+    let service = FB01ConfigurationService.shared
+
+    let current = try #require(try service.currentConfiguration(fromDump: bytes))
+    #expect(current.name == "single")
+    #expect(try service.configurationName(fromDump: bytes) == "single")
+
+    let messages = try service.storeMessages(configuration: current, systemChannel: 1, zeroBasedSlot: 15)
+    #expect(messages.count == 3)
+    #expect(try FB01SysExMessage(bytes: messages[0]) == .command(.setMemoryProtect(systemChannel: 1, .off)))
+
+    guard case let .currentConfigurationDump(systemChannel, packet) = try FB01SysExMessage(bytes: messages[1]) else {
+        Issue.record("Expected current configuration dump")
+        return
+    }
+    #expect(systemChannel == 1)
+    #expect(packet.payload == current.bytes)
+    #expect(try FB01SysExMessage(bytes: messages[2]) == .command(.storeCurrentConfiguration(systemChannel: 1, number: 15)))
+    #expect(throws: FB01SysExError.self) {
+        _ = try service.storeMessages(configuration: current, systemChannel: 1, zeroBasedSlot: 16)
+    }
 }

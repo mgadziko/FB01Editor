@@ -329,9 +329,8 @@ final class DocumentModel: ObservableObject {
         let systemChannel = systemChannel
         let sourceName = selectedSourceName
         let destinationName = selectedDestinationName
-        let voiceBanksToFetch = requestedVoiceBanks
-            .filter { FB01SynthModule.shared.isValidVoiceBank($0) }
-            .sorted()
+        let services = FB01ModuleServices.shared
+        let voiceBanksToFetch = services.cacheService.normalizedVoiceBanks(requestedVoiceBanks)
         let cacheProgressText = cacheProgressText(
             voiceBanks: voiceBanksToFetch,
             fetchConfigurations: fetchConfigurations
@@ -353,101 +352,57 @@ final class DocumentModel: ObservableObject {
         progressPanel.show()
 
         Task {
-            var loadedVoiceBanks: [Int: FB01VoiceBankData] = [:]
-            var loadedConfigurations: [Int: FB01ConfigurationData] = [:]
-            var loadedCurrentConfiguration: FB01ConfigurationData?
-            var failures: [String] = []
-            let configurationRequestCount = fetchConfigurations ? FB01SynthModule.shared.allConfigurationSlots.count + 1 : 0
-            let totalRequests = Double(voiceBanksToFetch.count + configurationRequestCount)
-            var completedRequests = 0.0
-
-            if fetchConfigurations {
-                statusMessage = "\(reason): reading current configuration..."
-                progressPanel.update(
-                    message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nReading current configuration...",
-                    completed: completedRequests,
-                    total: totalRequests
-                )
-                if let currentConfiguration = await Self.fetchCachedCurrentConfiguration(
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
-                ) {
-                    loadedCurrentConfiguration = currentConfiguration
-                } else {
-                    failures.append("current configuration")
-                }
-                completedRequests += 1
-            }
-
-            for bank in voiceBanksToFetch {
-                statusMessage = "\(reason): reading Voice Bank \(bank) of \(FB01SynthModule.shared.allVoiceBanks.count)..."
-                progressPanel.update(
-                    message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nReading Voice Bank \(bank)...",
-                    completed: completedRequests,
-                    total: totalRequests
-                )
-                if let voiceBank = await Self.fetchCachedVoiceBank(
-                    bank: bank,
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
-                ) {
-                    loadedVoiceBanks[bank] = voiceBank
-                } else {
-                    failures.append("Voice Bank \(bank)")
-                }
-                completedRequests += 1
-            }
-
-            if fetchConfigurations {
-                for slot in FB01SynthModule.shared.allConfigurationSlots.closedRange {
-                    statusMessage = "\(reason): reading Configuration \(slot) of \(FB01SynthModule.shared.allConfigurationSlots.upperBound)..."
+            let cacheResult = await services.cacheService.fetch(
+                voiceBanks: voiceBanksToFetch,
+                fetchConfigurations: fetchConfigurations,
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel
+            ) { event, completed, total in
+                await MainActor.run {
+                    let detail = Self.cacheProgressDetail(for: event)
+                    self.statusMessage = "\(reason): \(detail)"
                     progressPanel.update(
-                        message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nReading Configuration \(slot) of \(FB01SynthModule.shared.allConfigurationSlots.upperBound)...",
-                        completed: completedRequests,
-                        total: totalRequests
+                        message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\n\(detail)",
+                        completed: completed,
+                        total: total
                     )
-                    if let configuration = await Self.fetchCachedConfiguration(
-                        slot: slot,
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: systemChannel
-                    ) {
-                        loadedConfigurations[slot] = configuration
-                    } else {
-                        failures.append("Configuration \(slot)")
-                    }
-                    completedRequests += 1
                 }
             }
-            progressPanel.update(
-                message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\nFinishing cache update...",
-                completed: totalRequests,
-                total: totalRequests
-            )
 
-            cachedVoiceBanks.merge(loadedVoiceBanks) { _, new in new }
-            cachedConfigurations.merge(loadedConfigurations) { _, new in new }
-            if let loadedCurrentConfiguration {
-                cachedCurrentConfiguration = loadedCurrentConfiguration
+            cachedVoiceBanks.merge(cacheResult.voiceBanks) { _, new in new }
+            cachedConfigurations.merge(cacheResult.configurations) { _, new in new }
+            if let currentConfiguration = cacheResult.currentConfiguration {
+                cachedCurrentConfiguration = currentConfiguration
             }
-            for (bank, bankData) in loadedVoiceBanks where FB01SynthModule.shared.isWritableVoiceBank(bank) {
+            for (bank, bankData) in cacheResult.voiceBanks where services.module.isWritableVoiceBank(bank) {
                 ramVoiceNameCache[bank] = bankData.voices.map { summary in
                     summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
                 }
             }
 
-            let loadedCount = loadedVoiceBanks.count + loadedConfigurations.count + (loadedCurrentConfiguration == nil ? 0 : 1)
-            deviceCacheStatus = failures.isEmpty
-                ? "Loaded \(loadedCount) items"
-                : "Loaded \(loadedCount) items; \(failures.count) failed"
-            statusMessage = failures.isEmpty
+            deviceCacheStatus = cacheResult.failures.isEmpty
+                ? "Loaded \(cacheResult.loadedCount) items"
+                : "Loaded \(cacheResult.loadedCount) items; \(cacheResult.failures.count) failed"
+            statusMessage = cacheResult.failures.isEmpty
                 ? "Device cache loaded from \(sourceName) -> \(destinationName)."
-                : "Device cache partially loaded from \(sourceName) -> \(destinationName); \(failures.count) item\(failures.count == 1 ? "" : "s") failed."
+                : "Device cache partially loaded from \(sourceName) -> \(destinationName); \(cacheResult.failures.count) item\(cacheResult.failures.count == 1 ? "" : "s") failed."
             errorMessage = nil
             progressPanel.dismiss()
             isFetchingFromDevice = false
+        }
+    }
+
+    private static func cacheProgressDetail(for event: FB01DeviceCacheEvent) -> String {
+        switch event {
+        case .currentConfiguration:
+            "Reading current configuration..."
+        case .voiceBank(let bank):
+            "Reading Voice Bank \(bank)..."
+        case .configuration(let slot):
+            "Reading Configuration \(slot) of \(FB01SynthModule.shared.allConfigurationSlots.upperBound)..."
+        case .finishing:
+            "Finishing cache update..."
         }
     }
 
@@ -490,26 +445,6 @@ final class DocumentModel: ObservableObject {
         }
     }
 
-    nonisolated private static func fetchCachedVoiceBank(
-        bank: Int,
-        sourceIndex: Int,
-        destinationIndex: Int,
-        systemChannel: Int
-    ) async -> FB01VoiceBankData? {
-        await Task.detached(priority: .userInitiated) {
-            guard let bytes = try? FB01MIDI.request(
-                .voiceBank(bank),
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel,
-                timeout: 20
-            ) else {
-                return nil
-            }
-            return try? voiceBankData(from: bytes, expectedBankNumber: bank)
-        }.value
-    }
-
     nonisolated private static func fetchCachedConfiguration(
         slot: Int,
         sourceIndex: Int,
@@ -517,24 +452,13 @@ final class DocumentModel: ObservableObject {
         systemChannel: Int
     ) async -> FB01ConfigurationData? {
         await Task.detached(priority: .userInitiated) {
-            guard let bytes = try? FB01MIDI.request(
-                .configuration(slot),
+            try? FB01ConfigurationService.shared.fetchStoredConfiguration(
+                zeroBasedSlot: slot - 1,
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
                 systemChannel: systemChannel,
                 timeout: 15
-            ),
-                  let artifact = try? FB01Artifact(sysexBytes: bytes) else {
-                return nil
-            }
-
-            for message in artifact.messages {
-                if case let .configurationDump(_, number, packet) = message,
-                   number == slot - 1 {
-                    return try? FB01ConfigurationData(bytes: packet.payload)
-                }
-            }
-            return nil
+            )
         }.value
     }
 
@@ -544,23 +468,12 @@ final class DocumentModel: ObservableObject {
         systemChannel: Int
     ) async -> FB01ConfigurationData? {
         await Task.detached(priority: .userInitiated) {
-            guard let bytes = try? FB01MIDI.request(
-                .currentConfiguration,
+            try? FB01ConfigurationService.shared.fetchCurrentConfiguration(
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
                 systemChannel: systemChannel,
                 timeout: 8
-            ),
-                  let artifact = try? FB01Artifact(sysexBytes: bytes) else {
-                return nil
-            }
-
-            for message in artifact.messages {
-                if case let .currentConfigurationDump(_, packet) = message {
-                    return try? FB01ConfigurationData(bytes: packet.payload)
-                }
-            }
-            return nil
+            )
         }.value
     }
 
@@ -2239,23 +2152,15 @@ final class DocumentModel: ObservableObject {
     }
 
     func storeConfigurationMessages(payload: FB01ConfigurationData, systemChannel: Int, slot: Int) throws -> [[UInt8]] {
-        guard FB01SynthModule.shared.isWritableConfigurationSlot(slot + 1) else {
+        do {
+            return try FB01ConfigurationService.shared.storeMessages(
+                configuration: payload,
+                systemChannel: systemChannel,
+                zeroBasedSlot: slot
+            )
+        } catch is FB01SysExError {
             throw FB01AppError.readOnlyConfigurationSlot
         }
-
-        let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(
-            systemChannel: systemChannel,
-            .off
-        ))
-        let currentMessage = FB01SysExMessage.currentConfigurationDump(
-            systemChannel: systemChannel,
-            packet: try FB01SysExPacket(payload: payload.bytes)
-        )
-        let storeCommand = FB01SysExMessage.command(.storeCurrentConfiguration(
-            systemChannel: systemChannel,
-            number: slot
-        ))
-        return try [protectOffCommand.bytes, currentMessage.bytes, storeCommand.bytes]
     }
 
     private func storeConfigurationPayloadForDeviceCopy(
@@ -2485,17 +2390,17 @@ final class DocumentModel: ObservableObject {
         destinationIndex: Int,
         systemChannel: Int
     ) throws -> FB01ConfigurationData {
-        let bytes = try FB01MIDI.request(
-            .configuration(slot + 1),
-            sourceIndex: sourceIndex,
-            destinationIndex: destinationIndex,
-            systemChannel: systemChannel,
-            timeout: 8
-        )
-        guard let configuration = try storedConfigurationPayload(from: bytes, slot: slot) else {
+        do {
+            return try FB01ConfigurationService.shared.fetchStoredConfiguration(
+                zeroBasedSlot: slot,
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 8
+            )
+        } catch {
             throw FB01AppError.message("Response did not contain Configuration \(slot + 1)")
         }
-        return configuration
     }
 
     nonisolated private static func fetchConfigurationNamesForDeviceCopy(
@@ -2503,43 +2408,21 @@ final class DocumentModel: ObservableObject {
         destinationIndex: Int,
         systemChannel: Int
     ) -> ConfigurationFetchNameLookup {
-        var names: [Int: String] = [:]
-        for slot in FB01SynthModule.shared.writableConfigurationSlots.closedRange {
-            guard let bytes = try? FB01MIDI.request(
-                .configuration(slot),
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel,
-                timeout: 1.25
-            ),
-                  let name = try? configurationName(fromDump: bytes),
-                  !name.isEmpty else {
-                continue
-            }
-            names[slot] = name
-        }
+        let names = FB01ConfigurationService.shared.fetchWritableConfigurationNames(
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            timeout: 1.25
+        )
         return ConfigurationFetchNameLookup(storedNames: names)
     }
 
     nonisolated private static func configurationName(fromDump bytes: [UInt8]) throws -> String? {
-        let artifact = try FB01Artifact(sysexBytes: bytes)
-        for message in artifact.messages {
-            if case let .configurationDump(_, _, packet) = message {
-                let configuration = try FB01ConfigurationData(bytes: packet.payload)
-                return configuration.name.isEmpty ? "Untitled" : configuration.name
-            }
-        }
-        return nil
+        try FB01ConfigurationService.shared.configurationName(fromDump: bytes)
     }
 
     nonisolated private static func storedConfigurationPayload(from bytes: [UInt8], slot: Int) throws -> FB01ConfigurationData? {
-        let artifact = try FB01Artifact(sysexBytes: bytes)
-        for message in artifact.messages {
-            if case let .configurationDump(_, number, packet) = message, number == slot {
-                return try FB01ConfigurationData(bytes: packet.payload)
-            }
-        }
-        return nil
+        try FB01ConfigurationService.shared.storedConfiguration(fromDump: bytes, zeroBasedSlot: slot)
     }
 
     private static func chooseDeviceVoiceCopySelection(nameLookup: VoiceDocumentFetchNameLookup) -> DeviceVoiceCopySelection? {
@@ -3470,7 +3353,7 @@ final class DocumentModel: ObservableObject {
         return Date().timeIntervalSince(preparedKeyboardVoiceDate) > keyboardPreparationStaleAfter
     }
 
-    private func scheduleKeyboardVoicePreparation(delayNanoseconds: UInt64 = 150_000_000) {
+    private func scheduleKeyboardVoicePreparation(delayNanoseconds: UInt64 = 0) {
         keyboardPreparationTask?.cancel()
         guard let context = selectedVoiceContext else {
             return
@@ -3487,7 +3370,9 @@ final class DocumentModel: ObservableObject {
         let voice = context.voice
         keyboardPreparationTask = Task(priority: .userInitiated) { [weak self] in
             do {
-                try await Task.sleep(nanoseconds: delayNanoseconds)
+                if delayNanoseconds > 0 {
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                }
                 try Task.checkCancellation()
                 let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
                 let auditionMessages = try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel)

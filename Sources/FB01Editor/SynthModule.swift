@@ -19,6 +19,37 @@ public enum SynthDocumentKind: String, CaseIterable, Sendable {
     case configurationBank
 }
 
+public struct SynthModuleCapabilities: Equatable, Sendable {
+    public var supportsVoices: Bool
+    public var supportsConfigurations: Bool
+    public var supportsMultiInstrumentConfigurations: Bool
+    public var supportsWritableVoiceBanks: Bool
+    public var supportsReadOnlyVoiceBanks: Bool
+    public var supportsMemoryProtect: Bool
+    public var supportsLiveAuditionBuffer: Bool
+    public var supportsGeneralMIDIInstall: Bool
+
+    public init(
+        supportsVoices: Bool,
+        supportsConfigurations: Bool,
+        supportsMultiInstrumentConfigurations: Bool,
+        supportsWritableVoiceBanks: Bool,
+        supportsReadOnlyVoiceBanks: Bool,
+        supportsMemoryProtect: Bool,
+        supportsLiveAuditionBuffer: Bool,
+        supportsGeneralMIDIInstall: Bool
+    ) {
+        self.supportsVoices = supportsVoices
+        self.supportsConfigurations = supportsConfigurations
+        self.supportsMultiInstrumentConfigurations = supportsMultiInstrumentConfigurations
+        self.supportsWritableVoiceBanks = supportsWritableVoiceBanks
+        self.supportsReadOnlyVoiceBanks = supportsReadOnlyVoiceBanks
+        self.supportsMemoryProtect = supportsMemoryProtect
+        self.supportsLiveAuditionBuffer = supportsLiveAuditionBuffer
+        self.supportsGeneralMIDIInstall = supportsGeneralMIDIInstall
+    }
+}
+
 public struct SynthSlotRange: Equatable, Sendable {
     public var lowerBound: Int
     public var upperBound: Int
@@ -43,6 +74,7 @@ public struct SynthSlotRange: Equatable, Sendable {
 
 public protocol SynthModule: Sendable {
     var identity: SynthModuleIdentity { get }
+    var capabilities: SynthModuleCapabilities { get }
     var supportedDocumentKinds: [SynthDocumentKind] { get }
     var writableVoiceBanks: [Int] { get }
     var readOnlyVoiceBanks: [Int] { get }

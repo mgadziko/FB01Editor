@@ -7,6 +7,17 @@ public struct FB01SynthModule: SynthModule {
         editorDisplayName: "Forest FB-01 Editor"
     )
 
+    public let capabilities = SynthModuleCapabilities(
+        supportsVoices: true,
+        supportsConfigurations: true,
+        supportsMultiInstrumentConfigurations: true,
+        supportsWritableVoiceBanks: true,
+        supportsReadOnlyVoiceBanks: true,
+        supportsMemoryProtect: true,
+        supportsLiveAuditionBuffer: true,
+        supportsGeneralMIDIInstall: true
+    )
+
     public let supportedDocumentKinds: [SynthDocumentKind] = [
         .voice,
         .configuration,
