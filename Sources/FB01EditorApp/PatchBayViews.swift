@@ -17,6 +17,8 @@ struct FMRoutingPatchBayView: View {
     @Binding var transpose: Int
     @Binding var leftOutputEnabled: Bool
     @Binding var rightOutputEnabled: Bool
+    @Binding var voiceCharacterType: VoiceCharacterType
+    var macroValue: (PerformanceMacro) -> Binding<Int>
     var operators: [FB01VoiceOperatorData]
     var operatorEnabled: [Binding<Bool>]
     @Binding var selectedOperatorIndex: Int
@@ -37,6 +39,9 @@ struct FMRoutingPatchBayView: View {
                     modulationPanel
                 }
             }
+
+            macroPanel
+                .frame(maxWidth: .infinity, alignment: .center)
 
             algorithmChooser
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -105,6 +110,54 @@ struct FMRoutingPatchBayView: View {
         .frame(minWidth: 520, maxWidth: 680, alignment: .topLeading)
     }
 
+    private var macroPanel: some View {
+        OperatorControlGroup(title: "Performance Macros") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text("Voice Character Type")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Picker("Voice Character Type", selection: $voiceCharacterType) {
+                        ForEach(VoiceCharacterType.allCases) { characterType in
+                            Text(characterType.title).tag(characterType)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 180)
+
+                    Text("Oxygen 25 C1-C8 control these musical macros. Values are Forest session controls, not stored FB-01 fields.")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                LazyVGrid(columns: Array(repeating: GridItem(.fixed(92), spacing: 12), count: 4), alignment: .leading, spacing: 12) {
+                    ForEach(PerformanceMacro.allCases) { macro in
+                        VStack(spacing: 3) {
+                            ParameterKnob(
+                                label: macro.title,
+                                value: macroValue(macro),
+                                range: PerformanceMacro.range,
+                                width: 88,
+                                knobSize: 46
+                            )
+                            Text("C\(macro.oxygenKnobNumber)")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .help(macro.help(for: voiceCharacterType))
+                    }
+                }
+
+                Text(PerformanceMacro.summary(for: voiceCharacterType))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(width: 780, alignment: .leading)
+    }
+
     private var routedOperatorPatchBay: some View {
         let layout = FMPatchBayLayout(algorithm: algorithm)
         return ScrollView(.horizontal) {
@@ -133,6 +186,284 @@ struct FMRoutingPatchBayView: View {
             return .constant(true)
         }
         return operatorEnabled[index]
+    }
+}
+
+enum VoiceCharacterType: String, CaseIterable, Identifiable {
+    case piano
+    case brass
+    case bass
+    case bell
+    case organ
+    case strings
+    case wind
+    case percussion
+    case synthetic
+    case other
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .piano: return "Piano"
+        case .brass: return "Brass"
+        case .bass: return "Bass"
+        case .bell: return "Bell"
+        case .organ: return "Organ"
+        case .strings: return "Strings"
+        case .wind: return "Wind"
+        case .percussion: return "Percussion"
+        case .synthetic: return "Synthetic"
+        case .other: return "Other"
+        }
+    }
+}
+
+enum PerformanceMacro: String, CaseIterable, Identifiable {
+    case brightness
+    case warmth
+    case bite
+    case body
+    case motion
+    case punch
+    case air
+    case character
+
+    static let range = 0...127
+    static let neutralValue = 64
+    static let neutralValues = Dictionary(uniqueKeysWithValues: PerformanceMacro.allCases.map { ($0, neutralValue) })
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .brightness: return "Brightness"
+        case .warmth: return "Warmth"
+        case .bite: return "Bite"
+        case .body: return "Body"
+        case .motion: return "Motion"
+        case .punch: return "Punch"
+        case .air: return "Air"
+        case .character: return "Character"
+        }
+    }
+
+    var oxygenKnobNumber: Int {
+        switch self {
+        case .brightness: return 1
+        case .warmth: return 2
+        case .bite: return 3
+        case .body: return 4
+        case .motion: return 5
+        case .punch: return 6
+        case .air: return 7
+        case .character: return 8
+        }
+    }
+
+    static func oxygen25Macro(forController controller: Int) -> PerformanceMacro? {
+        switch controller {
+        case 74: return .brightness
+        case 71: return .warmth
+        case 52: return .bite
+        case 91: return .body
+        case 8: return .motion
+        case 9: return .punch
+        case 12: return .air
+        case 6: return .character
+        default: return nil
+        }
+    }
+
+    func help(for characterType: VoiceCharacterType) -> String {
+        "\(title): \(touchedParametersDescription(for: characterType)). This changes the current editable voice only."
+    }
+
+    func touchedParametersDescription(for characterType: VoiceCharacterType) -> String {
+        switch self {
+        case .brightness:
+            return "modulator level, feedback, and pitch modulation depth"
+        case .warmth:
+            return "modulator level, feedback, and release"
+        case .bite:
+            return "attack, velocity-to-attack, and modulator level"
+        case .body:
+            return "carrier level and sustain"
+        case .motion:
+            return "LFO speed plus amplitude and pitch modulation depth"
+        case .punch:
+            return "attack, decay, sustain, and velocity response"
+        case .air:
+            return "release, pitch modulation depth, and upper modulation level"
+        case .character:
+            return "\(characterType.title.lowercased())-aware operator balance, envelope, and feedback"
+        }
+    }
+
+    static func summary(for characterType: VoiceCharacterType) -> String {
+        "Neutral is 64. Moving a macro above or below neutral applies musical deltas to FB-01 parameters. Character currently uses the \(characterType.title) recipe."
+    }
+
+    func apply(previousValue: Int, newValue: Int, characterType: VoiceCharacterType, to voice: FB01VoiceData) throws -> FB01VoiceData {
+        let delta = newValue - previousValue
+        guard delta != 0 else { return voice }
+
+        switch self {
+        case .brightness:
+            return try voice
+                .adjustingOperators(carriers: false, delta: delta) { operatorData, delta in
+                    try operatorData.settingTotalLevel(adjust(operatorData.totalLevel, by: -scaled(delta, 0.30), in: 0...127))
+                }
+                .settingFeedbackLevel(adjust(voice.feedbackLevel, by: scaled(delta, 0.05), in: 0...7))
+                .settingPitchModulationDepth(adjust(voice.pitchModulationDepth, by: scaled(delta, 0.12), in: 0...127))
+        case .warmth:
+            return try voice
+                .adjustingOperators(carriers: false, delta: delta) { operatorData, delta in
+                    try operatorData
+                        .settingTotalLevel(adjust(operatorData.totalLevel, by: scaled(delta, 0.25), in: 0...127))
+                        .settingReleaseRate(adjust(operatorData.releaseRate, by: scaled(delta, 0.03), in: 0...15))
+                }
+                .settingFeedbackLevel(adjust(voice.feedbackLevel, by: -scaled(delta, 0.05), in: 0...7))
+        case .bite:
+            return try voice.adjustingOperators(carriers: nil, delta: delta) { operatorData, delta in
+                var updated = try operatorData
+                    .settingAttackRate(adjust(operatorData.attackRate, by: scaled(delta, 0.16), in: 0...31))
+                    .settingVelocitySensitivityForAttackRate(adjust(operatorData.velocitySensitivityForAttackRate, by: scaled(delta, 0.05), in: 0...7))
+                if !operatorData.carrier {
+                    updated = try updated.settingTotalLevel(adjust(operatorData.totalLevel, by: -scaled(delta, 0.16), in: 0...127))
+                }
+                return updated
+            }
+        case .body:
+            return try voice.adjustingOperators(carriers: true, delta: delta) { operatorData, delta in
+                try operatorData
+                    .settingTotalLevel(adjust(operatorData.totalLevel, by: -scaled(delta, 0.25), in: 0...127))
+                    .settingSustainLevel(adjust(operatorData.sustainLevel, by: scaled(delta, 0.05), in: 0...15))
+            }
+        case .motion:
+            return try voice
+                .settingLFOSpeed(adjust(voice.lfoSpeed, by: scaled(delta, 0.65), in: 0...255))
+                .settingAmplitudeModulationDepth(adjust(voice.amplitudeModulationDepth, by: scaled(delta, 0.20), in: 0...127))
+                .settingPitchModulationDepth(adjust(voice.pitchModulationDepth, by: scaled(delta, 0.20), in: 0...127))
+        case .punch:
+            return try voice.adjustingOperators(carriers: nil, delta: delta) { operatorData, delta in
+                try operatorData
+                    .settingAttackRate(adjust(operatorData.attackRate, by: scaled(delta, 0.18), in: 0...31))
+                    .settingDecay1Rate(adjust(operatorData.decay1Rate, by: scaled(delta, 0.08), in: 0...15))
+                    .settingSustainLevel(adjust(operatorData.sustainLevel, by: -scaled(delta, 0.05), in: 0...15))
+                    .settingVelocitySensitivityForTotalLevel(adjust(operatorData.velocitySensitivityForTotalLevel, by: scaled(delta, 0.04), in: 0...7))
+            }
+        case .air:
+            return try voice
+                .adjustingOperators(carriers: false, delta: delta) { operatorData, delta in
+                    try operatorData
+                        .settingTotalLevel(adjust(operatorData.totalLevel, by: -scaled(delta, 0.10), in: 0...127))
+                        .settingReleaseRate(adjust(operatorData.releaseRate, by: scaled(delta, 0.06), in: 0...15))
+                }
+                .settingPitchModulationDepth(adjust(voice.pitchModulationDepth, by: scaled(delta, 0.10), in: 0...127))
+        case .character:
+            return try applyCharacter(delta: delta, characterType: characterType, to: voice)
+        }
+    }
+
+    private func applyCharacter(delta: Int, characterType: VoiceCharacterType, to voice: FB01VoiceData) throws -> FB01VoiceData {
+        switch characterType {
+        case .piano:
+            return try voice.adjustingOperators(carriers: false, delta: delta) { operatorData, delta in
+                try operatorData
+                    .settingDecay1Rate(adjust(operatorData.decay1Rate, by: scaled(delta, 0.10), in: 0...15))
+                    .settingSustainLevel(adjust(operatorData.sustainLevel, by: -scaled(delta, 0.05), in: 0...15))
+            }
+        case .brass:
+            return try voice
+                .adjustingOperators(carriers: false, delta: delta) { operatorData, delta in
+                    try operatorData.settingTotalLevel(adjust(operatorData.totalLevel, by: -scaled(delta, 0.20), in: 0...127))
+                }
+                .settingFeedbackLevel(adjust(voice.feedbackLevel, by: scaled(delta, 0.06), in: 0...7))
+        case .bass:
+            return try voice.adjustingOperators(carriers: true, delta: delta) { operatorData, delta in
+                try operatorData
+                    .settingTotalLevel(adjust(operatorData.totalLevel, by: -scaled(delta, 0.18), in: 0...127))
+                    .settingReleaseRate(adjust(operatorData.releaseRate, by: -scaled(delta, 0.04), in: 0...15))
+            }
+        case .bell:
+            return try voice
+                .adjustingOperators(carriers: false, delta: delta) { operatorData, delta in
+                    try operatorData
+                        .settingMultiple(adjust(operatorData.multiple, by: scaled(delta, 0.03), in: 0...15))
+                        .settingSustainLevel(adjust(operatorData.sustainLevel, by: -scaled(delta, 0.08), in: 0...15))
+                        .settingReleaseRate(adjust(operatorData.releaseRate, by: scaled(delta, 0.06), in: 0...15))
+                }
+                .settingFeedbackLevel(adjust(voice.feedbackLevel, by: scaled(delta, 0.06), in: 0...7))
+        case .organ:
+            return try voice.adjustingOperators(carriers: nil, delta: delta) { operatorData, delta in
+                try operatorData
+                    .settingSustainLevel(adjust(operatorData.sustainLevel, by: scaled(delta, 0.08), in: 0...15))
+                    .settingReleaseRate(adjust(operatorData.releaseRate, by: scaled(delta, 0.03), in: 0...15))
+            }
+        case .strings:
+            return try voice
+                .adjustingOperators(carriers: true, delta: delta) { operatorData, delta in
+                    try operatorData
+                        .settingAttackRate(adjust(operatorData.attackRate, by: -scaled(delta, 0.10), in: 0...31))
+                        .settingReleaseRate(adjust(operatorData.releaseRate, by: scaled(delta, 0.07), in: 0...15))
+                }
+                .settingAmplitudeModulationDepth(adjust(voice.amplitudeModulationDepth, by: scaled(delta, 0.08), in: 0...127))
+        case .wind:
+            return try voice
+                .adjustingOperators(carriers: nil, delta: delta) { operatorData, delta in
+                    try operatorData.settingVelocitySensitivityForTotalLevel(adjust(operatorData.velocitySensitivityForTotalLevel, by: scaled(delta, 0.05), in: 0...7))
+                }
+                .settingPitchModulationDepth(adjust(voice.pitchModulationDepth, by: scaled(delta, 0.10), in: 0...127))
+        case .percussion:
+            return try voice.adjustingOperators(carriers: nil, delta: delta) { operatorData, delta in
+                try operatorData
+                    .settingAttackRate(adjust(operatorData.attackRate, by: scaled(delta, 0.18), in: 0...31))
+                    .settingDecay2Rate(adjust(operatorData.decay2Rate, by: scaled(delta, 0.12), in: 0...31))
+                    .settingSustainLevel(adjust(operatorData.sustainLevel, by: -scaled(delta, 0.10), in: 0...15))
+            }
+        case .synthetic:
+            return try voice
+                .adjustingOperators(carriers: false, delta: delta) { operatorData, delta in
+                    try operatorData
+                        .settingTotalLevel(adjust(operatorData.totalLevel, by: -scaled(delta, 0.22), in: 0...127))
+                        .settingDetune1(adjust(operatorData.detune1, by: scaled(delta, 0.03), in: 0...7))
+                }
+                .settingFeedbackLevel(adjust(voice.feedbackLevel, by: scaled(delta, 0.07), in: 0...7))
+        case .other:
+            return try voice
+                .adjustingOperators(carriers: false, delta: delta) { operatorData, delta in
+                    try operatorData.settingTotalLevel(adjust(operatorData.totalLevel, by: -scaled(delta, 0.16), in: 0...127))
+                }
+                .settingFeedbackLevel(adjust(voice.feedbackLevel, by: scaled(delta, 0.04), in: 0...7))
+        }
+    }
+
+    private func scaled(_ delta: Int, _ factor: Double) -> Int {
+        let value = Int((Double(delta) * factor).rounded())
+        if value == 0, delta != 0, factor > 0 {
+            return delta > 0 ? 1 : -1
+        }
+        return value
+    }
+
+    private func adjust(_ value: Int, by delta: Int, in range: ClosedRange<Int>) -> Int {
+        min(max(value + delta, range.lowerBound), range.upperBound)
+    }
+}
+
+private extension FB01VoiceData {
+    func adjustingOperators(
+        carriers carrierFilter: Bool?,
+        delta: Int,
+        update: (FB01VoiceOperatorData, Int) throws -> FB01VoiceOperatorData
+    ) throws -> FB01VoiceData {
+        var editedVoice = self
+        for operatorData in operators where carrierFilter == nil || operatorData.carrier == carrierFilter {
+            let updatedOperator = try update(operatorData, delta)
+            editedVoice = try editedVoice.replacingOperator(updatedOperator)
+        }
+        return editedVoice
     }
 }
 

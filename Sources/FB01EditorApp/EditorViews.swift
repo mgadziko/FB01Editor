@@ -3,6 +3,8 @@ import FB01Editor
 import SwiftUI
 import UniformTypeIdentifiers
 
+private let voiceDocumentEditPreparationDelayNanoseconds: UInt64 = 250_000_000
+
 struct ContentView: View {
     @ObservedObject var document: DocumentModel
     @ObservedObject var workspace: EditorDocumentWorkspace
@@ -145,7 +147,7 @@ struct LiveKeyboardView: View {
                 title: document.selectedVoiceDocumentPayload().map { "Live Keyboard - \($0.voice.name)" } ?? "Live Keyboard",
                 subtitle: document.hasKeyboardVoiceContext ? "Current voice" : "MIDI notes only"
             )
-            .frame(width: 380, alignment: .leading)
+            .frame(width: 460, alignment: .leading)
 
             PianoKeyboardRepresentable(
                 startNote: document.keyboardStartNote,
@@ -229,6 +231,11 @@ struct LiveKeyboardPaletteControlsView: View {
                             get: { document.keyboardStartNote / 12 },
                             set: { document.setKeyboardStartNote($0 * 12) }
                         ), range: 0...5, width: 70, knobSize: 42)
+
+                        ParameterKnob(label: "Portamento", value: Binding(
+                            get: { document.externalKeyboardPortamento },
+                            set: { document.setExternalKeyboardPortamento($0) }
+                        ), range: 0...127, width: 86, knobSize: 42)
 
                         ParameterKnob(label: "Volume", value: Binding(
                             get: { document.externalKeyboardVolume },
@@ -319,6 +326,11 @@ struct LiveKeyboardMIDIControlsView: View {
                     get: { document.keyboardStartNote / 12 },
                     set: { document.setKeyboardStartNote($0 * 12) }
                 ), range: 0...5, width: 70, knobSize: 42)
+
+                ParameterKnob(label: "Portamento", value: Binding(
+                    get: { document.externalKeyboardPortamento },
+                    set: { document.setExternalKeyboardPortamento($0) }
+                ), range: 0...127, width: 86, knobSize: 42)
 
                 ParameterKnob(label: "Volume", value: Binding(
                     get: { document.externalKeyboardVolume },
@@ -1566,7 +1578,7 @@ struct VoiceDocumentLiveKeyboardView: View {
             device.setExternalKeyboardDocumentHandler(nil)
         }
         .onChange(of: document.voice) {
-            document.scheduleKeyboardVoicePreparation(device: device)
+            document.scheduleKeyboardVoicePreparation(device: device, delayNanoseconds: voiceDocumentEditPreparationDelayNanoseconds)
         }
         .onChange(of: device.keyboardChannel) {
             document.scheduleKeyboardVoicePreparation(device: device)
@@ -1840,6 +1852,16 @@ struct VoiceDocumentWindow: View {
                             get: { voice.rightOutputEnabled },
                             set: { newValue in document.updateVoice { voice in try voice.settingRightOutputEnabled(newValue) } }
                         ),
+                        voiceCharacterType: Binding(
+                            get: { document.voiceCharacterType },
+                            set: { document.voiceCharacterType = $0 }
+                        ),
+                        macroValue: { macro in
+                            Binding(
+                                get: { document.value(for: macro) },
+                                set: { document.setPerformanceMacro(macro, value: $0) }
+                            )
+                        },
                         operators: voice.operators,
                         operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
                             Binding(
@@ -1935,7 +1957,7 @@ struct VoiceDocumentWindow: View {
         }
         .onChange(of: document.voice) {
             registerLiveKeyboardContext()
-            document.scheduleKeyboardVoicePreparation(device: device)
+            document.scheduleKeyboardVoicePreparation(device: device, delayNanoseconds: voiceDocumentEditPreparationDelayNanoseconds)
         }
         .onChange(of: device.keyboardChannel) {
             document.scheduleKeyboardVoicePreparation(device: device)
@@ -3218,6 +3240,8 @@ struct VoiceDetailView: View {
     @State private var editError: String?
     @State private var exportError: String?
     @State private var selectedOperatorIndex = FB01VoiceData.dataIndex(forOperatorNumber: 1)
+    @State private var voiceCharacterType: VoiceCharacterType = .other
+    @State private var performanceMacroValues = PerformanceMacro.neutralValues
 
     init(document: DocumentModel, sourceID: LibrarySource.ID, systemChannel: Int, summary: FB01VoiceSummary, bankVoices: [FB01VoiceSummary] = []) {
         self.document = document
@@ -3459,6 +3483,13 @@ struct VoiceDetailView: View {
                         get: { editableVoice.rightOutputEnabled },
                         set: { setRightOutputEnabled($0) }
                     ),
+                    voiceCharacterType: $voiceCharacterType,
+                    macroValue: { macro in
+                        Binding(
+                            get: { performanceMacroValues[macro] ?? PerformanceMacro.neutralValue },
+                            set: { setPerformanceMacro(macro, value: $0) }
+                        )
+                    },
                     operators: editableVoice.operators,
                     operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
                         Binding(
@@ -3485,6 +3516,7 @@ struct VoiceDetailView: View {
         }
         .onChange(of: summary.number) { _, _ in
             nameText = editableVoice.name
+            performanceMacroValues = PerformanceMacro.neutralValues
             editError = nil
             exportError = nil
         }
@@ -3581,6 +3613,14 @@ struct VoiceDetailView: View {
 
     private func updateOperator(_ operatorData: FB01VoiceOperatorData) {
         updateVoice { try $0.replacingOperator(operatorData) }
+    }
+
+    private func setPerformanceMacro(_ macro: PerformanceMacro, value proposedValue: Int) {
+        let newValue = min(max(proposedValue, PerformanceMacro.range.lowerBound), PerformanceMacro.range.upperBound)
+        let oldValue = performanceMacroValues[macro] ?? PerformanceMacro.neutralValue
+        guard newValue != oldValue else { return }
+        updateVoice { try macro.apply(previousValue: oldValue, newValue: newValue, characterType: voiceCharacterType, to: $0) }
+        performanceMacroValues[macro] = newValue
     }
 
     private func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {

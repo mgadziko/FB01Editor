@@ -149,30 +149,32 @@ import UniformTypeIdentifiers
 }
 
 @MainActor
-@Test func voiceDocumentMapsOxygenC1ThroughC6ToCurrentOperatorEnvelope() throws {
+@Test func voiceDocumentMapsOxygenKnobsToPerformanceMacros() throws {
     let voiceData = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
     let voice = VoiceDocumentModel(voice: voiceData, systemChannel: 0)
     let device = DocumentModel()
-    voice.selectedOperatorIndex = 2
 
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x4A, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x47, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x34, 127], device: device))
     #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x5B, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x5D, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x1A, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x1E, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x1B, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x1D, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x08, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x09, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x0C, 127], device: device))
+    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x06, 127], device: device))
 
-    let operatorData = try #require(voice.voice.operators.first { $0.index == 2 })
-    #expect(operatorData.attackRate == 31)
-    #expect(operatorData.velocitySensitivityForAttackRate == 7)
-    #expect(operatorData.decay1Rate == 15)
-    #expect(operatorData.decay2Rate == 31)
-    #expect(operatorData.sustainLevel == 15)
-    #expect(operatorData.releaseRate == 15)
-
-    let unaffectedOperator = try #require(voice.voice.operators.first { $0.index == 1 })
-    #expect(unaffectedOperator.attackRate == 0)
-    #expect(unaffectedOperator.releaseRate == 0)
+    #expect(voice.value(for: .brightness) == 127)
+    #expect(voice.value(for: .warmth) == 127)
+    #expect(voice.value(for: .bite) == 127)
+    #expect(voice.value(for: .body) == 127)
+    #expect(voice.value(for: .motion) == 127)
+    #expect(voice.value(for: .punch) == 127)
+    #expect(voice.value(for: .air) == 127)
+    #expect(voice.value(for: .character) == 127)
+    #expect(voice.voice.lfoSpeed > voiceData.lfoSpeed)
+    #expect(voice.voice.amplitudeModulationDepth > voiceData.amplitudeModulationDepth)
+    #expect(voice.voice.pitchModulationDepth > voiceData.pitchModulationDepth)
+    #expect(device.externalKeyboardStatus.contains("Character"))
 }
 
 @Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {

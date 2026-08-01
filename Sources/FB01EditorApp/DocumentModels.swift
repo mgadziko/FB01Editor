@@ -22,6 +22,7 @@ final class DocumentModel: ObservableObject {
     @Published var externalKeyboardEnabled = false
     @Published var externalKeyboardStatus = "Off"
     @Published var externalKeyboardVolume = 127
+    @Published var externalKeyboardPortamento = 0
     @Published var selectedVoiceNumbers: [LibrarySource.ID: Int] = [:]
     @Published var sidebarSelection: SidebarSelection = .system
     @Published var systemChannel = 0
@@ -59,6 +60,7 @@ final class DocumentModel: ObservableObject {
     private var liveKeyboardNoteOnHandler: ((Int) -> Void)?
     private var liveKeyboardNoteOffHandler: ((Int) -> Void)?
     private var externalVolumeTask: Task<Void, Never>?
+    private var externalPortamentoTask: Task<Void, Never>?
     private var hasStartedLaunchDeviceCacheRefresh = false
 
     private enum DefaultsKey {
@@ -75,6 +77,7 @@ final class DocumentModel: ObservableObject {
         static let keyboardChannel = "FB01Editor.keyboardChannel"
         static let keyboardVelocity = "FB01Editor.keyboardVelocity"
         static let keyboardStartNote = "FB01Editor.keyboardStartNote"
+        static let externalKeyboardPortamento = "FB01Editor.externalKeyboardPortamento"
         static let voiceEditorParadigm = "FB01Editor.voiceEditorParadigm"
         static let preCacheRAMVoiceBanksOnLaunch = "FB01Editor.preCacheRAMVoiceBanksOnLaunch"
         static let preCacheROMVoiceBanksOnLaunch = "FB01Editor.preCacheROMVoiceBanksOnLaunch"
@@ -108,6 +111,8 @@ final class DocumentModel: ObservableObject {
         keyboardVelocity = (1...127).contains(savedKeyboardVelocity) ? savedKeyboardVelocity : 100
         let savedKeyboardStartNote = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardStartNote)
         keyboardStartNote = (0...67).contains(savedKeyboardStartNote) ? savedKeyboardStartNote : 36
+        let savedExternalKeyboardPortamento = UserDefaults.standard.integer(forKey: DefaultsKey.externalKeyboardPortamento)
+        externalKeyboardPortamento = (0...127).contains(savedExternalKeyboardPortamento) ? savedExternalKeyboardPortamento : 0
         if let rawParadigm = UserDefaults.standard.string(forKey: DefaultsKey.voiceEditorParadigm),
            let paradigm = VoiceEditorParadigm(rawValue: rawParadigm) {
             voiceEditorParadigm = paradigm
@@ -711,6 +716,10 @@ final class DocumentModel: ObservableObject {
         applyExternalKeyboardVolume(volume)
     }
 
+    func setExternalKeyboardPortamento(_ portamento: Int) {
+        applyExternalKeyboardPortamento(portamento)
+    }
+
     func setKeyboardStartNote(_ note: Int) {
         keyboardStartNote = min(max(note, 0), 67)
         UserDefaults.standard.set(keyboardStartNote, forKey: DefaultsKey.keyboardStartNote)
@@ -895,6 +904,17 @@ final class DocumentModel: ObservableObject {
         let command = FB01SysExMessage.command(.setMasterOutputLevel(
             systemChannel: systemChannel,
             level: UInt8(bounded)
+        ))
+        return try command.bytes
+    }
+
+    func liveKeyboardPortamentoMessageBytes(value: Int, systemChannel: Int? = nil) throws -> [UInt8] {
+        let bounded = UInt8(min(max(value, 0), 127))
+        let command = FB01SysExMessage.command(.instrumentParameterChange(
+            systemChannel: systemChannel ?? self.systemChannel,
+            instrument: 0,
+            parameter: FB01InstrumentParameter.portamentoTime,
+            value: .oneByte(bounded)
         ))
         return try command.bytes
     }
@@ -3329,9 +3349,42 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    private func applyExternalKeyboardPortamento(_ value: Int) {
+        let bounded = min(max(value, 0), 127)
+        externalKeyboardPortamento = bounded
+        UserDefaults.standard.set(bounded, forKey: DefaultsKey.externalKeyboardPortamento)
+        invalidateKeyboardPreparation()
+
+        let destinationIndex = selectedDestinationIndex
+        externalPortamentoTask?.cancel()
+        externalPortamentoTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 80_000_000)
+                try Task.checkCancellation()
+                let message = try await MainActor.run {
+                    try self?.liveKeyboardPortamentoMessageBytes(value: bounded)
+                }
+                guard let message else { return }
+                try await LiveMIDIPlaybackController.shared.sendImmediate(message, destinationIndex: destinationIndex)
+                await MainActor.run {
+                    self?.externalKeyboardStatus = "Portamento \(bounded)"
+                    self?.errorMessage = nil
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run {
+                    self?.externalKeyboardStatus = "Portamento send failed"
+                    self?.errorMessage = "Portamento mapping failed: \(error)"
+                    self?.statusMessage = nil
+                }
+            }
+        }
+    }
+
     private func keyboardPreparationMessages(midiChannel: Int) throws -> [[UInt8]] {
         guard let context = selectedVoiceContext else {
-            let signature = "\(systemChannel)-\(midiChannel)-audition"
+            let signature = "\(systemChannel)-\(midiChannel)-audition-portamento-\(externalKeyboardPortamento)"
             guard preparedKeyboardVoiceSignature != signature || isKeyboardPreparationStale || !isAuditionBufferPrepared(signature: signature) else {
                 return []
             }
@@ -3339,9 +3392,10 @@ final class DocumentModel: ObservableObject {
             preparedKeyboardVoiceDate = Date()
             markAuditionBufferPrepared(signature: signature)
             return try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel)
+                + [try liveKeyboardPortamentoMessageBytes(value: externalKeyboardPortamento, systemChannel: systemChannel)]
         }
 
-        let signature = "\(context.systemChannel)-\(midiChannel)-\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)"
+        let signature = "\(context.systemChannel)-\(midiChannel)-\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)-portamento-\(externalKeyboardPortamento)"
         guard preparedKeyboardVoiceSignature != signature || isKeyboardPreparationStale || !isAuditionBufferPrepared(signature: signature) else {
             return []
         }
@@ -3350,7 +3404,9 @@ final class DocumentModel: ObservableObject {
         preparedKeyboardVoiceSignature = signature
         preparedKeyboardVoiceDate = Date()
         markAuditionBufferPrepared(signature: signature)
-        return [try artifact.sysexBytes] + (try keyboardAuditionPreparationMessages(systemChannel: context.systemChannel, midiChannel: midiChannel))
+        return [try artifact.sysexBytes]
+            + (try keyboardAuditionPreparationMessages(systemChannel: context.systemChannel, midiChannel: midiChannel))
+            + [try liveKeyboardPortamentoMessageBytes(value: externalKeyboardPortamento, systemChannel: context.systemChannel)]
     }
 
     private var isKeyboardPreparationStale: Bool {
@@ -3367,7 +3423,7 @@ final class DocumentModel: ObservableObject {
         }
 
         let midiChannel = min(max(keyboardChannel, 0), 15)
-        let signature = "\(context.systemChannel)-\(midiChannel)-\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)"
+        let signature = "\(context.systemChannel)-\(midiChannel)-\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)-portamento-\(externalKeyboardPortamento)"
         guard preparedKeyboardVoiceSignature != signature || !isAuditionBufferPrepared(signature: signature) else {
             return
         }
@@ -3383,6 +3439,9 @@ final class DocumentModel: ObservableObject {
                 try Task.checkCancellation()
                 let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
                 let auditionMessages = try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel)
+                    + [try await MainActor.run {
+                        try self?.liveKeyboardPortamentoMessageBytes(value: self?.externalKeyboardPortamento ?? 0, systemChannel: systemChannel)
+                    }].compactMap { $0 }
                 try await LiveMIDIPlaybackController.shared.sendPreparedMessages(
                     [try artifact.sysexBytes] + auditionMessages,
                     destinationIndex: destinationIndex,

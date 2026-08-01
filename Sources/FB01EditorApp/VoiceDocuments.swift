@@ -4,70 +4,6 @@ import FB01Editor
 import Foundation
 import UniformTypeIdentifiers
 
-private enum ExternalVoiceOperatorControl: Int {
-    case attackRate = 91
-    case velocityToAttack = 93
-    case decay1Rate = 26
-    case decay2Rate = 30
-    case sustainLevel = 27
-    case releaseRate = 29
-
-    init?(controller: Int) {
-        self.init(rawValue: controller)
-    }
-
-    var displayName: String {
-        switch self {
-        case .attackRate:
-            return "Attack Rate"
-        case .velocityToAttack:
-            return "Velocity to Attack"
-        case .decay1Rate:
-            return "Decay 1 Rate"
-        case .decay2Rate:
-            return "Decay 2 Rate"
-        case .sustainLevel:
-            return "Sustain Level"
-        case .releaseRate:
-            return "Release Rate"
-        }
-    }
-
-    var controlLabel: String {
-        switch self {
-        case .attackRate:
-            return "C1"
-        case .velocityToAttack:
-            return "C2"
-        case .decay1Rate:
-            return "C3"
-        case .decay2Rate:
-            return "C4"
-        case .sustainLevel:
-            return "C5"
-        case .releaseRate:
-            return "C6"
-        }
-    }
-
-    func value(from operatorData: FB01VoiceOperatorData) -> Int {
-        switch self {
-        case .attackRate:
-            return operatorData.attackRate
-        case .velocityToAttack:
-            return operatorData.velocitySensitivityForAttackRate
-        case .decay1Rate:
-            return operatorData.decay1Rate
-        case .decay2Rate:
-            return operatorData.decay2Rate
-        case .sustainLevel:
-            return operatorData.sustainLevel
-        case .releaseRate:
-            return operatorData.releaseRate
-        }
-    }
-}
-
 @MainActor
 final class VoiceDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
@@ -79,6 +15,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var statusMessage: String?
     @Published var isBusy = false
     @Published var selectedOperatorIndex = FB01VoiceData.dataIndex(forOperatorNumber: 1)
+    @Published var voiceCharacterType: VoiceCharacterType = .other
+    @Published var performanceMacroValues = PerformanceMacro.neutralValues
     @Published var layoutRevision = 0
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
@@ -105,6 +43,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func reset() {
         voice = savedVoice
+        resetPerformanceMacros()
         noteVoiceReplacement()
         errorMessage = nil
         statusMessage = "Reverted to last saved version."
@@ -217,6 +156,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             let (importedVoice, importedSystemChannel) = try Self.readVoice(from: url)
             voice = importedVoice
             savedVoice = importedVoice
+            resetPerformanceMacros()
             systemChannel = importedSystemChannel
             fileURL = url
             noteVoiceReplacement()
@@ -291,6 +231,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             if let cachedResult = device.cachedVoiceFetchResult(source: source, systemChannel: systemChannel, nameLookup: nameLookup) {
                 voice = cachedResult.voice
                 savedVoice = cachedResult.voice
+                resetPerformanceMacros()
                 self.systemChannel = cachedResult.systemChannel
                 fileURL = nil
                 noteVoiceReplacement()
@@ -315,6 +256,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 }.value
                 voice = result.voice
                 savedVoice = result.voice
+                resetPerformanceMacros()
                 self.systemChannel = result.systemChannel
                 fileURL = nil
                 noteVoiceReplacement()
@@ -341,6 +283,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
         voice = payload.voice
         savedVoice = payload.voice
+        resetPerformanceMacros()
         systemChannel = payload.systemChannel
         fileURL = nil
         noteVoiceReplacement()
@@ -457,6 +400,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let velocity = UInt8(min(max(device.keyboardVelocity, 1), 127))
 
         do {
+            if isOn {
+                keyboardPreparationTask?.cancel()
+                keyboardPreparationTask = nil
+            }
             let preparationMessages = isOn ? try keyboardPreparationMessages(midiChannel: Int(channel), device: device) : []
             let noteMessage = [
                 (isOn ? 0x90 : 0x80) | channel,
@@ -493,12 +440,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let channel = min(max(device.keyboardChannel, 0), 15)
 
         do {
-            let signature = keyboardPreparationSignature(midiChannel: channel)
+            let signature = keyboardPreparationSignature(midiChannel: channel, portamento: device.externalKeyboardPortamento)
             guard needsKeyboardPreparation(signature: signature) || !device.isAuditionBufferPrepared(signature: signature) else {
                 return
             }
 
-            let messages = try buildKeyboardPreparationMessages(midiChannel: channel)
+            let messages = try buildKeyboardPreparationMessages(midiChannel: channel, device: device)
             keyboardPreparationTask = Task(priority: .userInitiated) { [weak self] in
                 do {
                     if delayNanoseconds > 0 {
@@ -535,14 +482,46 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         keyboardPreparationTask = nil
     }
 
+    func value(for macro: PerformanceMacro) -> Int {
+        performanceMacroValues[macro] ?? PerformanceMacro.neutralValue
+    }
+
+    func setPerformanceMacro(_ macro: PerformanceMacro, value proposedValue: Int) {
+        let newValue = min(max(proposedValue, PerformanceMacro.range.lowerBound), PerformanceMacro.range.upperBound)
+        let oldValue = value(for: macro)
+        guard newValue != oldValue else { return }
+
+        do {
+            voice = try macro.apply(
+                previousValue: oldValue,
+                newValue: newValue,
+                characterType: voiceCharacterType,
+                to: voice
+            )
+            performanceMacroValues[macro] = newValue
+            preparedKeyboardVoiceSignature = nil
+            preparedKeyboardVoiceDate = nil
+            errorMessage = nil
+            statusMessage = "\(macro.title) macro changed \(macro.touchedParametersDescription(for: voiceCharacterType))."
+        } catch {
+            errorMessage = "\(macro.title) macro failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    private func resetPerformanceMacros() {
+        performanceMacroValues = PerformanceMacro.neutralValues
+    }
+
     func receiveExternalKeyboardMessage(_ message: [UInt8], device: DocumentModel) -> Bool {
         guard let status = message.first, (0x80...0xEF).contains(status) else {
             return false
         }
 
         let event = status & 0xF0
-        if event == 0xB0, message.count == 3, handleExternalControlChange(controller: Int(message[1]), value: Int(message[2])) {
-            device.externalKeyboardStatus = statusMessage ?? "Voice control changed"
+        if event == 0xB0, message.count == 3, let macro = PerformanceMacro.oxygen25Macro(forController: Int(message[1])) {
+            setPerformanceMacro(macro, value: Int(message[2]))
+            device.externalKeyboardStatus = "Oxygen 25 CC\(message[1]) mapped to \(macro.title) = \(message[2])."
             return true
         }
 
@@ -556,6 +535,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let isNoteOn = event == 0x90 && message.count > 2 && message[2] > 0
 
         do {
+            if isNoteOn {
+                keyboardPreparationTask?.cancel()
+                keyboardPreparationTask = nil
+            }
             let preparationMessages = isNoteOn ? try keyboardPreparationMessages(midiChannel: Int(channel), device: device) : []
             let destinationIndex = device.selectedDestinationIndex
             let destinationName = device.selectedDestinationName
@@ -591,46 +574,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         return true
     }
 
-    private func handleExternalControlChange(controller: Int, value: Int) -> Bool {
-        guard let mapping = ExternalVoiceOperatorControl(controller: controller) else {
-            return false
-        }
-
-        guard let operatorData = voice.operators.first(where: { $0.index == selectedOperatorIndex }) ?? voice.operators.first else {
-            return true
-        }
-
-        do {
-            let updatedOperator: FB01VoiceOperatorData
-            switch mapping {
-            case .attackRate:
-                updatedOperator = try operatorData.settingAttackRate(Self.scaledControlValue(value, maxValue: 31))
-            case .velocityToAttack:
-                updatedOperator = try operatorData.settingVelocitySensitivityForAttackRate(Self.scaledControlValue(value, maxValue: 7))
-            case .decay1Rate:
-                updatedOperator = try operatorData.settingDecay1Rate(Self.scaledControlValue(value, maxValue: 15))
-            case .decay2Rate:
-                updatedOperator = try operatorData.settingDecay2Rate(Self.scaledControlValue(value, maxValue: 31))
-            case .sustainLevel:
-                updatedOperator = try operatorData.settingSustainLevel(Self.scaledControlValue(value, maxValue: 15))
-            case .releaseRate:
-                updatedOperator = try operatorData.settingReleaseRate(Self.scaledControlValue(value, maxValue: 15))
-            }
-
-            updateVoice { try $0.replacingOperator(updatedOperator) }
-            statusMessage = "\(mapping.controlLabel) CC \(controller) set Operator \(updatedOperator.index + 1) \(mapping.displayName) to \(mapping.value(from: updatedOperator))."
-            errorMessage = nil
-        } catch {
-            errorMessage = "Control mapping failed: \(error)"
-            statusMessage = nil
-        }
-        return true
-    }
-
-    private static func scaledControlValue(_ value: Int, maxValue: Int) -> Int {
-        Int((Double(min(max(value, 0), 127)) / 127.0 * Double(maxValue)).rounded())
-    }
-
     private func save(to url: URL, voiceNameFromFile: String? = nil) {
         do {
             let savedPayload = try voiceNameFromFile.map { try voice.settingName($0) } ?? voice
@@ -653,27 +596,27 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     private func keyboardPreparationMessages(midiChannel: Int, device: DocumentModel) throws -> [[UInt8]] {
-        let signature = keyboardPreparationSignature(midiChannel: midiChannel)
+        let signature = keyboardPreparationSignature(midiChannel: midiChannel, portamento: device.externalKeyboardPortamento)
         guard needsKeyboardPreparation(signature: signature) || !device.isAuditionBufferPrepared(signature: signature) else {
             return []
         }
 
-        let messages = try buildKeyboardPreparationMessages(midiChannel: midiChannel)
+        let messages = try buildKeyboardPreparationMessages(midiChannel: midiChannel, device: device)
         markKeyboardPrepared(signature: signature)
         device.markAuditionBufferPrepared(signature: signature)
         return messages
     }
 
-    private func buildKeyboardPreparationMessages(midiChannel: Int) throws -> [[UInt8]] {
+    private func buildKeyboardPreparationMessages(midiChannel: Int, device: DocumentModel) throws -> [[UInt8]] {
         try FB01VoiceDocumentService.auditionPreparationMessages(
             voice: voice,
             systemChannel: systemChannel,
             midiChannel: midiChannel
-        )
+        ) + [try device.liveKeyboardPortamentoMessageBytes(value: device.externalKeyboardPortamento, systemChannel: systemChannel)]
     }
 
-    private func keyboardPreparationSignature(midiChannel: Int) -> String {
-        "\(systemChannel)-\(midiChannel)-\(voice.bytes)"
+    private func keyboardPreparationSignature(midiChannel: Int, portamento: Int) -> String {
+        "\(systemChannel)-\(midiChannel)-\(voice.bytes)-portamento-\(portamento)"
     }
 
     private func needsKeyboardPreparation(signature: String) -> Bool {

@@ -18,6 +18,7 @@ public enum FB01InstrumentParameter {
     public static let highKeyLimit = 0x02
     public static let lowKeyLimit = 0x03
     public static let outputLevel = 0x08
+    public static let portamentoTime = 0x0B
 }
 
 public struct FB01FetchedVoice: Sendable {
