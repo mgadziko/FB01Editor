@@ -364,11 +364,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     private func save(to url: URL) {
         do {
-            let artifact = FB01Artifact(message: .currentConfigurationDump(
-                systemChannel: systemChannel,
-                packet: try FB01SysExPacket(payload: configuration.bytes)
-            ))
-            try artifact.writeSysEx(to: url)
+            try EditorModuleDocumentFiles.writeConfiguration(configuration, systemChannel: systemChannel, to: url)
             savedConfiguration = configuration
             fileURL = url
             rememberEditorSaveDirectory(for: url)
@@ -381,8 +377,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
     }
 
     private static func readConfiguration(from url: URL) throws -> (configuration: FB01ConfigurationData, systemChannel: Int) {
-        let artifact = try FB01Artifact.readSysEx(from: url)
-        let candidates = try EditorDocumentExtraction.configurationCandidates(from: artifact)
+        let candidates = try EditorModuleDocumentFiles.configurationCandidates(from: url)
         guard let candidate = chooseConfigurationCandidate(candidates, title: "Choose Configuration Document") else {
             throw FB01AppError.noConfigurationSource
         }

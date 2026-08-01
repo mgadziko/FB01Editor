@@ -634,8 +634,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private func save(to url: URL, voiceNameFromFile: String? = nil) {
         do {
             let savedPayload = try voiceNameFromFile.map { try voice.settingName($0) } ?? voice
-            let artifact = try savedPayload.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
-            try artifact.writeSysEx(to: url)
+            try EditorModuleDocumentFiles.writeVoice(savedPayload, systemChannel: systemChannel, to: url)
             if savedPayload != voice {
                 voice = savedPayload
                 noteVoiceReplacement()
@@ -700,8 +699,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     private static func readVoice(from url: URL) throws -> (voice: FB01VoiceData, systemChannel: Int) {
-        let artifact = try FB01Artifact.readSysEx(from: url)
-        let candidates = try EditorDocumentExtraction.voiceCandidates(from: artifact)
+        let candidates = try EditorModuleDocumentFiles.voiceCandidates(from: url)
         guard let candidate = chooseVoiceCandidate(candidates, title: "Choose Voice Document") else {
             throw FB01AppError.noVoiceSource
         }

@@ -119,7 +119,7 @@ struct FB01EditorApplication: App {
                 .keyboardShortcut(",", modifiers: .command)
 
                 Button(EditorFeatureAvailability.commandTitle(.resetInstructions, fallback: "Reset Instructions...")) {
-                    document.resetDeviceToFactorySettings()
+                    EditorModuleCommandRunner.run(.resetInstructions, document: document)
                 }
                 .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.resetInstructions))
             }
@@ -165,32 +165,32 @@ struct FB01EditorApplication: App {
 
             CommandMenu("Voice") {
                 Button(EditorFeatureAvailability.commandTitle(.copyVoiceToSlot, fallback: "Copy \(EditorSynthModule.vocabulary.voiceDisplayName) to Slot...")) {
-                    document.copySelectedVoiceToLocalSlot()
+                    EditorModuleCommandRunner.run(.copyVoiceToSlot, document: document)
                 }
                 .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.copyVoiceToSlot))
 
                 if document.voiceEditorParadigm == .consoleSections {
                     Button(EditorFeatureAvailability.commandTitle(.swapVoiceWithSlot, fallback: "Swap \(EditorSynthModule.vocabulary.voiceDisplayName) with Slot...")) {
-                        document.swapSelectedVoiceWithLocalSlot()
+                        EditorModuleCommandRunner.run(.swapVoiceWithSlot, document: document)
                     }
                     .disabled(!document.canUseSelectedVoiceLibrarianActions || !EditorFeatureAvailability.supportsCommand(.swapVoiceWithSlot))
 
                     Divider()
 
                     Button(EditorFeatureAvailability.commandTitle(.resetSelectedVoice, fallback: "Reset Selected \(EditorSynthModule.vocabulary.voiceDisplayName)")) {
-                        document.resetSelectedVoiceEdit()
+                        EditorModuleCommandRunner.run(.resetSelectedVoice, document: document)
                     }
                     .disabled(!document.canResetSelectedVoice || !EditorFeatureAvailability.supportsCommand(.resetSelectedVoice))
 
                     Button(EditorFeatureAvailability.commandTitle(.resetAllVoiceEdits, fallback: "Reset All \(EditorSynthModule.vocabulary.voiceDisplayName) Edits")) {
-                        document.resetAllSelectedVoiceEdits()
+                        EditorModuleCommandRunner.run(.resetAllVoiceEdits, document: document)
                     }
                     .disabled(!document.canResetAllSelectedVoiceEdits || !EditorFeatureAvailability.supportsCommand(.resetAllVoiceEdits))
 
                     Divider()
 
                     Button(EditorFeatureAvailability.commandTitle(.saveEditedVoiceBank, fallback: "Save Edited Bank As...")) {
-                        document.saveSelectedEditedVoiceBankAs()
+                        EditorModuleCommandRunner.run(.saveEditedVoiceBank, document: document)
                     }
                     .disabled(!document.canResetAllSelectedVoiceEdits || !EditorFeatureAvailability.supportsCommand(.saveEditedVoiceBank))
 
@@ -198,19 +198,19 @@ struct FB01EditorApplication: App {
                 }
 
                 Button(EditorFeatureAvailability.commandTitle(.storeGeneralMIDIVoices, fallback: "Store General MIDI voices...")) {
-                    document.storeGeneralMIDIVoicesToDevice()
+                    EditorModuleCommandRunner.run(.storeGeneralMIDIVoices, document: document)
                 }
                 .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.storeGeneralMIDIVoices))
             }
 
             CommandMenu("Configuration") {
                 Button(EditorFeatureAvailability.commandTitle(.copyConfigurationToSlot, fallback: "Copy \(EditorSynthModule.vocabulary.configurationDisplayName) to Slot ...")) {
-                    document.copyConfigurationSlotOnDevice()
+                    EditorModuleCommandRunner.run(.copyConfigurationToSlot, document: document)
                 }
                 .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.copyConfigurationToSlot))
 
                 Button(EditorFeatureAvailability.commandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
-                    document.refreshDeviceCache(reason: "Refreshing device cache")
+                    EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
                 }
                 .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.refreshDeviceCache))
 
@@ -218,22 +218,22 @@ struct FB01EditorApplication: App {
                     Divider()
 
                     Button(EditorFeatureAvailability.commandTitle(.sendSelectedConfigurationToEditBuffer, fallback: "Send Selected Configuration to Current Edit Buffer...")) {
-                        document.sendSelectedConfigurationToCurrentEditBuffer()
+                        EditorModuleCommandRunner.run(.sendSelectedConfigurationToEditBuffer, document: document)
                     }
                     .disabled(!document.canSendSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.sendSelectedConfigurationToEditBuffer))
 
                     Button(EditorFeatureAvailability.commandTitle(.sendAndConfirmSelectedConfiguration, fallback: "Send and Confirm Selected Configuration...")) {
-                        document.sendAndConfirmSelectedConfigurationToCurrentEditBuffer()
+                        EditorModuleCommandRunner.run(.sendAndConfirmSelectedConfiguration, document: document)
                     }
                     .disabled(!document.canSendSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.sendAndConfirmSelectedConfiguration))
 
                     Button(EditorFeatureAvailability.commandTitle(.storeSelectedConfigurationToSlot, fallback: "Store Selected Configuration to Slot...")) {
-                        document.storeSelectedConfigurationToDeviceSlot()
+                        EditorModuleCommandRunner.run(.storeSelectedConfigurationToSlot, document: document)
                     }
                     .disabled(!document.canStoreSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.storeSelectedConfigurationToSlot))
 
                     Button(EditorFeatureAvailability.commandTitle(.storeAndConfirmSelectedConfiguration, fallback: "Store and Confirm Selected Configuration...")) {
-                        document.storeAndConfirmSelectedConfigurationToDeviceSlot()
+                        EditorModuleCommandRunner.run(.storeAndConfirmSelectedConfiguration, document: document)
                     }
                     .disabled(!document.canStoreSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.storeAndConfirmSelectedConfiguration))
                 }

@@ -238,6 +238,32 @@ private struct MockFourOperatorModule: SynthModule {
     #expect(configurationCandidates.first?.configuration.name == "single")
 }
 
+@Test func fb01DocumentServiceReadsAndWritesSingleDocuments() throws {
+    let service = FB01ModuleServices.shared.documentService
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("FB01DocumentServiceTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    let voiceURL = directory.appendingPathComponent("single.fbv")
+    let voice = try service.templateVoice().settingName("Round")
+    try service.writeVoice(voice, systemChannel: 2, to: voiceURL)
+    let voiceCandidates = try service.readVoiceCandidates(from: voiceURL)
+    #expect(voiceCandidates.count == 1)
+    #expect(voiceCandidates.first?.voice.name == "Round")
+    #expect(voiceCandidates.first?.systemChannel == 2)
+
+    let configurationURL = directory.appendingPathComponent("single.fbc")
+    let configuration = try service.templateConfiguration().settingName("Cfg")
+    try service.writeConfiguration(configuration, systemChannel: 3, to: configurationURL)
+    let configurationCandidates = try service.readConfigurationCandidates(from: configurationURL)
+    #expect(configurationCandidates.count == 1)
+    #expect(configurationCandidates.first?.configuration.name == "Cfg")
+    #expect(configurationCandidates.first?.systemChannel == 3)
+}
+
 @Test func fb01VoiceServiceExtractsBankDataNamesAndStoredVoices() throws {
     let fixtureURL = Bundle.module.url(
         forResource: "voice-bank-1",

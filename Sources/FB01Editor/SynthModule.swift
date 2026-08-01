@@ -204,6 +204,18 @@ public protocol SynthDocumentExtracting: Sendable {
     func configurationCandidates(from artifact: Artifact) throws -> [ConfigurationCandidate]
 }
 
+public protocol SynthDocumentFileServicing: Sendable {
+    associatedtype Voice: Sendable
+    associatedtype Configuration: Sendable
+    associatedtype VoiceCandidate: Sendable
+    associatedtype ConfigurationCandidate: Sendable
+
+    func readVoiceCandidates(from url: URL) throws -> [VoiceCandidate]
+    func readConfigurationCandidates(from url: URL) throws -> [ConfigurationCandidate]
+    func writeVoice(_ voice: Voice, systemChannel: Int, to url: URL) throws
+    func writeConfiguration(_ configuration: Configuration, systemChannel: Int, to url: URL) throws
+}
+
 public struct SynthFileProfile: Equatable, Sendable {
     public var singleVoiceExtension: String
     public var singleConfigurationExtension: String

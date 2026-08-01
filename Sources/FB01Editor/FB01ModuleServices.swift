@@ -1,3 +1,5 @@
+import Foundation
+
 public struct FB01ModuleServices: SynthModuleServiceProviding {
     public typealias Module = FB01SynthModule
 
@@ -37,7 +39,7 @@ public struct FB01ConfigurationDocumentCandidate: Sendable {
     }
 }
 
-public struct FB01DocumentService: SynthDocumentTemplating, SynthDocumentExtracting {
+public struct FB01DocumentService: SynthDocumentTemplating, SynthDocumentExtracting, SynthDocumentFileServicing {
     public typealias Voice = FB01VoiceData
     public typealias Configuration = FB01ConfigurationData
     public typealias Artifact = FB01Artifact
@@ -123,5 +125,32 @@ public struct FB01DocumentService: SynthDocumentTemplating, SynthDocumentExtract
             }
         }
         return candidates
+    }
+
+    public func readVoiceCandidates(from url: URL) throws -> [FB01VoiceDocumentCandidate] {
+        let artifact = try FB01Artifact.readSysEx(from: url)
+        return try voiceCandidates(from: artifact)
+    }
+
+    public func readConfigurationCandidates(from url: URL) throws -> [FB01ConfigurationDocumentCandidate] {
+        let artifact = try FB01Artifact.readSysEx(from: url)
+        return try configurationCandidates(from: artifact)
+    }
+
+    public func writeVoice(_ voice: FB01VoiceData, systemChannel: Int, to url: URL) throws {
+        let artifact = FB01Artifact(message: .instrumentVoiceDump(
+            systemChannel: systemChannel,
+            instrument: 0,
+            packet: try FB01SysExPacket(payload: FB01.nibbleEncode(voice.bytes))
+        ))
+        try artifact.writeSysEx(to: url)
+    }
+
+    public func writeConfiguration(_ configuration: FB01ConfigurationData, systemChannel: Int, to url: URL) throws {
+        let artifact = FB01Artifact(message: .currentConfigurationDump(
+            systemChannel: systemChannel,
+            packet: try FB01SysExPacket(payload: configuration.bytes)
+        ))
+        try artifact.writeSysEx(to: url)
     }
 }

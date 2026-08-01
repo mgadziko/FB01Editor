@@ -46,15 +46,25 @@ behind module-facing protocols.
 
 `FB01DocumentService` owns FB-01 blank voice/configuration templates and
 extraction of voice/configuration document candidates from `FB01Artifact`.
-App-level document extraction wraps those results in neutral document payloads
-with the active module identity attached.
+It also owns module-specific voice/configuration document file reads and writes.
+App-level document file helpers wrap those results in neutral document payloads
+with the active module identity attached, so document windows no longer need to
+construct single voice/configuration SysEx artifacts directly for ordinary file
+load/save.
 
 The FB-01 module also declares the app/menu commands it supports. The app shell
-still executes the existing FB-01 actions, but command labels and availability
-now come through module descriptors instead of being only hardcoded in SwiftUI
-menus. Parameter binding descriptors are intentionally descriptive at this
-stage: they identify which module parameter a UI control edits, but they do not
-yet replace the existing typed FB-01 editing code.
+routes those commands through a small command runner that currently dispatches
+to the existing FB-01 document model actions. Command labels and availability
+come through module descriptors instead of being only hardcoded in SwiftUI
+menus.
+
+`ActiveSynthModule.current` is an internal placeholder for future module
+selection. It is deliberately fixed to FB-01 until another real hardware module
+can be verified.
+
+Parameter binding descriptors are intentionally descriptive at this stage: they
+identify which module parameter a UI control edits, but they do not yet replace
+the existing typed FB-01 editing code.
 
 The adapter is not a DX100 module. It is a boundary around the working FB-01
 implementation.
