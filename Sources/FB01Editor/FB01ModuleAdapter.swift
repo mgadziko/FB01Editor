@@ -24,4 +24,12 @@ public struct FB01ModuleAdapter: SynthModuleServiceProviding {
     public var supportedDocumentKinds: [SynthDocumentKind] {
         module.supportedDocumentKinds
     }
+
+    public var commandDescriptors: [SynthModuleCommandDescriptor] {
+        module.commandDescriptors
+    }
+
+    public var parameterBindingDescriptors: [SynthParameterBindingDescriptor] {
+        module.parameterBindingDescriptors
+    }
 }

@@ -1,6 +1,6 @@
-# Forest FB-01 Editor
+# Forest Editor
 
-Forest FB-01 Editor is a macOS editor and librarian for the Yamaha FB-01 FM
+Forest Editor is a macOS editor and librarian for the Yamaha FB-01 FM
 sound generator.
 
 The app is now centered on document windows: open, fetch, edit, save, and store
@@ -16,7 +16,7 @@ evaluated without disturbing the working FB-01 editor.
 
 ## Current App
 
-Forest FB-01 Editor can:
+Forest Editor can:
 
 - load and save single voice files
 - load and save single configuration files
@@ -137,7 +137,7 @@ preferred FB-01 document naming uses the module-owned extensions above.
 The default save/load folder is:
 
 ```sh
-~/Documents/Forest FB-01 Editor
+~/Documents/Forest Editor
 ```
 
 The app creates that folder when needed and remembers the most recently used
@@ -178,13 +178,13 @@ Build a launchable local app bundle:
 
 ```sh
 ./scripts/build-macos-app.sh
-open "dist/Forest FB-01 Editor.app"
+open "dist/Forest Editor.app"
 ```
 
 The script creates an ad-hoc signed development bundle at:
 
 ```sh
-dist/Forest FB-01 Editor.app
+dist/Forest Editor.app
 ```
 
 ## Xcode

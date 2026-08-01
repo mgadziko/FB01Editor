@@ -25,6 +25,10 @@ enum EditorSynthModule {
         module.supportedDocumentDescriptors
     }
 
+    static var commandDescriptors: [SynthModuleCommandDescriptor] {
+        module.commandDescriptors
+    }
+
     static var fileProfile: SynthFileProfile {
         module.fileProfile
     }
@@ -32,22 +36,18 @@ enum EditorSynthModule {
     static func documentDescriptor(for kind: SynthDocumentKind) -> SynthDocumentDescriptor? {
         supportedDocumentDescriptors.first { $0.kind == kind }
     }
+
+    static func commandDescriptor(for kind: SynthModuleCommandKind) -> SynthModuleCommandDescriptor? {
+        commandDescriptors.first { $0.kind == kind }
+    }
 }
 
-enum FB01UIFeatureAvailability {
-    private static var capabilities: SynthModuleCapabilities {
-        EditorSynthModule.capabilities
+enum EditorFeatureAvailability {
+    static func supportsCommand(_ kind: SynthModuleCommandKind) -> Bool {
+        EditorSynthModule.commandDescriptor(for: kind) != nil
     }
 
-    static var supportsConfigurations: Bool {
-        capabilities.supportsConfigurations
-    }
-
-    static var supportsGeneralMIDIInstall: Bool {
-        capabilities.supportsGeneralMIDIInstall
-    }
-
-    static var supportsMemoryProtect: Bool {
-        capabilities.supportsMemoryProtect
+    static func commandTitle(_ kind: SynthModuleCommandKind, fallback: String) -> String {
+        EditorSynthModule.commandDescriptor(for: kind)?.displayName ?? fallback
     }
 }

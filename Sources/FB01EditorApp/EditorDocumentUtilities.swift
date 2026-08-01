@@ -3,13 +3,25 @@ import FB01Editor
 import Foundation
 
 enum EditorDocumentTemplates {
+    static func voicePayload(systemChannel: Int = 0) -> SynthVoiceDocumentPayload<FB01VoiceData> {
+        SynthVoiceDocumentPayload(
+            moduleIdentity: EditorSynthModule.identity,
+            voice: voice(),
+            systemChannel: systemChannel
+        )
+    }
+
+    static func configurationPayload(systemChannel: Int = 0) -> SynthConfigurationDocumentPayload<FB01ConfigurationData> {
+        SynthConfigurationDocumentPayload(
+            moduleIdentity: EditorSynthModule.identity,
+            configuration: configuration(),
+            systemChannel: systemChannel
+        )
+    }
+
     static func voice() -> FB01VoiceData {
         do {
-            var voice = try FB01VoiceData(bytes: Array(repeating: 0, count: FB01VoiceData.byteCount))
-            voice = try voice.settingName("Init")
-            voice = try voice.settingLeftOutputEnabled(true)
-            voice = try voice.settingRightOutputEnabled(true)
-            return voice
+            return try FB01ModuleServices.shared.documentService.templateVoice()
         } catch {
             fatalError("Unable to create template voice: \(error)")
         }
@@ -17,9 +29,7 @@ enum EditorDocumentTemplates {
 
     static func configuration() -> FB01ConfigurationData {
         do {
-            var configuration = try FB01ConfigurationData(bytes: Array(repeating: 0, count: FB01ConfigurationData.byteCount))
-            configuration = try configuration.settingName("Init")
-            return configuration
+            return try FB01ModuleServices.shared.documentService.templateConfiguration()
         } catch {
             fatalError("Unable to create template configuration: \(error)")
         }
@@ -354,7 +364,7 @@ private var defaultEditorFileDirectoryURL: URL {
     FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Documents", isDirectory: true)
-        .appendingPathComponent("Forest FB-01 Editor", isDirectory: true)
+        .appendingPathComponent("Forest Editor", isDirectory: true)
 }
 
 private var defaultEditorBackupDirectoryURL: URL {

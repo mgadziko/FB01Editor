@@ -26,9 +26,11 @@ A synth module owns:
 - identity and user-facing device vocabulary
 - file extension profiles and document type declarations
 - supported document kinds
-- capability flags
+- capability flags and module-owned command descriptors
 - slot ranges and bank rules
-- parameter descriptors
+- parameter descriptors and parameter binding descriptors
+- default blank document templates
+- document candidate extraction from module-specific SysEx/data artifacts
 - device-specific data structures
 - SysEx request, parse, fetch, store, and cache behavior
 
@@ -41,6 +43,18 @@ neutral names such as `SynthModule`, `SynthDocumentDescriptor`, and
 `FB01ModuleAdapter` is the only concrete module adapter. It exposes
 `FB01ModuleServices`, `FB01SynthModule`, and the FB-01 service implementations
 behind module-facing protocols.
+
+`FB01DocumentService` owns FB-01 blank voice/configuration templates and
+extraction of voice/configuration document candidates from `FB01Artifact`.
+App-level document extraction wraps those results in neutral document payloads
+with the active module identity attached.
+
+The FB-01 module also declares the app/menu commands it supports. The app shell
+still executes the existing FB-01 actions, but command labels and availability
+now come through module descriptors instead of being only hardcoded in SwiftUI
+menus. Parameter binding descriptors are intentionally descriptive at this
+stage: they identify which module parameter a UI control edits, but they do not
+yet replace the existing typed FB-01 editing code.
 
 The adapter is not a DX100 module. It is a boundary around the working FB-01
 implementation.

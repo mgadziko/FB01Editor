@@ -3596,7 +3596,7 @@ struct VoiceDetailView: View {
 
     private func exportVoice() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = UTType.fb01VoiceFileTypes
+        panel.allowedContentTypes = UTType.currentModuleVoiceFileTypes
         panel.directoryURL = document.preferredSaveDirectoryURL()
         panel.nameFieldStringValue = "voice-\(summary.number)-\(safeFileName(editableVoice.name)).\(EditorSynthModule.fileProfile.singleVoiceExtension)"
 

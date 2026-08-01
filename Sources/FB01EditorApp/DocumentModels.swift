@@ -901,7 +901,7 @@ final class DocumentModel: ObservableObject {
 
     func openSysEx() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = UTType.fb01ReadableFileTypes
+        panel.allowedContentTypes = UTType.currentModuleReadableFileTypes
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.directoryURL = preferredLoadDirectoryURL()
@@ -1259,7 +1259,7 @@ final class DocumentModel: ObservableObject {
         }
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = UTType.fb01ConfigurationFileTypes
+        panel.allowedContentTypes = UTType.currentModuleConfigurationFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeFileName(sources[index].title)).\(EditorSynthModule.fileProfile.singleConfigurationExtension)"
         panel.message = "Save this configuration to a configuration file."
@@ -1346,7 +1346,7 @@ final class DocumentModel: ObservableObject {
         }
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.fb01ConfigurationBank, .sysex]
+        panel.allowedContentTypes = UTType.currentModuleConfigurationBankFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = configurationSources.count == 20
             ? "fb01-configurations-1-20.\(EditorSynthModule.fileProfile.configurationBankExtension)"
@@ -1383,7 +1383,7 @@ final class DocumentModel: ObservableObject {
         }
 
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.fb01VoiceBank, .sysex]
+        panel.allowedContentTypes = UTType.currentModuleVoiceBankFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeFileName(sources[index].title))-edited.\(EditorSynthModule.fileProfile.voiceBankExtension)"
         panel.message = "Save the edited voice bank as a SysEx file."
@@ -2061,7 +2061,7 @@ final class DocumentModel: ObservableObject {
 
     private func chooseConfigurationBackupURL(slot: Int) -> URL? {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = [.fb01GenericSysEx]
+        panel.allowedContentTypes = UTType.currentModuleGenericSysExFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = "configuration-\(slot + 1)-backup.\(EditorSynthModule.fileProfile.genericSysExExtension)"
         panel.message = "Choose where to save the current contents of Configuration \(slot + 1) before overwriting it."
@@ -2744,7 +2744,7 @@ final class DocumentModel: ObservableObject {
         FileManager.default
             .homeDirectoryForCurrentUser
             .appendingPathComponent("Documents", isDirectory: true)
-            .appendingPathComponent("Forest FB-01 Editor", isDirectory: true)
+            .appendingPathComponent("Forest Editor", isDirectory: true)
     }
 
     private var defaultBackupDirectoryURL: URL {
@@ -4210,6 +4210,38 @@ extension UTType {
             .data,
         ]
     }
+
+    static var currentModuleVoiceFileTypes: [UTType] {
+        fb01VoiceFileTypes
+    }
+
+    static var currentModuleConfigurationFileTypes: [UTType] {
+        fb01ConfigurationFileTypes
+    }
+
+    static var currentModuleReadableVoiceFileTypes: [UTType] {
+        fb01ReadableVoiceFileTypes
+    }
+
+    static var currentModuleReadableConfigurationFileTypes: [UTType] {
+        fb01ReadableConfigurationFileTypes
+    }
+
+    static var currentModuleReadableFileTypes: [UTType] {
+        fb01ReadableFileTypes
+    }
+
+    static var currentModuleVoiceBankFileTypes: [UTType] {
+        [.fb01VoiceBank, .fb01GenericSysEx]
+    }
+
+    static var currentModuleConfigurationBankFileTypes: [UTType] {
+        [.fb01ConfigurationBank, .fb01GenericSysEx]
+    }
+
+    static var currentModuleGenericSysExFileTypes: [UTType] {
+        [.fb01GenericSysEx, .sysex, .data]
+    }
 }
 
 private func preferredFileExtension(for kind: FB01ArtifactKind) -> String {
@@ -4231,15 +4263,15 @@ private func preferredFileExtension(for kind: FB01ArtifactKind) -> String {
 private func allowedContentTypes(for kind: FB01ArtifactKind) -> [UTType] {
     switch kind {
     case .singleVoice:
-        return UTType.fb01VoiceFileTypes
+        return UTType.currentModuleVoiceFileTypes
     case .voiceBank:
-        return [.fb01VoiceBank, .fb01GenericSysEx]
+        return UTType.currentModuleVoiceBankFileTypes
     case .currentConfiguration, .storedConfiguration:
-        return UTType.fb01ConfigurationFileTypes
+        return UTType.currentModuleConfigurationFileTypes
     case .configurationSet:
-        return [.fb01ConfigurationBank, .fb01GenericSysEx]
+        return UTType.currentModuleConfigurationBankFileTypes
     case .unitID, .rawSysEx:
-        return [.fb01GenericSysEx, .sysex, .data]
+        return UTType.currentModuleGenericSysExFileTypes
     }
 }
 

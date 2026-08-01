@@ -148,7 +148,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func saveAs() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = UTType.fb01VoiceFileTypes
+        panel.allowedContentTypes = UTType.currentModuleVoiceFileTypes
         panel.directoryURL = preferredEditorSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeEditorFileName(voice.name, fallback: "voice")).\(EditorSynthModule.fileProfile.singleVoiceExtension)"
         panel.message = "Save this voice document to a voice file."
@@ -167,7 +167,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     static func loadFromDisk() -> VoiceDocumentModel? {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = UTType.fb01ReadableVoiceFileTypes
+        panel.allowedContentTypes = UTType.currentModuleReadableVoiceFileTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
@@ -202,7 +202,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = UTType.fb01ReadableVoiceFileTypes
+        panel.allowedContentTypes = UTType.currentModuleReadableVoiceFileTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()

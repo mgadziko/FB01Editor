@@ -7,7 +7,7 @@ import Testing
 
     #expect(module.identity.manufacturer == "Yamaha")
     #expect(module.identity.modelName == "FB-01")
-    #expect(module.identity.editorDisplayName == "Forest FB-01 Editor")
+    #expect(module.identity.editorDisplayName == "Forest Editor")
     #expect(module.vocabulary.deviceDisplayName == "FB-01")
     #expect(module.vocabulary.writableVoiceBankSuffix == "RAM")
     #expect(module.vocabulary.readOnlyVoiceBankSuffixPrefix == "ROM")
@@ -28,8 +28,13 @@ import Testing
     #expect(module.supportedDocumentKinds == [.voice, .configuration, .voiceBank, .configurationBank])
     #expect(module.supportedDocumentDescriptors.map(\.kind) == module.supportedDocumentKinds)
     #expect(module.supportedDocumentDescriptors.first { $0.kind == .voice }?.supportsFetchFromDevice == true)
+    #expect(module.commandDescriptors.first { $0.kind == .copyVoiceToSlot }?.displayName == "Copy Voice to Slot...")
+    #expect(module.commandDescriptors.first { $0.kind == .storeGeneralMIDIVoices }?.menu == .voice)
+    #expect(module.commandDescriptors.first { $0.kind == .sendSelectedConfigurationToEditBuffer }?.requiresConsoleSections == true)
     #expect(module.parameterDescriptors.contains { $0.id == "voice.operator.totalLevel" && $0.displayName == "Total Level" })
     #expect(module.parameterDescriptors.contains { $0.id == "configuration.instrument.noteCount" && $0.displayName == "Active Notes" })
+    #expect(module.parameterBindingDescriptors.contains { $0.parameterID == "voice.operator.totalLevel" && $0.scope == .voiceOperator })
+    #expect(module.parameterBindingDescriptors.contains { $0.parameterID == "configuration.instrument.stereoPan" && $0.fieldName == "stereoPan" })
     #expect(module.factoryVoiceNamesByBank.keys.sorted() == [3, 4, 5, 6, 7])
     #expect(module.factoryVoiceNamesByBank.values.allSatisfy { $0.count == module.voicesPerBank })
     #expect(module.factoryVoiceName(bank: 3, voiceNumber: 1) == "Brass")
@@ -96,6 +101,9 @@ private struct MockFourOperatorModule: SynthModule {
             supportsStoreToDevice: true
         ),
     ]
+    let commandDescriptors: [SynthModuleCommandDescriptor] = [
+        SynthModuleCommandDescriptor(kind: .copyVoiceToSlot, menu: .voice, displayName: "Copy Voice to Slot...")
+    ]
     let parameterDescriptors: [SynthParameterDescriptor] = [
         SynthParameterDescriptor(
             id: "voice.operator.totalLevel",
@@ -104,6 +112,14 @@ private struct MockFourOperatorModule: SynthModule {
             range: SynthSlotRange(0...99),
             defaultValue: 0,
             group: "Operator"
+        ),
+    ]
+    let parameterBindingDescriptors: [SynthParameterBindingDescriptor] = [
+        SynthParameterBindingDescriptor(
+            id: "mock.voice.operator.totalLevel",
+            parameterID: "voice.operator.totalLevel",
+            scope: .voiceOperator,
+            fieldName: "operatorLevel"
         ),
     ]
     let writableVoiceBanks = [1]
@@ -121,7 +137,9 @@ private struct MockFourOperatorModule: SynthModule {
     #expect(!module.capabilities.supportsConfigurations)
     #expect(module.supportedDocumentKinds == [.voice])
     #expect(module.supportedDocumentDescriptors.first?.displayName == "Voice")
+    #expect(module.commandDescriptors.map(\.kind) == [.copyVoiceToSlot])
     #expect(module.parameterDescriptors.first?.range?.closedRange == 0...99)
+    #expect(module.parameterBindingDescriptors.first?.fieldName == "operatorLevel")
     #expect(module.writableVoiceBanks == [1])
     #expect(module.voicesPerBank == 32)
 }
@@ -142,7 +160,19 @@ private struct MockFourOperatorModule: SynthModule {
     #expect(adapter.identity == FB01SynthModule.shared.identity)
     #expect(adapter.capabilities == FB01SynthModule.shared.capabilities)
     #expect(adapter.supportedDocumentKinds == FB01SynthModule.shared.supportedDocumentKinds)
+    #expect(adapter.commandDescriptors == FB01SynthModule.shared.commandDescriptors)
+    #expect(adapter.parameterBindingDescriptors == FB01SynthModule.shared.parameterBindingDescriptors)
     #expect(adapter.module.writableVoiceBanks == [1, 2])
+}
+
+@Test func fb01DocumentServiceConformsToNeutralDocumentProtocols() throws {
+    let service = FB01DocumentService.shared
+
+    let voice: FB01DocumentService.Voice = try service.templateVoice()
+    let configuration: FB01DocumentService.Configuration = try service.templateConfiguration()
+
+    #expect(voice.name == "Init")
+    #expect(configuration.name == "Init")
 }
 
 @Test func fb01DeviceServiceBuildsModuleScopedRequestLists() throws {
@@ -175,6 +205,37 @@ private struct MockFourOperatorModule: SynthModule {
     #expect(service.normalizedVoiceBanks([7, 99, 1, 3, 1]) == [1, 3, 7])
     #expect(service.totalRequestCount(voiceBanks: [1, 2], fetchConfigurations: false) == 2)
     #expect(service.totalRequestCount(voiceBanks: [1, 2], fetchConfigurations: true) == 23)
+}
+
+@Test func fb01DocumentServiceProvidesTemplatesAndCandidates() throws {
+    let service = FB01ModuleServices.shared.documentService
+    let voice = try service.templateVoice()
+    let configuration = try service.templateConfiguration()
+
+    #expect(voice.name == "Init")
+    #expect(voice.leftOutputEnabled)
+    #expect(voice.rightOutputEnabled)
+    #expect(configuration.name == "Init")
+
+    let voiceBankURL = Bundle.module.url(
+        forResource: "voice-bank-1",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let voiceArtifact = try FB01Artifact.readSysEx(from: voiceBankURL)
+    let voiceCandidates = try service.voiceCandidates(from: voiceArtifact)
+    #expect(voiceCandidates.count == FB01SynthModule.shared.voicesPerBank)
+    #expect(voiceCandidates.first?.voice.name == "Brass")
+
+    let configurationURL = Bundle.module.url(
+        forResource: "current-configuration-single",
+        withExtension: "syx",
+        subdirectory: "Fixtures"
+    )!
+    let configurationArtifact = try FB01Artifact.readSysEx(from: configurationURL)
+    let configurationCandidates = try service.configurationCandidates(from: configurationArtifact)
+    #expect(configurationCandidates.count == 1)
+    #expect(configurationCandidates.first?.configuration.name == "single")
 }
 
 @Test func fb01VoiceServiceExtractsBankDataNamesAndStoredVoices() throws {

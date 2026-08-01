@@ -1,77 +1,58 @@
 import FB01Editor
 import Foundation
 
+struct SynthVoiceDocumentPayload<Voice: Sendable>: SynthVoiceDocumentPayloadProtocol {
+    var moduleIdentity: SynthModuleIdentity
+    var voice: Voice
+    var systemChannel: Int
+}
+
+struct SynthConfigurationDocumentPayload<Configuration: Sendable>: SynthConfigurationDocumentPayloadProtocol {
+    var moduleIdentity: SynthModuleIdentity
+    var configuration: Configuration
+    var systemChannel: Int
+}
+
 struct VoiceDocumentCandidate: Sendable {
     var title: String
-    var voice: FB01VoiceData
-    var systemChannel: Int
+    var payload: SynthVoiceDocumentPayload<FB01VoiceData>
+
+    var voice: FB01VoiceData { payload.voice }
+    var systemChannel: Int { payload.systemChannel }
 }
 
 struct ConfigurationDocumentCandidate: Sendable {
     var title: String
-    var configuration: FB01ConfigurationData
-    var systemChannel: Int
+    var payload: SynthConfigurationDocumentPayload<FB01ConfigurationData>
+
+    var configuration: FB01ConfigurationData { payload.configuration }
+    var systemChannel: Int { payload.systemChannel }
 }
 
 enum EditorDocumentExtraction {
     static func voiceCandidates(from artifact: FB01Artifact) throws -> [VoiceDocumentCandidate] {
-        var candidates: [VoiceDocumentCandidate] = []
-        for message in artifact.messages {
-            switch message {
-            case let .instrumentVoiceDump(systemChannel, instrument, packet):
-                let voice = try FB01VoiceData(bytes: FB01.nibbleDecode(packet.payload))
-                candidates.append(VoiceDocumentCandidate(
-                    title: "Instrument \(instrument + 1): \(voice.name.isEmpty ? "Untitled" : voice.name)",
-                    voice: voice,
-                    systemChannel: systemChannel
-                ))
-            case let .voiceRAMDumpData(systemChannel, _, data, _):
-                let bank = try FB01VoiceBankData(bank: 0, data: data)
-                for summary in bank.voices {
-                    candidates.append(VoiceDocumentCandidate(
-                        title: "Voice RAM 1 Voice \(summary.number): \(summary.voice.name.isEmpty ? "Untitled" : summary.voice.name)",
-                        voice: summary.voice,
-                        systemChannel: systemChannel
-                    ))
-                }
-            case let .voiceBankDumpData(systemChannel, bankNumber, _, data, _):
-                let bank = try FB01VoiceBankData(bank: bankNumber, data: data)
-                for summary in bank.voices {
-                    candidates.append(VoiceDocumentCandidate(
-                        title: "Bank \(bankNumber + 1) Voice \(summary.number): \(summary.voice.name.isEmpty ? "Untitled" : summary.voice.name)",
-                        voice: summary.voice,
-                        systemChannel: systemChannel
-                    ))
-                }
-            default:
-                break
-            }
+        try FB01ModuleServices.shared.documentService.voiceCandidates(from: artifact).map { candidate in
+            VoiceDocumentCandidate(
+                title: candidate.title,
+                payload: SynthVoiceDocumentPayload(
+                    moduleIdentity: EditorSynthModule.identity,
+                    voice: candidate.voice,
+                    systemChannel: candidate.systemChannel
+                )
+            )
         }
-        return candidates
     }
 
     static func configurationCandidates(from artifact: FB01Artifact) throws -> [ConfigurationDocumentCandidate] {
-        var candidates: [ConfigurationDocumentCandidate] = []
-        for message in artifact.messages {
-            switch message {
-            case let .currentConfigurationDump(systemChannel, packet):
-                let configuration = try FB01ConfigurationData(bytes: packet.payload)
-                candidates.append(ConfigurationDocumentCandidate(
-                    title: "Current Configuration: \(configuration.name.isEmpty ? "Untitled" : configuration.name)",
-                    configuration: configuration,
-                    systemChannel: systemChannel
-                ))
-            case let .configurationDump(systemChannel, number, packet):
-                let configuration = try FB01ConfigurationData(bytes: packet.payload)
-                candidates.append(ConfigurationDocumentCandidate(
-                    title: "Configuration \(number + 1): \(configuration.name.isEmpty ? "Untitled" : configuration.name)\(number >= 16 ? " Read Only" : "")",
-                    configuration: configuration,
-                    systemChannel: systemChannel
-                ))
-            default:
-                break
-            }
+        try FB01ModuleServices.shared.documentService.configurationCandidates(from: artifact).map { candidate in
+            ConfigurationDocumentCandidate(
+                title: candidate.title,
+                payload: SynthConfigurationDocumentPayload(
+                    moduleIdentity: EditorSynthModule.identity,
+                    configuration: candidate.configuration,
+                    systemChannel: candidate.systemChannel
+                )
+            )
         }
-        return candidates
     }
 }

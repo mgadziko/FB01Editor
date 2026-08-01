@@ -118,10 +118,10 @@ struct FB01EditorApplication: App {
                 }
                 .keyboardShortcut(",", modifiers: .command)
 
-                Button("Reset Instructions...") {
+                Button(EditorFeatureAvailability.commandTitle(.resetInstructions, fallback: "Reset Instructions...")) {
                     document.resetDeviceToFactorySettings()
                 }
-                .disabled(document.isBusy || !FB01UIFeatureAvailability.supportsMemoryProtect)
+                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.resetInstructions))
             }
 
             CommandGroup(replacing: .newItem) {
@@ -164,78 +164,78 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Voice") {
-                Button("Copy \(EditorSynthModule.vocabulary.voiceDisplayName) to Slot...") {
+                Button(EditorFeatureAvailability.commandTitle(.copyVoiceToSlot, fallback: "Copy \(EditorSynthModule.vocabulary.voiceDisplayName) to Slot...")) {
                     document.copySelectedVoiceToLocalSlot()
                 }
-                .disabled(document.isBusy)
+                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.copyVoiceToSlot))
 
                 if document.voiceEditorParadigm == .consoleSections {
-                    Button("Swap \(EditorSynthModule.vocabulary.voiceDisplayName) with Slot...") {
+                    Button(EditorFeatureAvailability.commandTitle(.swapVoiceWithSlot, fallback: "Swap \(EditorSynthModule.vocabulary.voiceDisplayName) with Slot...")) {
                         document.swapSelectedVoiceWithLocalSlot()
                     }
-                    .disabled(!document.canUseSelectedVoiceLibrarianActions)
+                    .disabled(!document.canUseSelectedVoiceLibrarianActions || !EditorFeatureAvailability.supportsCommand(.swapVoiceWithSlot))
 
                     Divider()
 
-                    Button("Reset Selected \(EditorSynthModule.vocabulary.voiceDisplayName)") {
+                    Button(EditorFeatureAvailability.commandTitle(.resetSelectedVoice, fallback: "Reset Selected \(EditorSynthModule.vocabulary.voiceDisplayName)")) {
                         document.resetSelectedVoiceEdit()
                     }
-                    .disabled(!document.canResetSelectedVoice)
+                    .disabled(!document.canResetSelectedVoice || !EditorFeatureAvailability.supportsCommand(.resetSelectedVoice))
 
-                    Button("Reset All \(EditorSynthModule.vocabulary.voiceDisplayName) Edits") {
+                    Button(EditorFeatureAvailability.commandTitle(.resetAllVoiceEdits, fallback: "Reset All \(EditorSynthModule.vocabulary.voiceDisplayName) Edits")) {
                         document.resetAllSelectedVoiceEdits()
                     }
-                    .disabled(!document.canResetAllSelectedVoiceEdits)
+                    .disabled(!document.canResetAllSelectedVoiceEdits || !EditorFeatureAvailability.supportsCommand(.resetAllVoiceEdits))
 
                     Divider()
 
-                    Button("Save Edited Bank As...") {
+                    Button(EditorFeatureAvailability.commandTitle(.saveEditedVoiceBank, fallback: "Save Edited Bank As...")) {
                         document.saveSelectedEditedVoiceBankAs()
                     }
-                    .disabled(!document.canResetAllSelectedVoiceEdits)
+                    .disabled(!document.canResetAllSelectedVoiceEdits || !EditorFeatureAvailability.supportsCommand(.saveEditedVoiceBank))
 
                     Divider()
                 }
 
-                Button("Store General MIDI voices...") {
+                Button(EditorFeatureAvailability.commandTitle(.storeGeneralMIDIVoices, fallback: "Store General MIDI voices...")) {
                     document.storeGeneralMIDIVoicesToDevice()
                 }
-                .disabled(document.isBusy || !FB01UIFeatureAvailability.supportsGeneralMIDIInstall)
+                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.storeGeneralMIDIVoices))
             }
 
             CommandMenu("Configuration") {
-                Button("Copy \(EditorSynthModule.vocabulary.configurationDisplayName) to Slot ...") {
+                Button(EditorFeatureAvailability.commandTitle(.copyConfigurationToSlot, fallback: "Copy \(EditorSynthModule.vocabulary.configurationDisplayName) to Slot ...")) {
                     document.copyConfigurationSlotOnDevice()
                 }
-                .disabled(document.isBusy || !FB01UIFeatureAvailability.supportsConfigurations)
+                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.copyConfigurationToSlot))
 
-                Button("Refresh Device Cache") {
+                Button(EditorFeatureAvailability.commandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
                     document.refreshDeviceCache(reason: "Refreshing device cache")
                 }
-                .disabled(document.isBusy || !FB01UIFeatureAvailability.supportsConfigurations)
+                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.refreshDeviceCache))
 
                 if document.voiceEditorParadigm == .consoleSections {
                     Divider()
 
-                    Button("Send Selected Configuration to Current Edit Buffer...") {
+                    Button(EditorFeatureAvailability.commandTitle(.sendSelectedConfigurationToEditBuffer, fallback: "Send Selected Configuration to Current Edit Buffer...")) {
                         document.sendSelectedConfigurationToCurrentEditBuffer()
                     }
-                    .disabled(!document.canSendSelectedConfiguration)
+                    .disabled(!document.canSendSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.sendSelectedConfigurationToEditBuffer))
 
-                    Button("Send and Confirm Selected Configuration...") {
+                    Button(EditorFeatureAvailability.commandTitle(.sendAndConfirmSelectedConfiguration, fallback: "Send and Confirm Selected Configuration...")) {
                         document.sendAndConfirmSelectedConfigurationToCurrentEditBuffer()
                     }
-                    .disabled(!document.canSendSelectedConfiguration)
+                    .disabled(!document.canSendSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.sendAndConfirmSelectedConfiguration))
 
-                    Button("Store Selected Configuration to Slot...") {
+                    Button(EditorFeatureAvailability.commandTitle(.storeSelectedConfigurationToSlot, fallback: "Store Selected Configuration to Slot...")) {
                         document.storeSelectedConfigurationToDeviceSlot()
                     }
-                    .disabled(!document.canStoreSelectedConfiguration)
+                    .disabled(!document.canStoreSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.storeSelectedConfigurationToSlot))
 
-                    Button("Store and Confirm Selected Configuration...") {
+                    Button(EditorFeatureAvailability.commandTitle(.storeAndConfirmSelectedConfiguration, fallback: "Store and Confirm Selected Configuration...")) {
                         document.storeAndConfirmSelectedConfigurationToDeviceSlot()
                     }
-                    .disabled(!document.canStoreSelectedConfiguration)
+                    .disabled(!document.canStoreSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.storeAndConfirmSelectedConfiguration))
                 }
             }
         }
@@ -306,7 +306,7 @@ struct AboutBoxView: View {
                 AboutAppIcon()
                     .padding(.bottom, 22)
 
-                Text("Forest FB-01 Editor")
+                Text("Forest Editor")
                     .font(.headline.weight(.semibold))
                     .padding(.bottom, 4)
 
@@ -314,7 +314,7 @@ struct AboutBoxView: View {
                     .font(.body)
                     .padding(.bottom, 14)
 
-                Text("Yamaha FB-01 programming is pretty complicated. Forest FB-01 Editor helps you see the forest through all the trees.")
+                Text("Yamaha FM voice editing can be complicated. Forest Editor helps you see the forest through all the trees.")
                     .font(.body)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.bottom, 14)
@@ -323,7 +323,7 @@ struct AboutBoxView: View {
                     .font(.body.weight(.semibold))
                     .padding(.bottom, 2)
 
-                Text("Contact: fb01editor@quantumpenguin.com")
+                Text("Contact: foresteditor@quantumpenguin.net")
                     .font(.body)
                     .padding(.top, 18)
 

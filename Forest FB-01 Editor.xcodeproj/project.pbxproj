@@ -49,7 +49,7 @@
 		100000000000000000000020 /* VoiceDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000026 /* VoiceDocuments.swift */; };
 		100000000000000000000021 /* ConfigurationDocuments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000027 /* ConfigurationDocuments.swift */; };
 		100000000000000000000022 /* DocumentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000028 /* DocumentModels.swift */; };
-		10000000000000000000002B /* FB01UIFeatureAvailability.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000031 /* FB01UIFeatureAvailability.swift */; };
+		10000000000000000000002B /* EditorSynthModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000031 /* EditorSynthModule.swift */; };
 		10000000000000000000002C /* FB01VoiceDocumentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000032 /* FB01VoiceDocumentService.swift */; };
 		10000000000000000000002E /* FB01ConfigurationDocumentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000034 /* FB01ConfigurationDocumentService.swift */; };
 		100000000000000000000025 /* SynthModuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002B /* SynthModuleTests.swift */; };
@@ -118,7 +118,7 @@
 		20000000000000000000000E /* FB01SysExParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01SysExParserTests.swift; sourceTree = "<group>"; };
 		20000000000000000000000F /* FB01SysExTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01SysExTests.swift; sourceTree = "<group>"; };
 		200000000000000000000010 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Fixtures; sourceTree = "<group>"; };
-		200000000000000000000011 /* Forest FB-01 Editor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Forest FB-01 Editor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000011 /* Forest Editor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Forest Editor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000012 /* fb01-dump */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "fb01-dump"; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000013 /* fb01-gm-load */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "fb01-gm-load"; sourceTree = BUILT_PRODUCTS_DIR; };
 		200000000000000000000014 /* FB01EditorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FB01EditorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -142,7 +142,7 @@
 		200000000000000000000026 /* VoiceDocuments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceDocuments.swift; sourceTree = "<group>"; };
 		200000000000000000000027 /* ConfigurationDocuments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigurationDocuments.swift; sourceTree = "<group>"; };
 		200000000000000000000028 /* DocumentModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentModels.swift; sourceTree = "<group>"; };
-		200000000000000000000031 /* FB01UIFeatureAvailability.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01UIFeatureAvailability.swift; sourceTree = "<group>"; };
+		200000000000000000000031 /* EditorSynthModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSynthModule.swift; sourceTree = "<group>"; };
 		200000000000000000000032 /* FB01VoiceDocumentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01VoiceDocumentService.swift; sourceTree = "<group>"; };
 		200000000000000000000034 /* FB01ConfigurationDocumentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01ConfigurationDocumentService.swift; sourceTree = "<group>"; };
 		20000000000000000000002B /* SynthModuleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthModuleTests.swift; sourceTree = "<group>"; };
@@ -239,7 +239,7 @@
 				200000000000000000000020 /* EditorViews.swift */,
 				200000000000000000000034 /* FB01ConfigurationDocumentService.swift */,
 				200000000000000000000008 /* FB01EditorApp.swift */,
-				200000000000000000000031 /* FB01UIFeatureAvailability.swift */,
+				200000000000000000000031 /* EditorSynthModule.swift */,
 				200000000000000000000032 /* FB01VoiceDocumentService.swift */,
 				200000000000000000000021 /* LiveMIDIPlaybackController.swift */,
 				20000000000000000000001F /* ParameterKnob.swift */,
@@ -306,7 +306,7 @@
 			isa = PBXGroup;
 			children = (
 				20000000000000000000000A /* libFB01Editor.a */,
-				200000000000000000000011 /* Forest FB-01 Editor.app */,
+				200000000000000000000011 /* Forest Editor.app */,
 				200000000000000000000012 /* fb01-dump */,
 				200000000000000000000013 /* fb01-gm-load */,
 				200000000000000000000014 /* FB01EditorTests.xctest */,
@@ -348,7 +348,7 @@
 			);
 			name = "Forest FB-01 Editor";
 			productName = "Forest FB-01 Editor";
-			productReference = 200000000000000000000011 /* Forest FB-01 Editor.app */;
+			productReference = 200000000000000000000011 /* Forest Editor.app */;
 			productType = "com.apple.product-type.application";
 		};
 		500000000000000000000003 /* fb01-dump */ = {
@@ -530,7 +530,7 @@
 				10000000000000000000001A /* EditorViews.swift in Sources */,
 				10000000000000000000002E /* FB01ConfigurationDocumentService.swift in Sources */,
 				100000000000000000000008 /* FB01EditorApp.swift in Sources */,
-				10000000000000000000002B /* FB01UIFeatureAvailability.swift in Sources */,
+				10000000000000000000002B /* EditorSynthModule.swift in Sources */,
 				10000000000000000000002C /* FB01VoiceDocumentService.swift in Sources */,
 				10000000000000000000001E /* EditorDocumentWorkspace.swift in Sources */,
 				10000000000000000000001D /* Dialogs.swift in Sources */,
@@ -729,9 +729,9 @@
 				DEFINES_MODULE = YES;
 				EXECUTABLE_NAME = FB01EditorApp;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Forest FB-01 Editor";
+				INFOPLIST_KEY_CFBundleDisplayName = "Forest Editor";
 				INFOPLIST_KEY_CFBundleIconFile = AppIcon.icns;
-				INFOPLIST_KEY_CFBundleName = "Forest FB-01 Editor";
+				INFOPLIST_KEY_CFBundleName = "Forest Editor";
 				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
 				INFOPLIST_KEY_CFBundleVersion = 1;
 				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
@@ -742,7 +742,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.gadzikowski.FB01Editor;
 				PRODUCT_MODULE_NAME = FB01EditorApp;
-				PRODUCT_NAME = "Forest FB-01 Editor";
+				PRODUCT_NAME = "Forest Editor";
 				SKIP_INSTALL = NO;
 				SWIFT_VERSION = 6.0;
 			};
@@ -756,9 +756,9 @@
 				DEFINES_MODULE = YES;
 				EXECUTABLE_NAME = FB01EditorApp;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Forest FB-01 Editor";
+				INFOPLIST_KEY_CFBundleDisplayName = "Forest Editor";
 				INFOPLIST_KEY_CFBundleIconFile = AppIcon.icns;
-				INFOPLIST_KEY_CFBundleName = "Forest FB-01 Editor";
+				INFOPLIST_KEY_CFBundleName = "Forest Editor";
 				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
 				INFOPLIST_KEY_CFBundleVersion = 1;
 				INFOPLIST_KEY_LSMinimumSystemVersion = 14.0;
@@ -769,7 +769,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.gadzikowski.FB01Editor;
 				PRODUCT_MODULE_NAME = FB01EditorApp;
-				PRODUCT_NAME = "Forest FB-01 Editor";
+				PRODUCT_NAME = "Forest Editor";
 				SKIP_INSTALL = NO;
 				SWIFT_VERSION = 6.0;
 			};
@@ -821,7 +821,7 @@
 				PRODUCT_NAME = FB01EditorTests;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Forest FB-01 Editor.app/Contents/MacOS/FB01EditorApp";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Forest Editor.app/Contents/MacOS/FB01EditorApp";
 			};
 			name = Debug;
 		};
@@ -835,7 +835,7 @@
 				PRODUCT_NAME = FB01EditorTests;
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Forest FB-01 Editor.app/Contents/MacOS/FB01EditorApp";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Forest Editor.app/Contents/MacOS/FB01EditorApp";
 			};
 			name = Release;
 		};

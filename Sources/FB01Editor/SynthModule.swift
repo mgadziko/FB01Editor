@@ -171,6 +171,39 @@ public struct SynthDocumentDescriptor: Equatable, Identifiable, Sendable {
     }
 }
 
+public protocol SynthVoiceDocumentPayloadProtocol: Sendable {
+    associatedtype Voice: Sendable
+
+    var moduleIdentity: SynthModuleIdentity { get }
+    var voice: Voice { get }
+    var systemChannel: Int { get }
+}
+
+public protocol SynthConfigurationDocumentPayloadProtocol: Sendable {
+    associatedtype Configuration: Sendable
+
+    var moduleIdentity: SynthModuleIdentity { get }
+    var configuration: Configuration { get }
+    var systemChannel: Int { get }
+}
+
+public protocol SynthDocumentTemplating: Sendable {
+    associatedtype Voice: Sendable
+    associatedtype Configuration: Sendable
+
+    func templateVoice() throws -> Voice
+    func templateConfiguration() throws -> Configuration
+}
+
+public protocol SynthDocumentExtracting: Sendable {
+    associatedtype Artifact: Sendable
+    associatedtype VoiceCandidate: Sendable
+    associatedtype ConfigurationCandidate: Sendable
+
+    func voiceCandidates(from artifact: Artifact) throws -> [VoiceCandidate]
+    func configurationCandidates(from artifact: Artifact) throws -> [ConfigurationCandidate]
+}
+
 public struct SynthFileProfile: Equatable, Sendable {
     public var singleVoiceExtension: String
     public var singleConfigurationExtension: String
@@ -209,6 +242,74 @@ public struct SynthFileProfile: Equatable, Sendable {
     }
 }
 
+public enum SynthModuleMenu: String, CaseIterable, Sendable {
+    case app
+    case voice
+    case configuration
+}
+
+public enum SynthModuleCommandKind: String, CaseIterable, Sendable {
+    case resetInstructions
+    case copyVoiceToSlot
+    case swapVoiceWithSlot
+    case resetSelectedVoice
+    case resetAllVoiceEdits
+    case saveEditedVoiceBank
+    case storeGeneralMIDIVoices
+    case copyConfigurationToSlot
+    case refreshDeviceCache
+    case sendSelectedConfigurationToEditBuffer
+    case sendAndConfirmSelectedConfiguration
+    case storeSelectedConfigurationToSlot
+    case storeAndConfirmSelectedConfiguration
+}
+
+public struct SynthModuleCommandDescriptor: Equatable, Identifiable, Sendable {
+    public var id: SynthModuleCommandKind { kind }
+    public var kind: SynthModuleCommandKind
+    public var menu: SynthModuleMenu
+    public var displayName: String
+    public var requiresConsoleSections: Bool
+
+    public init(
+        kind: SynthModuleCommandKind,
+        menu: SynthModuleMenu,
+        displayName: String,
+        requiresConsoleSections: Bool = false
+    ) {
+        self.kind = kind
+        self.menu = menu
+        self.displayName = displayName
+        self.requiresConsoleSections = requiresConsoleSections
+    }
+}
+
+public enum SynthParameterBindingScope: Equatable, Sendable {
+    case voice
+    case voiceOperator
+    case configuration
+    case configurationInstrument
+}
+
+public struct SynthParameterBindingDescriptor: Equatable, Identifiable, Sendable {
+    public var id: String
+    public var parameterID: SynthParameterDescriptor.ID
+    public var scope: SynthParameterBindingScope
+    public var fieldName: String
+
+    public init(
+        id: String,
+        parameterID: SynthParameterDescriptor.ID,
+        scope: SynthParameterBindingScope,
+        fieldName: String
+    ) {
+        self.id = id
+        self.parameterID = parameterID
+        self.scope = scope
+        self.fieldName = fieldName
+    }
+}
+
 public protocol SynthModule: Sendable {
     var identity: SynthModuleIdentity { get }
     var capabilities: SynthModuleCapabilities { get }
@@ -216,7 +317,9 @@ public protocol SynthModule: Sendable {
     var supportedDocumentKinds: [SynthDocumentKind] { get }
     var supportedDocumentDescriptors: [SynthDocumentDescriptor] { get }
     var fileProfile: SynthFileProfile { get }
+    var commandDescriptors: [SynthModuleCommandDescriptor] { get }
     var parameterDescriptors: [SynthParameterDescriptor] { get }
+    var parameterBindingDescriptors: [SynthParameterBindingDescriptor] { get }
     var writableVoiceBanks: [Int] { get }
     var readOnlyVoiceBanks: [Int] { get }
     var voicesPerBank: Int { get }

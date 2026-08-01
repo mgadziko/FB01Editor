@@ -68,7 +68,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     func saveAs() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = UTType.fb01ConfigurationFileTypes
+        panel.allowedContentTypes = UTType.currentModuleConfigurationFileTypes
         panel.directoryURL = preferredEditorSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeEditorFileName(configuration.name, fallback: "configuration")).\(EditorSynthModule.fileProfile.singleConfigurationExtension)"
         panel.message = "Save this configuration document to a configuration file."
@@ -83,7 +83,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
     static func loadFromDisk() -> ConfigurationDocumentModel? {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = UTType.fb01ReadableConfigurationFileTypes
+        panel.allowedContentTypes = UTType.currentModuleReadableConfigurationFileTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
@@ -118,7 +118,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = UTType.fb01ReadableConfigurationFileTypes
+        panel.allowedContentTypes = UTType.currentModuleReadableConfigurationFileTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()

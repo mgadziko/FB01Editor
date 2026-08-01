@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import FB01Editor
 @testable import FB01EditorApp
 
@@ -15,6 +16,7 @@ import Testing
 
     #expect(candidates.count == 48)
     #expect(candidates[0].title == "Bank 1 Voice 1: Brass")
+    #expect(candidates[0].payload.moduleIdentity == EditorSynthModule.identity)
     #expect(candidates[0].voice.name == "Brass")
     #expect(candidates[1].voice.name == "Horn")
 }
@@ -31,7 +33,38 @@ import Testing
 
     #expect(candidates.count == 1)
     #expect(candidates[0].title == "Current Configuration: single")
+    #expect(candidates[0].payload.moduleIdentity == EditorSynthModule.identity)
     #expect(candidates[0].configuration.name == "single")
+}
+
+@MainActor
+@Test func editorDocumentTemplatesComeFromCurrentModule() throws {
+    let voicePayload = EditorDocumentTemplates.voicePayload(systemChannel: 2)
+    #expect(voicePayload.moduleIdentity == EditorSynthModule.identity)
+    #expect(voicePayload.voice.name == "Init")
+    #expect(voicePayload.systemChannel == 2)
+
+    let configurationPayload = EditorDocumentTemplates.configurationPayload(systemChannel: 3)
+    #expect(configurationPayload.moduleIdentity == EditorSynthModule.identity)
+    #expect(configurationPayload.configuration.name == "Init")
+    #expect(configurationPayload.systemChannel == 3)
+}
+
+@MainActor
+@Test func currentModuleFileTypesUseShortFB01Extensions() {
+    #expect(UTType.currentModuleVoiceFileTypes.first?.preferredFilenameExtension == "fbv")
+    #expect(UTType.currentModuleConfigurationFileTypes.first?.preferredFilenameExtension == "fbc")
+    #expect(UTType.currentModuleVoiceBankFileTypes.first?.preferredFilenameExtension == "fbvb")
+    #expect(UTType.currentModuleConfigurationBankFileTypes.first?.preferredFilenameExtension == "fbcb")
+    #expect(UTType.currentModuleGenericSysExFileTypes.first?.preferredFilenameExtension == "fbx")
+    #expect(UTType.currentModuleReadableFileTypes.map(\.preferredFilenameExtension).contains("syx"))
+}
+
+@MainActor
+@Test func editorFeatureAvailabilityUsesCurrentModuleCommands() {
+    #expect(EditorFeatureAvailability.supportsCommand(.copyVoiceToSlot))
+    #expect(EditorFeatureAvailability.commandTitle(.copyVoiceToSlot, fallback: "fallback") == "Copy Voice to Slot...")
+    #expect(EditorFeatureAvailability.commandTitle(.resetInstructions, fallback: "fallback") == "Reset Instructions...")
 }
 
 @MainActor
