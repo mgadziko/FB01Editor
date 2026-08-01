@@ -68,7 +68,7 @@
 			containerPortal = 400000000000000000000001 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 500000000000000000000002;
-			remoteInfo = "Forest FB-01 Editor";
+			remoteInfo = "Forest Editor";
 		};
 		300000000000000000000003 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -332,9 +332,9 @@
 			productReference = 20000000000000000000000A /* libFB01Editor.a */;
 			productType = "com.apple.product-type.library.static";
 		};
-		500000000000000000000002 /* Forest FB-01 Editor */ = {
+		500000000000000000000002 /* Forest Editor */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 900000000000000000000020 /* Build configuration list for PBXNativeTarget "Forest FB-01 Editor" */;
+			buildConfigurationList = 900000000000000000000020 /* Build configuration list for PBXNativeTarget "Forest Editor" */;
 			buildPhases = (
 				800000000000000000000002 /* Sources */,
 				600000000000000000000001 /* Frameworks */,
@@ -346,8 +346,8 @@
 			dependencies = (
 				900000000000000000000001 /* PBXTargetDependency */,
 			);
-			name = "Forest FB-01 Editor";
-			productName = "Forest FB-01 Editor";
+			name = "Forest Editor";
+			productName = "Forest Editor";
 			productReference = 200000000000000000000011 /* Forest Editor.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -432,7 +432,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 900000000000000000000000 /* Build configuration list for PBXProject "Forest FB-01 Editor" */;
+			buildConfigurationList = 900000000000000000000000 /* Build configuration list for PBXProject "Forest Editor" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -445,7 +445,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				500000000000000000000002 /* Forest FB-01 Editor */,
+				500000000000000000000002 /* Forest Editor */,
 				500000000000000000000001 /* FB01Editor */,
 				500000000000000000000003 /* fb01-dump */,
 				500000000000000000000004 /* fb01-gm-load */,
@@ -575,7 +575,7 @@
 
 /* Begin PBXTargetDependency section */
 		900000000000000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001 /* FB01Editor */; targetProxy = 300000000000000000000001 /* PBXContainerItemProxy */; };
-		900000000000000000000002 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000002 /* Forest FB-01 Editor */; targetProxy = 300000000000000000000002 /* PBXContainerItemProxy */; };
+		900000000000000000000002 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000002 /* Forest Editor */; targetProxy = 300000000000000000000002 /* PBXContainerItemProxy */; };
 		900000000000000000000003 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001 /* FB01Editor */; targetProxy = 300000000000000000000003 /* PBXContainerItemProxy */; };
 		900000000000000000000004 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001 /* FB01Editor */; targetProxy = 300000000000000000000004 /* PBXContainerItemProxy */; };
 		900000000000000000000005 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 500000000000000000000001 /* FB01Editor */; targetProxy = 300000000000000000000005 /* PBXContainerItemProxy */; };
@@ -842,7 +842,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		900000000000000000000000 /* Build configuration list for PBXProject "Forest FB-01 Editor" */ = {
+		900000000000000000000000 /* Build configuration list for PBXProject "Forest Editor" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A00000000000000000000001 /* Debug */,
@@ -860,7 +860,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		900000000000000000000020 /* Build configuration list for PBXNativeTarget "Forest FB-01 Editor" */ = {
+		900000000000000000000020 /* Build configuration list for PBXNativeTarget "Forest Editor" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A00000000000000000000005 /* Debug */,

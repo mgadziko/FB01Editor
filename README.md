@@ -195,15 +195,15 @@ The repo includes a native Xcode project:
 open "Forest FB-01 Editor.xcodeproj"
 ```
 
-The primary app scheme is `Forest FB-01 Editor`. The project also contains
+The primary app scheme is `Forest Editor`. The project also contains
 targets for the shared `FB01Editor` library, `fb01-dump`, `fb01-gm-load`, and
 `FB01EditorTests`.
 
 Command-line Xcode builds should use repo-local DerivedData:
 
 ```sh
-xcodebuild -project "Forest FB-01 Editor.xcodeproj" -scheme "Forest FB-01 Editor" -configuration Debug -derivedDataPath .xcode-derived build CODE_SIGNING_ALLOWED=NO
-xcodebuild -project "Forest FB-01 Editor.xcodeproj" -scheme "Forest FB-01 Editor" -configuration Debug -derivedDataPath .xcode-derived test CODE_SIGNING_ALLOWED=NO
+xcodebuild -project "Forest FB-01 Editor.xcodeproj" -scheme "Forest Editor" -configuration Debug -derivedDataPath .xcode-derived build CODE_SIGNING_ALLOWED=NO
+xcodebuild -project "Forest FB-01 Editor.xcodeproj" -scheme "Forest Editor" -configuration Debug -derivedDataPath .xcode-derived test CODE_SIGNING_ALLOWED=NO
 ```
 
 ## SysEx And Data Model
