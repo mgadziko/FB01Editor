@@ -149,32 +149,46 @@ import UniformTypeIdentifiers
 }
 
 @MainActor
-@Test func voiceDocumentMapsOxygenKnobsToPerformanceMacros() throws {
+@Test func voiceDocumentPerformanceMacrosAreMouseEditableOnly() throws {
     let voiceData = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
     let voice = VoiceDocumentModel(voice: voiceData, systemChannel: 0)
     let device = DocumentModel()
 
     #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x4A, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x47, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x34, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x5B, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x08, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x09, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x0C, 127], device: device))
-    #expect(voice.receiveExternalKeyboardMessage([0xBF, 0x06, 127], device: device))
+    #expect(voice.value(for: .brightness) == PerformanceMacro.neutralValue)
+
+    voice.setPerformanceMacro(.brightness, value: 127)
+    voice.setPerformanceMacro(.motion, value: 127)
 
     #expect(voice.value(for: .brightness) == 127)
-    #expect(voice.value(for: .warmth) == 127)
-    #expect(voice.value(for: .bite) == 127)
-    #expect(voice.value(for: .body) == 127)
     #expect(voice.value(for: .motion) == 127)
-    #expect(voice.value(for: .punch) == 127)
-    #expect(voice.value(for: .air) == 127)
-    #expect(voice.value(for: .character) == 127)
     #expect(voice.voice.lfoSpeed > voiceData.lfoSpeed)
     #expect(voice.voice.amplitudeModulationDepth > voiceData.amplitudeModulationDepth)
     #expect(voice.voice.pitchModulationDepth > voiceData.pitchModulationDepth)
-    #expect(device.externalKeyboardStatus.contains("Character"))
+}
+
+@MainActor
+@Test func customizedControlsTrackControllerCCSelections() {
+    UserDefaults.standard.removeObject(forKey: "FB01Editor.customControlsControllerProfile")
+    UserDefaults.standard.removeObject(forKey: "FB01Editor.customControlChangeNumbers")
+    let device = DocumentModel()
+
+    #expect(device.customControlsControllerProfile == .oxygen25)
+    #expect(device.customControlChangeNumbers == [74, 71, 91, 93, 73, 72, 5, 84])
+
+    device.setCustomControlChangeNumber(10, at: 0)
+    #expect(device.customControlChangeNumbers[0] == 10)
+
+    device.setCustomControlChangeNumber(200, at: 1)
+    #expect(device.customControlChangeNumbers[1] == 127)
+
+    device.noteCustomControlMessage([0xB0, 10, 64])
+    #expect(device.liveValueForCustomControl(at: 0) == 64)
+
+    device.externalKeyboardEnabled = true
+    device.receiveExternalKeyboardMessage([0xB0, 10, 99])
+    #expect(device.liveValueForCustomControl(at: 0) == 99)
+    #expect(device.externalKeyboardStatus == "Oxygen 25 C1: 10 Pan = 99")
 }
 
 @Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {

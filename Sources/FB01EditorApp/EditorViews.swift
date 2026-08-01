@@ -203,6 +203,90 @@ struct LiveKeyboardPaletteView: View {
     }
 }
 
+struct CustomizedControlsPaletteView: View {
+    @ObservedObject var document: DocumentModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                SectionTitle("Controller")
+
+                Picker("Controller", selection: Binding(
+                    get: { document.customControlsControllerProfile },
+                    set: { document.setCustomControlsControllerProfile($0) }
+                )) {
+                    ForEach(CustomControlsControllerProfile.allCases) { profile in
+                        Text(profile.title).tag(profile)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 180)
+            }
+
+            Text("These mappings identify incoming controller knobs. They do not drive Performance Macros yet.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(document.customControlsControllerProfile.controlLabels.enumerated()), id: \.offset) { index, label in
+                    HStack(spacing: 12) {
+                        Text(label)
+                            .font(.body.weight(.semibold))
+                            .frame(width: 34, alignment: .trailing)
+
+                        CustomControlLiveValueDisplay(value: document.liveValueForCustomControl(at: index))
+
+                        Picker("\(label) CC", selection: Binding(
+                            get: {
+                                document.customControlChangeNumbers.indices.contains(index)
+                                    ? document.customControlChangeNumbers[index]
+                                    : 0
+                            },
+                            set: { document.setCustomControlChangeNumber($0, at: index) }
+                        )) {
+                            ForEach(MIDIControlChangeLabel.allControllers, id: \.self) { controller in
+                                Text(MIDIControlChangeLabel.title(for: controller)).tag(controller)
+                            }
+                        }
+                        .frame(width: 280, alignment: .leading)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .frame(width: 470, height: 430, alignment: .topLeading)
+    }
+}
+
+struct CustomControlLiveValueDisplay: View {
+    let value: Int?
+
+    private var text: String {
+        guard let value else { return "-----" }
+        return String(format: "%05d", min(max(value, 0), 16_383))
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 15, weight: .bold, design: .monospaced))
+            .foregroundStyle(Color(red: 0.37, green: 1.0, blue: 0.16))
+            .frame(width: 66, height: 24)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color.black.opacity(0.82))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(Color.green.opacity(0.35), lineWidth: 1)
+            )
+            .accessibilityLabel("Current controller value")
+            .accessibilityValue(text)
+    }
+}
+
 struct LiveKeyboardPaletteControlsView: View {
     @ObservedObject var document: DocumentModel
 

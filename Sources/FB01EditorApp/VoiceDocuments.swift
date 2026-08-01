@@ -519,12 +519,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         let event = status & 0xF0
-        if event == 0xB0, message.count == 3, let macro = PerformanceMacro.oxygen25Macro(forController: Int(message[1])) {
-            setPerformanceMacro(macro, value: Int(message[2]))
-            device.externalKeyboardStatus = "Oxygen 25 CC\(message[1]) mapped to \(macro.title) = \(message[2])."
-            return true
-        }
-
         let isVolumeControl = event == 0xB0 && message.count == 3 && message[1] == 7
         if isVolumeControl {
             return false

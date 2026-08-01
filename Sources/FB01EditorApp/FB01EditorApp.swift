@@ -161,6 +161,10 @@ struct FB01EditorApplication: App {
                     LiveKeyboardPaletteController.shared.show(document: document)
                 }
                 .keyboardShortcut("k", modifiers: [.command, .option])
+
+                Button("Customized Controls") {
+                    CustomizedControlsPaletteController.shared.show(document: document)
+                }
             }
 
             CommandMenu("Voice") {
@@ -472,6 +476,72 @@ final class LiveKeyboardPaletteController {
     }
 
     private func saveFrame(_ window: NSWindow?) {
+        guard let window else {
+            return
+        }
+        UserDefaults.standard.set(NSStringFromRect(window.frame), forKey: DefaultsKey.frame)
+    }
+}
+
+@MainActor
+final class CustomizedControlsPaletteController {
+    static let shared = CustomizedControlsPaletteController()
+
+    private var panel: NSPanel?
+    private var delegate: LiveKeyboardPaletteDelegate?
+
+    private enum DefaultsKey {
+        static let frame = "FB01Editor.customizedControlsPalette.frame"
+    }
+
+    func show(document: DocumentModel) {
+        if let panel {
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 470, height: 430),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .utilityWindow],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Customized Controls"
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
+        panel.contentMinSize = NSSize(width: 440, height: 360)
+        panel.contentView = NSHostingView(rootView: CustomizedControlsPaletteView(document: document))
+        if let savedFrame = UserDefaults.standard.string(forKey: DefaultsKey.frame) {
+            let frame = NSRectFromString(savedFrame)
+            if !frame.isEmpty {
+                panel.setFrame(frame, display: false)
+            } else {
+                panel.center()
+            }
+        } else {
+            panel.center()
+        }
+        let delegate = LiveKeyboardPaletteDelegate(
+            onFrameChange: { window in
+                Self.saveFrame(window)
+            },
+            onClose: { [weak self] window in
+                Self.saveFrame(window)
+                self?.panel = nil
+            }
+        )
+        self.delegate = delegate
+        panel.delegate = delegate
+        self.panel = panel
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private static func saveFrame(_ window: NSWindow?) {
         guard let window else {
             return
         }

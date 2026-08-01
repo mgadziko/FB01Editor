@@ -6,6 +6,33 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum CustomControlsControllerProfile: String, CaseIterable, Identifiable {
+    case oxygen25
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .oxygen25:
+            return "Oxygen 25"
+        }
+    }
+
+    var controlLabels: [String] {
+        switch self {
+        case .oxygen25:
+            return (1...8).map { "C\($0)" }
+        }
+    }
+
+    var defaultControlChangeNumbers: [Int] {
+        switch self {
+        case .oxygen25:
+            return [74, 71, 91, 93, 73, 72, 5, 84]
+        }
+    }
+}
+
 @MainActor
 final class DocumentModel: ObservableObject {
     @Published var sources: [LibrarySource] = []
@@ -38,6 +65,9 @@ final class DocumentModel: ObservableObject {
     @Published var keyboardVelocity = 100
     @Published var keyboardChannel = 0
     @Published var keyboardStartNote = 36
+    @Published var customControlsControllerProfile: CustomControlsControllerProfile = .oxygen25
+    @Published var customControlChangeNumbers: [Int] = CustomControlsControllerProfile.oxygen25.defaultControlChangeNumbers
+    @Published var customControlLiveValues: [Int: Int] = [:]
     @Published var externalKeyboardPressedNotes: Set<Int> = []
     @Published var liveKeyboardTitle = "Live Keyboard"
     @Published var liveKeyboardSubtitle = "MIDI notes only"
@@ -78,6 +108,8 @@ final class DocumentModel: ObservableObject {
         static let keyboardVelocity = "FB01Editor.keyboardVelocity"
         static let keyboardStartNote = "FB01Editor.keyboardStartNote"
         static let externalKeyboardPortamento = "FB01Editor.externalKeyboardPortamento"
+        static let customControlsControllerProfile = "FB01Editor.customControlsControllerProfile"
+        static let customControlChangeNumbers = "FB01Editor.customControlChangeNumbers"
         static let voiceEditorParadigm = "FB01Editor.voiceEditorParadigm"
         static let preCacheRAMVoiceBanksOnLaunch = "FB01Editor.preCacheRAMVoiceBanksOnLaunch"
         static let preCacheROMVoiceBanksOnLaunch = "FB01Editor.preCacheROMVoiceBanksOnLaunch"
@@ -113,6 +145,16 @@ final class DocumentModel: ObservableObject {
         keyboardStartNote = (0...67).contains(savedKeyboardStartNote) ? savedKeyboardStartNote : 36
         let savedExternalKeyboardPortamento = UserDefaults.standard.integer(forKey: DefaultsKey.externalKeyboardPortamento)
         externalKeyboardPortamento = (0...127).contains(savedExternalKeyboardPortamento) ? savedExternalKeyboardPortamento : 0
+        if let rawProfile = UserDefaults.standard.string(forKey: DefaultsKey.customControlsControllerProfile),
+           let profile = CustomControlsControllerProfile(rawValue: rawProfile) {
+            customControlsControllerProfile = profile
+        }
+        if let savedControlChangeNumbers = UserDefaults.standard.array(forKey: DefaultsKey.customControlChangeNumbers) as? [Int],
+           savedControlChangeNumbers.count == customControlsControllerProfile.controlLabels.count {
+            customControlChangeNumbers = savedControlChangeNumbers.map { min(max($0, 0), 127) }
+        } else {
+            customControlChangeNumbers = customControlsControllerProfile.defaultControlChangeNumbers
+        }
         if let rawParadigm = UserDefaults.standard.string(forKey: DefaultsKey.voiceEditorParadigm),
            let paradigm = VoiceEditorParadigm(rawValue: rawParadigm) {
             voiceEditorParadigm = paradigm
@@ -723,6 +765,42 @@ final class DocumentModel: ObservableObject {
     func setKeyboardStartNote(_ note: Int) {
         keyboardStartNote = min(max(note, 0), 67)
         UserDefaults.standard.set(keyboardStartNote, forKey: DefaultsKey.keyboardStartNote)
+    }
+
+    func setCustomControlsControllerProfile(_ profile: CustomControlsControllerProfile) {
+        guard profile != customControlsControllerProfile else { return }
+        customControlsControllerProfile = profile
+        customControlChangeNumbers = profile.defaultControlChangeNumbers
+        UserDefaults.standard.set(profile.rawValue, forKey: DefaultsKey.customControlsControllerProfile)
+        UserDefaults.standard.set(customControlChangeNumbers, forKey: DefaultsKey.customControlChangeNumbers)
+    }
+
+    func setCustomControlChangeNumber(_ controller: Int, at index: Int) {
+        guard customControlChangeNumbers.indices.contains(index) else { return }
+        customControlChangeNumbers[index] = min(max(controller, 0), 127)
+        UserDefaults.standard.set(customControlChangeNumbers, forKey: DefaultsKey.customControlChangeNumbers)
+    }
+
+    func liveValueForCustomControl(at index: Int) -> Int? {
+        guard customControlChangeNumbers.indices.contains(index) else { return nil }
+        return customControlLiveValues[customControlChangeNumbers[index]]
+    }
+
+    func noteCustomControlMessage(_ message: [UInt8]) {
+        guard message.count == 3,
+              let status = message.first,
+              status & 0xF0 == 0xB0 else {
+            return
+        }
+        customControlLiveValues[Int(message[1])] = Int(message[2])
+    }
+
+    private func customizedControlLabel(for controller: Int) -> String? {
+        guard let index = customControlChangeNumbers.firstIndex(of: controller),
+              customControlsControllerProfile.controlLabels.indices.contains(index) else {
+            return nil
+        }
+        return customControlsControllerProfile.controlLabels[index]
     }
 
     func setVoiceEditorParadigm(_ paradigm: VoiceEditorParadigm) {
@@ -3154,12 +3232,22 @@ final class DocumentModel: ObservableObject {
             return
         }
 
+        let event = status & 0xF0
+        if event == 0xB0, message.count == 3 {
+            let controller = Int(message[1])
+            let value = Int(message[2])
+            noteCustomControlMessage(message)
+            if let label = customizedControlLabel(for: controller) {
+                externalKeyboardStatus = "\(customControlsControllerProfile.title) \(label): \(MIDIControlChangeLabel.title(for: controller)) = \(value)"
+                return
+            }
+        }
+
         if let externalKeyboardDocumentHandler, externalKeyboardDocumentHandler(message) {
             updateExternalKeyboardPressedNotes(from: message)
             return
         }
 
-        let event = status & 0xF0
         let channel = UInt8(min(max(keyboardChannel, 0), 15))
         let rewritten = [event | channel] + message.dropFirst()
         let isNoteOn = event == 0x90 && message.count > 2 && message[2] > 0

@@ -125,7 +125,7 @@ struct FMRoutingPatchBayView: View {
                     .labelsHidden()
                     .frame(width: 180)
 
-                    Text("Oxygen 25 C1-C8 control these musical macros. Values are Forest session controls, not stored FB-01 fields.")
+                    Text("These musical macros change the current editable voice in memory only. They are not stored FB-01 fields.")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -141,9 +141,6 @@ struct FMRoutingPatchBayView: View {
                                 width: 88,
                                 knobSize: 46
                             )
-                            Text("C\(macro.oxygenKnobNumber)")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.secondary)
                         }
                         .help(macro.help(for: voiceCharacterType))
                     }
@@ -245,33 +242,6 @@ enum PerformanceMacro: String, CaseIterable, Identifiable {
         case .punch: return "Punch"
         case .air: return "Air"
         case .character: return "Character"
-        }
-    }
-
-    var oxygenKnobNumber: Int {
-        switch self {
-        case .brightness: return 1
-        case .warmth: return 2
-        case .bite: return 3
-        case .body: return 4
-        case .motion: return 5
-        case .punch: return 6
-        case .air: return 7
-        case .character: return 8
-        }
-    }
-
-    static func oxygen25Macro(forController controller: Int) -> PerformanceMacro? {
-        switch controller {
-        case 74: return .brightness
-        case 71: return .warmth
-        case 52: return .bite
-        case 91: return .body
-        case 8: return .motion
-        case 9: return .punch
-        case 12: return .air
-        case 6: return .character
-        default: return nil
         }
     }
 
@@ -449,6 +419,94 @@ enum PerformanceMacro: String, CaseIterable, Identifiable {
 
     private func adjust(_ value: Int, by delta: Int, in range: ClosedRange<Int>) -> Int {
         min(max(value + delta, range.lowerBound), range.upperBound)
+    }
+}
+
+enum MIDIControlChangeLabel {
+    static let range = 0...127
+    static let allControllers = Array(range)
+
+    static func title(for controller: Int) -> String {
+        "\(controller) \(name(for: controller))"
+    }
+
+    private static func name(for controller: Int) -> String {
+        switch controller {
+        case 0: return "Bank Select"
+        case 1: return "Mod Wheel"
+        case 2: return "Breath Controller"
+        case 3: return "Undefined"
+        case 4: return "Foot Controller"
+        case 5: return "Portamento Time"
+        case 6: return "Data Entry MSB"
+        case 7: return "Channel Volume"
+        case 8: return "Balance"
+        case 9: return "Undefined"
+        case 10: return "Pan"
+        case 11: return "Expression"
+        case 12: return "Effect Control 1"
+        case 13: return "Effect Control 2"
+        case 14...15: return "Undefined"
+        case 16...19: return "General Purpose"
+        case 20...31: return "Undefined"
+        case 32: return "Bank Select LSB"
+        case 33: return "Mod Wheel LSB"
+        case 34: return "Breath Controller LSB"
+        case 35: return "Undefined LSB"
+        case 36: return "Foot Controller LSB"
+        case 37: return "Portamento Time LSB"
+        case 38: return "Data Entry LSB"
+        case 39: return "Channel Volume LSB"
+        case 40: return "Balance LSB"
+        case 41: return "Undefined LSB"
+        case 42: return "Pan LSB"
+        case 43: return "Expression LSB"
+        case 44: return "Effect Control 1 LSB"
+        case 45: return "Effect Control 2 LSB"
+        case 46...63: return "Undefined LSB"
+        case 64: return "Sustain Pedal"
+        case 65: return "Portamento"
+        case 66: return "Sostenuto"
+        case 67: return "Soft Pedal"
+        case 68: return "Legato Footswitch"
+        case 69: return "Hold 2"
+        case 70: return "Sound Variation"
+        case 71: return "Timbre Resonance"
+        case 72: return "Release Time"
+        case 73: return "Attack Time"
+        case 74: return "Brightness"
+        case 75: return "Decay Time"
+        case 76: return "Vibrato Rate"
+        case 77: return "Vibrato Depth"
+        case 78: return "Vibrato Delay"
+        case 79: return "Sound Controller 10"
+        case 80...83: return "General Purpose"
+        case 84: return "Portamento Control"
+        case 85...87: return "Undefined"
+        case 88: return "High Resolution Velocity"
+        case 89...90: return "Undefined"
+        case 91: return "Effects 1 Depth"
+        case 92: return "Effects 2 Depth"
+        case 93: return "Effects 3 Depth"
+        case 94: return "Effects 4 Depth"
+        case 95: return "Effects 5 Depth"
+        case 96: return "Data Increment"
+        case 97: return "Data Decrement"
+        case 98: return "NRPN LSB"
+        case 99: return "NRPN MSB"
+        case 100: return "RPN LSB"
+        case 101: return "RPN MSB"
+        case 102...119: return "Undefined"
+        case 120: return "All Sound Off"
+        case 121: return "Reset Controllers"
+        case 122: return "Local Control"
+        case 123: return "All Notes Off"
+        case 124: return "Omni Off"
+        case 125: return "Omni On"
+        case 126: return "Mono On"
+        case 127: return "Poly On"
+        default: return "Invalid"
+        }
     }
 }
 
