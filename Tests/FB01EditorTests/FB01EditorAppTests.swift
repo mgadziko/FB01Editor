@@ -189,6 +189,13 @@ import UniformTypeIdentifiers
     device.receiveExternalKeyboardMessage([0xB0, 10, 99])
     #expect(device.liveValueForCustomControl(at: 0) == 99)
     #expect(device.externalKeyboardStatus == "Oxygen 25 C1: 10 Pan = 99")
+
+    device.noteCustomControlMessage([0xB0, 74, 88])
+    device.setCustomControlChangeNumber(74, at: 1)
+    #expect(device.liveValueForCustomControl(at: 1) == 88)
+
+    device.receiveExternalKeyboardMessage([0xB0, 74, 77])
+    #expect(device.liveValueForCustomControl(at: 1) == 77)
 }
 
 @Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {

@@ -68,6 +68,7 @@ final class DocumentModel: ObservableObject {
     @Published var customControlsControllerProfile: CustomControlsControllerProfile = .oxygen25
     @Published var customControlChangeNumbers: [Int] = CustomControlsControllerProfile.oxygen25.defaultControlChangeNumbers
     @Published var customControlLiveValues: [Int: Int] = [:]
+    @Published var customControlLiveValuesByIndex: [Int?] = Array(repeating: nil, count: CustomControlsControllerProfile.oxygen25.defaultControlChangeNumbers.count)
     @Published var externalKeyboardPressedNotes: Set<Int> = []
     @Published var liveKeyboardTitle = "Live Keyboard"
     @Published var liveKeyboardSubtitle = "MIDI notes only"
@@ -155,6 +156,7 @@ final class DocumentModel: ObservableObject {
         } else {
             customControlChangeNumbers = customControlsControllerProfile.defaultControlChangeNumbers
         }
+        customControlLiveValuesByIndex = Array(repeating: nil, count: customControlsControllerProfile.controlLabels.count)
         if let rawParadigm = UserDefaults.standard.string(forKey: DefaultsKey.voiceEditorParadigm),
            let paradigm = VoiceEditorParadigm(rawValue: rawParadigm) {
             voiceEditorParadigm = paradigm
@@ -771,19 +773,24 @@ final class DocumentModel: ObservableObject {
         guard profile != customControlsControllerProfile else { return }
         customControlsControllerProfile = profile
         customControlChangeNumbers = profile.defaultControlChangeNumbers
+        customControlLiveValuesByIndex = profile.defaultControlChangeNumbers.map { customControlLiveValues[$0] }
         UserDefaults.standard.set(profile.rawValue, forKey: DefaultsKey.customControlsControllerProfile)
         UserDefaults.standard.set(customControlChangeNumbers, forKey: DefaultsKey.customControlChangeNumbers)
     }
 
     func setCustomControlChangeNumber(_ controller: Int, at index: Int) {
         guard customControlChangeNumbers.indices.contains(index) else { return }
-        customControlChangeNumbers[index] = min(max(controller, 0), 127)
+        let boundedController = min(max(controller, 0), 127)
+        customControlChangeNumbers[index] = boundedController
+        if customControlLiveValuesByIndex.indices.contains(index) {
+            customControlLiveValuesByIndex[index] = customControlLiveValues[boundedController]
+        }
         UserDefaults.standard.set(customControlChangeNumbers, forKey: DefaultsKey.customControlChangeNumbers)
     }
 
     func liveValueForCustomControl(at index: Int) -> Int? {
-        guard customControlChangeNumbers.indices.contains(index) else { return nil }
-        return customControlLiveValues[customControlChangeNumbers[index]]
+        guard customControlLiveValuesByIndex.indices.contains(index) else { return nil }
+        return customControlLiveValuesByIndex[index]
     }
 
     func noteCustomControlMessage(_ message: [UInt8]) {
@@ -792,7 +799,22 @@ final class DocumentModel: ObservableObject {
               status & 0xF0 == 0xB0 else {
             return
         }
-        customControlLiveValues[Int(message[1])] = Int(message[2])
+        let controller = Int(message[1])
+        let value = Int(message[2])
+        var liveValues = customControlLiveValues
+        liveValues[controller] = value
+        customControlLiveValues = liveValues
+
+        var indexedValues = customControlLiveValuesByIndex
+        if indexedValues.count != customControlsControllerProfile.controlLabels.count {
+            indexedValues = Array(repeating: nil, count: customControlsControllerProfile.controlLabels.count)
+        }
+        for index in customControlChangeNumbers.indices where customControlChangeNumbers[index] == controller {
+            if indexedValues.indices.contains(index) {
+                indexedValues[index] = value
+            }
+        }
+        customControlLiveValuesByIndex = indexedValues
     }
 
     private func customizedControlLabel(for controller: Int) -> String? {
