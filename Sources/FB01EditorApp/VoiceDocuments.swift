@@ -528,42 +528,27 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let rewritten = [event | channel] + message.dropFirst()
         let isNoteOn = event == 0x90 && message.count > 2 && message[2] > 0
 
-        do {
-            if isNoteOn {
-                keyboardPreparationTask?.cancel()
-                keyboardPreparationTask = nil
-            }
-            let preparationMessages = isNoteOn ? try keyboardPreparationMessages(midiChannel: Int(channel), device: device) : []
-            let destinationIndex = device.selectedDestinationIndex
-            let destinationName = device.selectedDestinationName
+        let destinationIndex = device.selectedDestinationIndex
+        let destinationName = device.selectedDestinationName
 
-            let forwardingStatus: String
-            if isNoteOn, message.count > 1 {
-                forwardingStatus = "Keyboard input sent note \(message[1]) on channel \(Int(channel) + 1) to \(destinationName)."
-            } else if event == 0xB0, message.count > 2 {
-                forwardingStatus = "Keyboard input forwarded CC \(message[1]) value \(message[2]) to \(destinationName)."
-            } else {
-                forwardingStatus = "Keyboard input forwarding to \(destinationName)."
-            }
+        let forwardingStatus: String
+        if isNoteOn, message.count > 1 {
+            forwardingStatus = "Keyboard input sent note \(message[1]) on channel \(Int(channel) + 1) to \(destinationName)."
+        } else if event == 0xB0, message.count > 2 {
+            forwardingStatus = "Keyboard input forwarded CC \(message[1]) value \(message[2]) to \(destinationName)."
+        } else {
+            forwardingStatus = "Keyboard input forwarding to \(destinationName)."
+        }
 
-            Task(priority: .high) { [weak self, weak device] in
-                do {
-                    try await LiveMIDIPlaybackController.shared.sendPreparedNote(
-                        preparationMessages: preparationMessages,
-                        noteMessage: rewritten,
-                        destinationIndex: destinationIndex,
-                        settleDelay: keyboardPreparationSettleDelay
-                    )
-                    device?.externalKeyboardStatus = forwardingStatus
-                    self?.errorMessage = nil
-                } catch {
-                    self?.errorMessage = "Keyboard input failed: \(error)"
-                    self?.statusMessage = nil
-                }
+        Task(priority: .high) { [weak self, weak device] in
+            do {
+                try await LiveMIDIPlaybackController.shared.sendImmediate(rewritten, destinationIndex: destinationIndex)
+                device?.externalKeyboardStatus = forwardingStatus
+                self?.errorMessage = nil
+            } catch {
+                self?.errorMessage = "Keyboard input failed: \(error)"
+                self?.statusMessage = nil
             }
-        } catch {
-            errorMessage = "Keyboard input failed: \(error)"
-            statusMessage = nil
         }
         return true
     }

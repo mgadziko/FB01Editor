@@ -221,12 +221,21 @@ struct CustomizedControlsPaletteView: View {
                 }
                 .labelsHidden()
                 .frame(width: 180)
+
+                Button("Reset to Defaults") {
+                    document.resetCustomControlChangeNumbersToDefaults()
+                }
             }
 
             Text("These mappings identify incoming controller knobs. They do not drive Performance Macros yet.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Text(document.lastCustomControlMessage)
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(Color(red: 0.37, green: 1.0, blue: 0.16))
+                .lineLimit(1)
 
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(document.customControlsControllerProfile.controlLabels.enumerated()), id: \.offset) { index, label in

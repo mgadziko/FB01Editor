@@ -69,6 +69,7 @@ final class DocumentModel: ObservableObject {
     @Published var customControlChangeNumbers: [Int] = CustomControlsControllerProfile.oxygen25.defaultControlChangeNumbers
     @Published var customControlLiveValues: [Int: Int] = [:]
     @Published var customControlLiveValuesByIndex: [Int?] = Array(repeating: nil, count: CustomControlsControllerProfile.oxygen25.defaultControlChangeNumbers.count)
+    @Published var lastCustomControlMessage = "No controller input yet"
     @Published var externalKeyboardPressedNotes: Set<Int> = []
     @Published var liveKeyboardTitle = "Live Keyboard"
     @Published var liveKeyboardSubtitle = "MIDI notes only"
@@ -152,7 +153,7 @@ final class DocumentModel: ObservableObject {
         }
         if let savedControlChangeNumbers = UserDefaults.standard.array(forKey: DefaultsKey.customControlChangeNumbers) as? [Int],
            savedControlChangeNumbers.count == customControlsControllerProfile.controlLabels.count {
-            customControlChangeNumbers = savedControlChangeNumbers.map { min(max($0, 0), 127) }
+            customControlChangeNumbers = normalizedCustomControlChangeNumbers(savedControlChangeNumbers)
         } else {
             customControlChangeNumbers = customControlsControllerProfile.defaultControlChangeNumbers
         }
@@ -781,10 +782,21 @@ final class DocumentModel: ObservableObject {
     func setCustomControlChangeNumber(_ controller: Int, at index: Int) {
         guard customControlChangeNumbers.indices.contains(index) else { return }
         let boundedController = min(max(controller, 0), 127)
-        customControlChangeNumbers[index] = boundedController
-        if customControlLiveValuesByIndex.indices.contains(index) {
-            customControlLiveValuesByIndex[index] = customControlLiveValues[boundedController]
+        var controlChangeNumbers = customControlChangeNumbers
+        let previousController = controlChangeNumbers[index]
+        if let duplicateIndex = controlChangeNumbers.firstIndex(of: boundedController),
+           duplicateIndex != index {
+            controlChangeNumbers[duplicateIndex] = previousController
         }
+        controlChangeNumbers[index] = boundedController
+        customControlChangeNumbers = controlChangeNumbers
+        customControlLiveValuesByIndex = controlChangeNumbers.map { customControlLiveValues[$0] }
+        UserDefaults.standard.set(customControlChangeNumbers, forKey: DefaultsKey.customControlChangeNumbers)
+    }
+
+    func resetCustomControlChangeNumbersToDefaults() {
+        customControlChangeNumbers = customControlsControllerProfile.defaultControlChangeNumbers
+        customControlLiveValuesByIndex = customControlChangeNumbers.map { customControlLiveValues[$0] }
         UserDefaults.standard.set(customControlChangeNumbers, forKey: DefaultsKey.customControlChangeNumbers)
     }
 
@@ -801,6 +813,7 @@ final class DocumentModel: ObservableObject {
         }
         let controller = Int(message[1])
         let value = Int(message[2])
+        lastCustomControlMessage = "Last incoming: \(MIDIControlChangeLabel.title(for: controller)) = \(value)"
         var liveValues = customControlLiveValues
         liveValues[controller] = value
         customControlLiveValues = liveValues
@@ -815,6 +828,15 @@ final class DocumentModel: ObservableObject {
             }
         }
         customControlLiveValuesByIndex = indexedValues
+    }
+
+    private func normalizedCustomControlChangeNumbers(_ numbers: [Int]) -> [Int] {
+        let bounded = numbers.map { min(max($0, 0), 127) }
+        guard bounded.count == customControlsControllerProfile.controlLabels.count,
+              Set(bounded).count == bounded.count else {
+            return customControlsControllerProfile.defaultControlChangeNumbers
+        }
+        return bounded
     }
 
     private func customizedControlLabel(for controller: Int) -> String? {
@@ -3214,33 +3236,22 @@ final class DocumentModel: ObservableObject {
         let channel = UInt8(min(max(keyboardChannel, 0), 15))
         let velocity = UInt8(min(max(keyboardVelocity, 1), 127))
 
-        do {
-            let preparationMessages = isOn ? try keyboardPreparationMessages(midiChannel: Int(channel)) : []
-            let noteMessage = [
-                (isOn ? 0x90 : 0x80) | channel,
-                UInt8(boundedNote),
-                isOn ? velocity : 0,
-            ]
-            Task(priority: .high) { [weak self] in
-                do {
-                    try await LiveMIDIPlaybackController.shared.sendPreparedNote(
-                        preparationMessages: preparationMessages,
-                        noteMessage: noteMessage,
-                        destinationIndex: destinationIndex,
-                        settleDelay: keyboardPreparationSettleDelay
-                    )
-                    if isOn {
-                        self?.statusMessage = "Keyboard sent note \(boundedNote) on channel \(Int(channel) + 1) to \(destinationName)."
-                        self?.errorMessage = nil
-                    }
-                } catch {
-                    self?.errorMessage = "Keyboard note failed: \(error)"
-                    self?.statusMessage = nil
+        let noteMessage = [
+            (isOn ? 0x90 : 0x80) | channel,
+            UInt8(boundedNote),
+            isOn ? velocity : 0,
+        ]
+        Task(priority: .high) { [weak self] in
+            do {
+                try await LiveMIDIPlaybackController.shared.sendImmediate(noteMessage, destinationIndex: destinationIndex)
+                if isOn {
+                    self?.statusMessage = "Keyboard sent note \(boundedNote) on channel \(Int(channel) + 1) to \(destinationName)."
+                    self?.errorMessage = nil
                 }
+            } catch {
+                self?.errorMessage = "Keyboard note failed: \(error)"
+                self?.statusMessage = nil
             }
-        } catch {
-            errorMessage = "Keyboard note failed: \(error)"
-            statusMessage = nil
         }
     }
 
@@ -3275,45 +3286,33 @@ final class DocumentModel: ObservableObject {
         let isNoteOn = event == 0x90 && message.count > 2 && message[2] > 0
         let isVolumeControl = event == 0xB0 && message.count == 3 && message[1] == 7
 
-        do {
-            if isVolumeControl {
-                applyExternalKeyboardVolume(Int(message[2]))
-            }
-            let preparationMessages = isNoteOn ? try keyboardPreparationMessages(midiChannel: Int(channel)) : []
-            let destinationIndex = selectedDestinationIndex
-            let destinationName = selectedDestinationName
-
-            let forwardingStatus: String
-            if isNoteOn, message.count > 1 {
-                forwardingStatus = "Input sent note \(message[1]) on channel \(Int(channel) + 1)"
-            } else if isVolumeControl, message.count > 2 {
-                forwardingStatus = "Volume \(message[2])"
-            } else {
-                forwardingStatus = "Input forwarding to \(destinationName)"
-            }
-
-            Task(priority: .high) { [weak self] in
-                do {
-                    try await LiveMIDIPlaybackController.shared.sendPreparedNote(
-                        preparationMessages: preparationMessages,
-                        noteMessage: rewritten,
-                        destinationIndex: destinationIndex,
-                        settleDelay: keyboardPreparationSettleDelay
-                    )
-                    self?.externalKeyboardStatus = forwardingStatus
-                    self?.errorMessage = nil
-                } catch {
-                    self?.externalKeyboardStatus = "Input error"
-                    self?.errorMessage = "MIDI input failed: \(error)"
-                    self?.statusMessage = nil
-                }
-            }
-            updateExternalKeyboardPressedNotes(from: message)
-        } catch {
-            externalKeyboardStatus = "Input error"
-            errorMessage = "MIDI input failed: \(error)"
-            statusMessage = nil
+        if isVolumeControl {
+            applyExternalKeyboardVolume(Int(message[2]))
         }
+        let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
+
+        let forwardingStatus: String
+        if isNoteOn, message.count > 1 {
+            forwardingStatus = "Input sent note \(message[1]) on channel \(Int(channel) + 1)"
+        } else if isVolumeControl, message.count > 2 {
+            forwardingStatus = "Volume \(message[2])"
+        } else {
+            forwardingStatus = "Input forwarding to \(destinationName)"
+        }
+
+        Task(priority: .high) { [weak self] in
+            do {
+                try await LiveMIDIPlaybackController.shared.sendImmediate(rewritten, destinationIndex: destinationIndex)
+                self?.externalKeyboardStatus = forwardingStatus
+                self?.errorMessage = nil
+            } catch {
+                self?.externalKeyboardStatus = "Input error"
+                self?.errorMessage = "MIDI input failed: \(error)"
+                self?.statusMessage = nil
+            }
+        }
+        updateExternalKeyboardPressedNotes(from: message)
     }
 
     func sendKeyboardNoteWithoutVoicePreparation(_ note: Int, isOn: Bool) {

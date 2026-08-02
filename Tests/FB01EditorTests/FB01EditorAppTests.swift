@@ -196,6 +196,25 @@ import UniformTypeIdentifiers
 
     device.receiveExternalKeyboardMessage([0xB0, 74, 77])
     #expect(device.liveValueForCustomControl(at: 1) == 77)
+
+    device.setCustomControlChangeNumber(77, at: 1)
+    device.setCustomControlChangeNumber(77, at: 2)
+    #expect(device.customControlChangeNumbers[2] == 77)
+    #expect(device.customControlChangeNumbers[1] == 91)
+
+    device.resetCustomControlChangeNumbersToDefaults()
+    #expect(device.customControlChangeNumbers == [74, 71, 91, 93, 73, 72, 5, 84])
+
+    device.noteCustomControlMessage([0xB0, 77, 42])
+    device.setCustomControlChangeNumber(77, at: 2)
+    #expect(device.liveValueForCustomControl(at: 2) == 42)
+    #expect(device.liveValueForCustomControl(at: 1) == nil)
+    #expect(device.lastCustomControlMessage == "Last incoming: 77 Vibrato Depth = 42")
+
+    UserDefaults.standard.set([74, 71, 91, 93, 74, 72, 5, 84], forKey: "FB01Editor.customControlChangeNumbers")
+    let duplicateSavedDevice = DocumentModel()
+    #expect(duplicateSavedDevice.customControlChangeNumbers == [74, 71, 91, 93, 73, 72, 5, 84])
+    UserDefaults.standard.removeObject(forKey: "FB01Editor.customControlChangeNumbers")
 }
 
 @Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {
