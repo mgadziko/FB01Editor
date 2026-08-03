@@ -69,7 +69,8 @@ The FB-01 module also declares the scope of a complete device cache: voice banks
 1-7, stored configurations 1-20, and the current configuration buffer. The app
 shell can report cache coverage and build progress messages from this module
 description instead of assuming that every supported device has the same cache
-shape.
+shape. FB-01 cache progress event wording lives with `FB01DeviceCacheService`,
+so the app shell does not need to switch over FB-01-specific cache events.
 
 General MIDI bank installation remains an FB-01-specific command. It is exposed
 only through the FB-01 module command descriptors and guarded by the FB-01

@@ -439,7 +439,7 @@ final class DocumentModel: ObservableObject {
                 systemChannel: systemChannel
             ) { event, completed, total in
                 await MainActor.run {
-                    let detail = Self.cacheProgressDetail(for: event)
+                    let detail = services.cacheService.progressDetail(for: event)
                     self.statusMessage = "\(reason): \(detail)"
                     progressPanel?.update(
                         message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\n\(detail)",
@@ -514,19 +514,6 @@ final class DocumentModel: ObservableObject {
             showsProgressPanel: false
         ) { [weak self] in
             self?.backgroundDeviceCacheTask = nil
-        }
-    }
-
-    private static func cacheProgressDetail(for event: FB01DeviceCacheEvent) -> String {
-        switch event {
-        case .currentConfiguration:
-            "Fetching current configuration..."
-        case .voiceBank(let bank):
-            "Fetching Voice Bank \(bank)..."
-        case .configuration(let slot):
-            "Fetching Configuration \(slot) of \(FB01ModuleServices.shared.module.fullDeviceCacheScope.configurationSlots?.upperBound ?? slot)..."
-        case .finishing:
-            "Finishing cache update..."
         }
     }
 
@@ -807,7 +794,7 @@ final class DocumentModel: ObservableObject {
             systemChannel: systemChannel
         ) { event, completed, total in
             await MainActor.run {
-                let detail = Self.cacheProgressDetail(for: event)
+                let detail = services.cacheService.progressDetail(for: event)
                 self.statusMessage = "\(reason): \(detail)"
                 progressPanel.update(
                     message: "The \(progressText.subject) \(progressText.verb) being fetched. Please wait.\n\(detail)",

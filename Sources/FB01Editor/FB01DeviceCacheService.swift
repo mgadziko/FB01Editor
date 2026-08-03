@@ -53,7 +53,9 @@ public struct FB01DeviceCacheService: SynthDeviceCacheServicing {
     }
 
     public func totalRequestCount(voiceBanks: [Int], fetchConfigurations: Bool) -> Int {
-        voiceBanks.count + (fetchConfigurations ? module.allConfigurationSlots.count + 1 : 0)
+        let configurationCount = module.fullDeviceCacheScope.configurationSlots?.count ?? 0
+        let currentConfigurationCount = module.fullDeviceCacheScope.includesCurrentConfiguration ? 1 : 0
+        return voiceBanks.count + (fetchConfigurations ? configurationCount + currentConfigurationCount : 0)
     }
 
     public func normalizedVoiceBanks(_ requestedVoiceBanks: [Int]) -> [Int] {
@@ -76,17 +78,19 @@ public struct FB01DeviceCacheService: SynthDeviceCacheServicing {
         var result = FB01DeviceCacheResult()
 
         if fetchConfigurations {
-            await progress?(.currentConfiguration, completedRequests, totalRequests)
-            if let currentConfiguration = await fetchCurrentConfiguration(
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel
-            ) {
-                result.currentConfiguration = currentConfiguration
-            } else {
-                result.failures.append("current configuration")
+            if module.fullDeviceCacheScope.includesCurrentConfiguration {
+                await progress?(.currentConfiguration, completedRequests, totalRequests)
+                if let currentConfiguration = await fetchCurrentConfiguration(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                ) {
+                    result.currentConfiguration = currentConfiguration
+                } else {
+                    result.failures.append("current configuration")
+                }
+                completedRequests += 1
             }
-            completedRequests += 1
         }
 
         for bank in voiceBanks {
@@ -105,7 +109,7 @@ public struct FB01DeviceCacheService: SynthDeviceCacheServicing {
         }
 
         if fetchConfigurations {
-            for slot in module.allConfigurationSlots.closedRange {
+            for slot in module.fullDeviceCacheScope.configurationSlots?.closedRange ?? module.allConfigurationSlots.closedRange {
                 await progress?(.configuration(slot), completedRequests, totalRequests)
                 if let configuration = await fetchConfiguration(
                     slot: slot,
@@ -123,6 +127,20 @@ public struct FB01DeviceCacheService: SynthDeviceCacheServicing {
 
         await progress?(.finishing, totalRequests, totalRequests)
         return result
+    }
+
+    public func progressDetail(for event: FB01DeviceCacheEvent) -> String {
+        switch event {
+        case .currentConfiguration:
+            return "Fetching current configuration..."
+        case .voiceBank(let bank):
+            return "Fetching Voice Bank \(bank)..."
+        case .configuration(let slot):
+            let upperBound = module.fullDeviceCacheScope.configurationSlots?.upperBound ?? slot
+            return "Fetching Configuration \(slot) of \(upperBound)..."
+        case .finishing:
+            return "Finishing cache update..."
+        }
     }
 
     private func fetchVoiceBank(

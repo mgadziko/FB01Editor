@@ -8,11 +8,14 @@ public struct FB01DeviceService: Sendable {
     }
 
     public var allBankRequestKinds: [FB01MIDIRequestKind] {
-        [.currentConfiguration] + module.allVoiceBanks.map { .voiceBank($0) } + [.voiceRAM1]
+        let currentConfigurationRequest: [FB01MIDIRequestKind] = module.fullDeviceCacheScope.includesCurrentConfiguration
+            ? [.currentConfiguration]
+            : []
+        return currentConfigurationRequest + module.fullDeviceCacheScope.voiceBanks.map { .voiceBank($0) } + [.voiceRAM1]
     }
 
     public var storedConfigurationRequestKinds: [FB01MIDIRequestKind] {
-        module.allConfigurationSlots.closedRange.map { .configuration($0) }
+        (module.fullDeviceCacheScope.configurationSlots ?? module.allConfigurationSlots).closedRange.map { .configuration($0) }
     }
 
     public func writableVoiceBankRequestKind(forVoiceSlot voiceSlot: Int) throws -> FB01MIDIRequestKind {

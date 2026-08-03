@@ -235,6 +235,8 @@ private struct MockFourOperatorModule: SynthModule {
     #expect(service.normalizedVoiceBanks([7, 99, 1, 3, 1]) == [1, 3, 7])
     #expect(service.totalRequestCount(voiceBanks: [1, 2], fetchConfigurations: false) == 2)
     #expect(service.totalRequestCount(voiceBanks: [1, 2], fetchConfigurations: true) == 23)
+    #expect(service.progressDetail(for: .configuration(20)) == "Fetching Configuration 20 of 20...")
+    #expect(service.progressDetail(for: .finishing) == "Finishing cache update...")
 }
 
 @Test func fb01DocumentServiceProvidesTemplatesAndCandidates() throws {
