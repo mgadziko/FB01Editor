@@ -33,6 +33,15 @@ public struct FB01FetchedVoice: Sendable {
     }
 }
 
+public enum FB01VoiceBankImageStoreEvent: Equatable, Sendable {
+    case turningProtectOff
+    case storePass(Int)
+}
+
+public enum FB01VoiceStoreError: Error, Equatable, Sendable {
+    case verificationFailed(bank: Int, voiceNumber: Int, maximumPasses: Int)
+}
+
 public struct FB01VoiceService: SynthVoiceServicing {
     public typealias Voice = FB01VoiceData
     public typealias VoiceBank = FB01VoiceBankData
@@ -243,6 +252,67 @@ public struct FB01VoiceService: SynthVoiceServicing {
             data: bank.data,
             checksum: FB01.checksum(for: bank.data)
         ).bytes
+    }
+
+    public func storeVoiceInBankImage(
+        _ voice: FB01VoiceData,
+        displayBank: Int,
+        zeroBasedVoiceNumber: Int,
+        initialBankDumpBytes: [UInt8],
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        maximumPasses: Int = 60,
+        progress: (@Sendable (FB01VoiceBankImageStoreEvent) async -> Void)? = nil
+    ) async throws -> FB01VoiceBankData {
+        guard (0..<module.voicesPerBank).contains(zeroBasedVoiceNumber) else {
+            throw FB01SysExError.valueOutOfRange(
+                name: "voiceNumber",
+                value: zeroBasedVoiceNumber,
+                range: 0...(module.voicesPerBank - 1)
+            )
+        }
+
+        let voiceNumber = zeroBasedVoiceNumber + 1
+        var readback = try voiceBankData(from: initialBankDumpBytes, expectedDisplayBank: displayBank)
+
+        await progress?(.turningProtectOff)
+        let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
+        try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+        }.value
+        try await Task.sleep(for: .milliseconds(300))
+
+        var pass = 0
+        while readback.voices[zeroBasedVoiceNumber].voice.bytes != voice.bytes {
+            try Task.checkCancellation()
+            pass += 1
+            guard pass <= maximumPasses else {
+                throw FB01VoiceStoreError.verificationFailed(
+                    bank: displayBank,
+                    voiceNumber: voiceNumber,
+                    maximumPasses: maximumPasses
+                )
+            }
+
+            await progress?(.storePass(pass))
+            let editedBank = try readback.replacingVoices([voiceNumber: voice])
+            let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
+            let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
+                try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+                try await Task.sleep(for: .milliseconds(1500))
+                return try FB01MIDI.request(
+                    .voiceBank(displayBank),
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    timeout: 15
+                )
+            }.value
+            readback = try voiceBankData(from: nextReadbackBytes, expectedDisplayBank: displayBank)
+        }
+
+        return readback
     }
 
     public func storeCurrentInstrumentVoiceMessages(

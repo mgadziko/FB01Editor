@@ -77,6 +77,12 @@ only through the FB-01 module command descriptors and guarded by the FB-01
 General MIDI capability flag. Future modules should not inherit that workflow
 unless they explicitly implement and verify an equivalent.
 
+Single-voice storage that rewrites and verifies a whole FB-01 bank image is
+owned by `FB01VoiceService.storeVoiceInBankImage(...)`. The app shell still owns
+user prompts, progress panels, and backup file placement, but the FB-01 service
+owns Protect OFF, bank image rebuild, long SysEx send, readback request, and
+verification retry behavior.
+
 `ActiveSynthModule.current` is an internal placeholder for future module
 selection. It is deliberately fixed to FB-01 until another real hardware module
 can be verified.

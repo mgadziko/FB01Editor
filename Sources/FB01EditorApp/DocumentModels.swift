@@ -2857,36 +2857,23 @@ final class DocumentModel: ObservableObject {
             try originalArtifact.writeSysEx(to: backupURL)
         }.value
 
-        var readback = try voiceBankData(from: originalBytes, expectedBankNumber: bankNumber)
-        statusMessage = "\(statusPrefix): turning FB-01 Protect OFF..."
-        let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
-        try await Task.detached(priority: .userInitiated) {
-            try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-        }.value
-        try await Task.sleep(for: .milliseconds(300))
-
-        var pass = 0
-        while readback.voices[options.voiceNumber].voice.bytes != voice.bytes {
-            pass += 1
-            guard pass <= 60 else {
-                throw FB01AppError.message("Bank \(bankNumber) Voice \(voiceNumber) did not verify after 60 store passes.")
+        let readback = try await FB01ModuleServices.shared.voiceService.storeVoiceInBankImage(
+            voice,
+            displayBank: bankNumber,
+            zeroBasedVoiceNumber: options.voiceNumber,
+            initialBankDumpBytes: originalBytes,
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel
+        ) { [self] event in
+            await MainActor.run {
+                switch event {
+                case .turningProtectOff:
+                    self.statusMessage = "\(statusPrefix): turning FB-01 Protect OFF..."
+                case .storePass(let pass):
+                    self.statusMessage = "\(statusPrefix): store pass \(pass), verifying after send..."
+                }
             }
-
-            statusMessage = "\(statusPrefix): store pass \(pass), verifying after send..."
-            let editedBank = try readback.replacingVoices([voiceNumber: voice])
-            let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
-            let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
-                try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
-                try await Task.sleep(for: .milliseconds(1500))
-                return try FB01MIDI.request(
-                    .voiceBank(bankNumber),
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel,
-                    timeout: 15
-                )
-            }.value
-            readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: bankNumber)
         }
 
         cacheVoiceBank(readback, userBankNumber: bankNumber)

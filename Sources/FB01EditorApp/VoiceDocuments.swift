@@ -341,40 +341,24 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 }.value
                 try Task.checkCancellation()
 
-                var readback = try voiceBankData(from: originalBytes, expectedBankNumber: bankNumber)
-                progressPanel.update(message: "The voice is being stored. Please wait.\nTurning FB-01 Protect OFF...")
-                let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
-                try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-                }.value
-                try await Task.sleep(for: .milliseconds(300))
-                try Task.checkCancellation()
-
-                var pass = 0
-                while readback.voices[options.voiceNumber].voice.bytes != voiceToStore.bytes {
-                    try Task.checkCancellation()
-                    pass += 1
-                    guard pass <= 60 else {
-                        throw FB01AppError.message("Bank \(bankNumber) Voice \(options.voiceNumber + 1) did not verify after 60 store passes.")
+                let readback = try await FB01ModuleServices.shared.voiceService.storeVoiceInBankImage(
+                    voiceToStore,
+                    displayBank: bankNumber,
+                    zeroBasedVoiceNumber: options.voiceNumber,
+                    initialBankDumpBytes: originalBytes,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                ) { [self] event in
+                    await MainActor.run {
+                        switch event {
+                        case .turningProtectOff:
+                            progressPanel.update(message: "The voice is being stored. Please wait.\nTurning FB-01 Protect OFF...")
+                        case .storePass(let pass):
+                            self.statusMessage = "Storing Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying after send..."
+                            progressPanel.update(message: "The voice is being stored. Please wait.\nStoring Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying by readback...")
+                        }
                     }
-
-                    statusMessage = "Storing Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying after send..."
-                    progressPanel.update(message: "The voice is being stored. Please wait.\nStoring Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying by readback...")
-                    let editedBank = try readback.replacingVoices([options.voiceNumber + 1: voiceToStore])
-                    let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
-                    let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
-                        try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
-                        try await Task.sleep(for: .milliseconds(1500))
-                        return try FB01MIDI.request(
-                            .voiceBank(bankNumber),
-                            sourceIndex: sourceIndex,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel,
-                            timeout: 15
-                        )
-                    }.value
-                    try Task.checkCancellation()
-                    readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: bankNumber)
                 }
 
                 device.cacheVoiceBank(readback, userBankNumber: bankNumber)
