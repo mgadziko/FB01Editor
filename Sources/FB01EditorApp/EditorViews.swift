@@ -29,6 +29,7 @@ struct ContentView: View {
             .frame(minWidth: 1080, maxWidth: 1080, minHeight: 920, alignment: .topLeading)
         }
         .background(MainWindowSizeConfigurator(contentSize: CGSize(width: 1080, height: 920)))
+        .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
     }
 }
 
@@ -71,6 +72,7 @@ struct ToolbarView: View {
                 Label(document.selectedSourceName, systemImage: "arrow.down.circle")
             }
             .disabled(document.midiSources.isEmpty || document.isBusy)
+            .forestHoverHelp("Selects the MIDI input that receives replies and dumps from the FB-01.")
 
             Text("MIDI Out to \(EditorSynthModule.vocabulary.deviceDisplayName)")
                 .font(.caption.weight(.semibold))
@@ -88,6 +90,7 @@ struct ToolbarView: View {
                 Label(document.selectedDestinationName, systemImage: "arrow.up.circle")
             }
             .disabled(document.midiDestinations.isEmpty || document.isBusy)
+            .forestHoverHelp("Selects the MIDI output used to send notes, edits, fetch requests, and store commands to the FB-01.")
 
             Button {
                 document.refreshMIDIEndpoints()
@@ -95,6 +98,7 @@ struct ToolbarView: View {
                 Label("Refresh MIDI", systemImage: "arrow.clockwise")
             }
             .disabled(document.isBusy)
+            .forestHoverHelp("Rescans MIDI devices after connecting, disconnecting, or resetting an interface.")
 
             Divider()
                 .frame(height: 20)
@@ -109,7 +113,7 @@ struct ToolbarView: View {
             Text(document.editingStatusText)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
-                .help(document.selectedEditedSourceCount == 0 ? "No local edits" : "\(document.selectedEditedSourceCount) source\(document.selectedEditedSourceCount == 1 ? "" : "s") with unsaved local edits")
+                .forestHoverHelp(document.selectedEditedSourceCount == 0 ? "No local edits" : "\(document.selectedEditedSourceCount) source\(document.selectedEditedSourceCount == 1 ? "" : "s") with unsaved local edits")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -135,6 +139,247 @@ struct EmptyStateView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+struct VoiceSelectorCommands: View {
+    @ObservedObject var document: DocumentModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Menu("Show Voice Bank") {
+            ForEach(EditorSynthModule.module.allVoiceBanks, id: \.self) { bank in
+                Button("Bank \(bank)") {
+                    openWindow(id: "voice-bank-selector", value: bank)
+                }
+                .disabled(document.isBusy)
+            }
+        }
+    }
+}
+
+struct ConfigurationSelectorCommands: View {
+    @ObservedObject var document: DocumentModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Show Configuration Bank") {
+            openWindow(id: "configuration-bank-selector")
+        }
+        .disabled(document.isBusy)
+    }
+}
+
+struct VoiceBankSelectorWindow: View {
+    var bank: Int
+    @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
+    @Environment(\.openWindow) private var openWindow
+    @State private var items: [VoiceBankSelectorItem] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        SelectorWindowLayout(
+            title: "Voice Bank \(bank)",
+            subtitle: "Select a voice to fetch it into a new Voice Document.",
+            isLoading: isLoading,
+            errorMessage: errorMessage,
+            minHeight: 545
+        ) {
+            fourColumnSelectorGrid(items: items, rowsPerColumn: 12) { item in
+                SelectorGridButton(number: item.displayNumber, title: item.title) {
+                    openVoiceDocument(item)
+                }
+                .disabled(document.isBusy)
+                .forestHoverHelp("Fetches \(item.fetchTitle) into a new Voice Document.")
+            }
+        }
+        .task(id: bank) {
+            await loadItems()
+        }
+        .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
+    }
+
+    @MainActor
+    private func loadItems() async {
+        isLoading = true
+        errorMessage = nil
+        items = await document.ensureVoiceBankSelectorItems(bank: bank)
+        if items.isEmpty {
+            errorMessage = "Voice Bank \(bank) could not be loaded."
+        }
+        isLoading = false
+    }
+
+    @MainActor
+    private func openVoiceDocument(_ item: VoiceBankSelectorItem) {
+        let id = workspace.createVoiceDocument(statusMessage: "Fetching \(item.fetchTitle)...")
+        openWindow(id: "voice-document", value: id)
+        Task { @MainActor in
+            await Task.yield()
+            workspace.voiceDocument(id: id)?.fetchFromDevice(
+                device: document,
+                source: item.source,
+                recentTitle: item.fetchTitle
+            )
+        }
+    }
+}
+
+struct ConfigurationSelectorWindow: View {
+    @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
+    @Environment(\.openWindow) private var openWindow
+    @State private var items: [ConfigurationSelectorItem] = []
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        SelectorWindowLayout(
+            title: "Configuration Bank",
+            subtitle: "Select a configuration to fetch it into a new Configuration Document.",
+            isLoading: isLoading,
+            errorMessage: errorMessage,
+            minHeight: 300
+        ) {
+            fourColumnSelectorGrid(items: items, rowsPerColumn: 5) { item in
+                SelectorGridButton(number: item.displayNumber, title: item.title) {
+                    openConfigurationDocument(item)
+                }
+                .disabled(document.isBusy)
+                .forestHoverHelp("Fetches \(item.fetchTitle) into a new Configuration Document.")
+            }
+        }
+        .task {
+            await loadItems()
+        }
+        .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
+    }
+
+    @MainActor
+    private func loadItems() async {
+        isLoading = true
+        errorMessage = nil
+        items = await document.ensureConfigurationSelectorItems()
+        if items.isEmpty {
+            errorMessage = "Configurations could not be loaded."
+        }
+        isLoading = false
+    }
+
+    @MainActor
+    private func openConfigurationDocument(_ item: ConfigurationSelectorItem) {
+        let id = workspace.createConfigurationDocument(statusMessage: "Fetching \(item.fetchTitle)...")
+        openWindow(id: "configuration-document", value: id)
+        Task { @MainActor in
+            await Task.yield()
+            workspace.configurationDocument(id: id)?.fetchFromDevice(
+                device: document,
+                options: item.options,
+                recentTitle: item.fetchTitle
+            )
+        }
+    }
+}
+
+private struct SelectorWindowLayout<Content: View>: View {
+    var title: String
+    var subtitle: String
+    var isLoading: Bool
+    var errorMessage: String?
+    var minHeight: CGFloat
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+            }
+
+            content()
+        }
+        .padding(18)
+        .frame(minWidth: 650, minHeight: minHeight, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct SelectorGridButton: View {
+    var number: Int
+    var title: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Text("\(number)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, alignment: .trailing)
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .frame(width: 148, alignment: .leading)
+            .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private func fourColumnSelectorGrid<Item: Identifiable, ButtonView: View>(
+    items: [Item],
+    rowsPerColumn: Int,
+    @ViewBuilder button: @escaping (Item) -> ButtonView
+) -> some View {
+    HStack(alignment: .top, spacing: 14) {
+        ForEach(0..<4, id: \.self) { column in
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(columnItems(items, column: column, rowsPerColumn: rowsPerColumn)) { item in
+                    button(item)
+                }
+            }
+        }
+    }
+}
+
+private func columnItems<Item>(
+    _ items: [Item],
+    column: Int,
+    rowsPerColumn: Int
+) -> [Item] {
+    let start = column * rowsPerColumn
+    guard start < items.count else {
+        return []
+    }
+    let end = min(start + rowsPerColumn, items.count)
+    return Array(items[start..<end])
 }
 
 struct LiveKeyboardView: View {
@@ -200,6 +445,7 @@ struct LiveKeyboardPaletteView: View {
         }
         .padding(14)
         .frame(width: 820)
+        .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
     }
 }
 
@@ -221,10 +467,12 @@ struct CustomizedControlsPaletteView: View {
                 }
                 .labelsHidden()
                 .frame(width: 180)
+                .forestHoverHelp("Selects the external controller profile whose knobs you want to monitor.")
 
                 Button("Reset to Defaults") {
                     document.resetCustomControlChangeNumbersToDefaults()
                 }
+                .forestHoverHelp("Restores the selected controller's default CC mappings.")
             }
 
             Text("These mappings identify incoming controller knobs. They do not drive Performance Macros yet.")
@@ -259,6 +507,7 @@ struct CustomizedControlsPaletteView: View {
                             }
                         }
                         .frame(width: 280, alignment: .leading)
+                        .forestHoverHelp("Chooses which incoming MIDI Control Change number is tracked for \(label).")
                     }
                 }
             }
@@ -267,6 +516,7 @@ struct CustomizedControlsPaletteView: View {
         }
         .padding(18)
         .frame(width: 470, height: 430, alignment: .topLeading)
+        .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
     }
 }
 
@@ -364,6 +614,7 @@ struct LiveKeyboardPaletteControlsView: View {
                         .frame(width: 180, alignment: .leading)
                         .disabled(document.midiSources.isEmpty || !document.externalKeyboardEnabled)
                         .padding(.top, 18)
+                        .forestHoverHelp("Chooses the external MIDI source that can play the current Forest audition voice.")
                     }
                 }
             }
@@ -452,6 +703,7 @@ struct LiveKeyboardMIDIControlsView: View {
                 }
                 .frame(minWidth: 180, alignment: .leading)
                 .disabled(document.midiSources.isEmpty || !document.externalKeyboardEnabled)
+                .forestHoverHelp("Chooses the external MIDI source that can play the current Forest audition voice.")
             }
             .font(.caption)
 
@@ -784,7 +1036,7 @@ struct StatusWindowView: View {
                     } label: {
                         Image(systemName: "pencil")
                     }
-                    .help("Rename selected library item")
+                    .forestHoverHelp("Rename selected library item")
                     .disabled(!document.canManageSource)
 
                     Button {
@@ -792,7 +1044,7 @@ struct StatusWindowView: View {
                     } label: {
                         Image(systemName: "minus")
                     }
-                    .help("Remove selected library item")
+                    .forestHoverHelp("Remove selected library item")
                     .disabled(!document.canManageSource)
 
                     Button {
@@ -800,7 +1052,7 @@ struct StatusWindowView: View {
                     } label: {
                         Image(systemName: "trash")
                     }
-                    .help("Clear library workspace")
+                    .forestHoverHelp("Clear library workspace")
                     .disabled(document.sources.isEmpty || document.isBusy)
                 }
                 .buttonStyle(.borderless)
@@ -848,6 +1100,7 @@ struct StatusWindowView: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .forestHoverHelp("Selects \(source.title) in the library workspace.")
                         }
                     }
                 }
@@ -911,6 +1164,7 @@ struct StatusWindowView: View {
             .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .forestHoverHelp("Opens or brings forward this \(subtitle.lowercased()).")
     }
 }
 
@@ -1024,6 +1278,7 @@ struct SystemSettingsView: View {
                     .pickerStyle(.menu)
                     .frame(width: 170)
                     .padding(.top, 4)
+                    .forestHoverHelp("Chooses the FB-01 system channel used for device-level commands.")
                 } label: {
                     SectionTitle("System Channel")
                 }
@@ -1065,6 +1320,7 @@ struct SystemSettingsView: View {
                     }
                     .padding(.top, 10)
                     .disabled(document.isBusy)
+                    .forestHoverHelp("Sends the current master output level to the FB-01.")
                 } label: {
                     SectionTitle("Master Output")
                 }
@@ -1083,6 +1339,7 @@ struct SystemSettingsView: View {
                         Label("Request Unit ID", systemImage: "info.circle")
                     }
                     .disabled(document.isBusy)
+                    .forestHoverHelp("Asks the connected FB-01 to identify itself and reports the last response.")
                 }
                 .padding(.top, 4)
             } label: {
@@ -1980,6 +2237,7 @@ struct VoiceDocumentWindow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .id(document.layoutRevision)
         }
+        .environment(\.forestHoverTextEnabled, device.hoverTextEnabled)
         .navigationTitle("Voice - \(document.title)")
         .toolbar {
             ToolbarItemGroup {
@@ -1988,7 +2246,7 @@ struct VoiceDocumentWindow: View {
                 } label: {
                     Label("Save File", systemImage: "square.and.arrow.down")
                 }
-                .help("Save voice to file")
+                .forestHoverHelp("Save voice to file")
                 .disabled(document.isBusy)
 
                 Button {
@@ -2000,7 +2258,7 @@ struct VoiceDocumentWindow: View {
                         FB01TransferToolbarIcon(direction: .fetch)
                     }
                 }
-                .help("Fetch voice from device into this voice document")
+                .forestHoverHelp("Fetch voice from device into this voice document")
                 .disabled(device.isBusy || document.isBusy)
 
                 Button {
@@ -2012,7 +2270,7 @@ struct VoiceDocumentWindow: View {
                         FB01TransferToolbarIcon(direction: .store)
                     }
                 }
-                .help("Store this voice to a device slot")
+                .forestHoverHelp("Store this voice to a device slot")
                 .disabled(device.isBusy || document.isBusy)
 
                 Button {
@@ -2020,7 +2278,7 @@ struct VoiceDocumentWindow: View {
                 } label: {
                     Label("Revert", systemImage: "arrow.uturn.backward")
                 }
-                .help("Revert to last saved voice")
+                .forestHoverHelp("Revert to last saved voice")
                 .disabled(!document.isEdited || document.isBusy)
             }
         }
@@ -2173,6 +2431,7 @@ struct ConfigurationDocumentWindow: View {
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .environment(\.forestHoverTextEnabled, device.hoverTextEnabled)
         .navigationTitle("Configuration - \(document.title)")
         .toolbar {
             ToolbarItemGroup {
@@ -2181,7 +2440,7 @@ struct ConfigurationDocumentWindow: View {
                 } label: {
                     Label("Save File", systemImage: "square.and.arrow.down")
                 }
-                .help("Save configuration to file")
+                .forestHoverHelp("Save configuration to file")
                 .disabled(document.isBusy)
 
                 Button {
@@ -2193,7 +2452,7 @@ struct ConfigurationDocumentWindow: View {
                         FB01TransferToolbarIcon(direction: .fetch)
                     }
                 }
-                .help("Fetch configuration from device into this configuration document")
+                .forestHoverHelp("Fetch configuration from device into this configuration document")
                 .disabled(device.isBusy || document.isBusy)
 
                 Button {
@@ -2205,7 +2464,7 @@ struct ConfigurationDocumentWindow: View {
                         FB01TransferToolbarIcon(direction: .store)
                     }
                 }
-                .help("Store this configuration to a device slot")
+                .forestHoverHelp("Store this configuration to a device slot")
                 .disabled(device.isBusy || document.isBusy)
 
                 Button {
@@ -2213,7 +2472,7 @@ struct ConfigurationDocumentWindow: View {
                 } label: {
                     Label("Revert", systemImage: "arrow.uturn.backward")
                 }
-                .help("Revert to last saved configuration")
+                .forestHoverHelp("Revert to last saved configuration")
                 .disabled(!document.isEdited || document.isBusy)
             }
         }
@@ -2576,6 +2835,7 @@ struct ConfigurationEditorControls: View {
                     TextField("Name", text: $name)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 180)
+                        .forestHoverHelp("Names the configuration as it will appear in Forest documents and saved configuration files.")
                 }
 
                 GridRow {
@@ -2603,6 +2863,7 @@ struct ConfigurationEditorControls: View {
                     .labelsHidden()
                     .pickerStyle(.segmented)
                     .frame(width: 190)
+                    .forestHoverHelp("Chooses which incoming key-code numbers this configuration receives: all keys, even keys, or odd keys.")
                 }
 
                 VStack(alignment: .leading, spacing: 6) {
@@ -2789,6 +3050,7 @@ struct ConfigurationInstrumentSelectorButton: View {
             )
         }
         .buttonStyle(.plain)
+        .forestHoverHelp("Selects Instrument \(instrument.index + 1) for editing. Notes, MIDI channel, voice slot, and output controls below apply to this instrument.")
     }
 
     private var displayedOutputLevel: Int {
@@ -2851,6 +3113,7 @@ struct ConfigurationInstrumentInspector: View {
                     }
                     .labelsHidden()
                     .frame(width: 82)
+                    .forestHoverHelp("Chooses whether this instrument plays polyphonically or as a monophonic line.")
                 }
             }
         }
@@ -2886,7 +3149,14 @@ struct ConfigurationInstrumentInspector: View {
                     range: -63...63,
                     displayText: stereoPanDisplayText
                 ) { try instrument.settingPan(rawPanValue(forCenteredPan: $0)) }
-                ParameterKnob(label: "", value: $pitchModulationDepth, range: 0...127, width: 82, knobSize: 42)
+                ParameterKnob(
+                    label: "",
+                    value: $pitchModulationDepth,
+                    range: 0...127,
+                    width: 82,
+                    knobSize: 42,
+                    helpText: "Sets pitch modulation depth for the selected instrument, usually heard as vibrato amount."
+                )
                 pmdAssignmentMenu {
                     Picker("", selection: pmdBinding) {
                         Text(FB01PMDControllerAssignment.notAssigned.displayName).tag(FB01PMDControllerAssignment.notAssigned)
@@ -2897,6 +3167,7 @@ struct ConfigurationInstrumentInspector: View {
                     }
                     .labelsHidden()
                     .frame(width: 150)
+                    .forestHoverHelp("Chooses which performance controller drives pitch modulation depth for this instrument.")
                 }
             }
 
@@ -3003,6 +3274,7 @@ struct ConfigurationInstrumentInspector: View {
         }
         .frame(width: width, height: 110)
         .frame(width: width)
+        .forestHoverHelp("\(label): choose an option from this menu.")
     }
 
     private var displayedOutputLevel: Int {
@@ -3187,7 +3459,7 @@ struct VoiceBankBrowser: View {
                     } label: {
                         Image(systemName: "square.and.arrow.down")
                     }
-                    .help("Save edited bank as a SysEx file")
+                    .forestHoverHelp("Save edited bank as a SysEx file")
                     .disabled(editedVoiceCount == 0)
 
                     Button {
@@ -3195,7 +3467,7 @@ struct VoiceBankBrowser: View {
                     } label: {
                         Image(systemName: "arrow.uturn.backward.circle")
                     }
-                    .help("Reset all local voice edits in this bank")
+                    .forestHoverHelp("Reset all local voice edits in this bank")
                     .disabled(editedVoiceCount == 0)
                 }
 
@@ -3784,6 +4056,7 @@ struct VoiceEditorControls: View {
                             TextField("Name", text: $name)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(maxWidth: 180)
+                                .forestHoverHelp("Names the voice as it will appear in Forest documents and saved voice files.")
                         }
                     }
 
@@ -3912,6 +4185,22 @@ struct WaveformPicker: View {
         .buttonStyle(.plain)
         .frame(width: optionSize.width, height: optionSize.height)
         .contentShape(Rectangle())
+        .forestHoverHelp(waveformHelp(title))
+    }
+
+    private func waveformHelp(_ title: String) -> String {
+        switch title {
+        case "Sawtooth":
+            return "LFO sawtooth creates a repeating ramp for sharper, directional modulation."
+        case "Square":
+            return "LFO square alternates between two levels for pulsing or switching modulation."
+        case "Triangle":
+            return "LFO triangle moves smoothly up and down for classic vibrato or tremolo."
+        case "Random":
+            return "LFO random produces irregular movement for unstable or animated effects."
+        default:
+            return "Chooses the LFO waveform used for pitch or amplitude movement."
+        }
     }
 }
 
@@ -3937,6 +4226,7 @@ struct GreenNumberSegmentedPicker: View {
                 .buttonStyle(.plain)
                 .frame(width: segmentSize.width, height: segmentSize.height)
                 .contentShape(Rectangle())
+                .forestHoverHelp("Chooses keyboard level scaling type \(value), changing how operator level responds across the keyboard.")
             }
         }
         .padding(3)
@@ -4070,7 +4360,7 @@ struct AlgorithmSelectorView: View {
             )
         }
         .buttonStyle(.plain)
-        .help("Algorithm \(algorithm)")
+        .forestHoverHelp("Algorithm \(algorithm): selects the FM operator routing, changing which operators shape harmonics and which are heard directly.")
     }
 }
 
@@ -4124,7 +4414,7 @@ struct CompactAlgorithmSelectorView: View {
             .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
-        .help("Algorithm \(algorithm)")
+        .forestHoverHelp("Algorithm \(algorithm): selects the FM operator routing, changing which operators shape harmonics and which are heard directly.")
     }
 }
 
@@ -4468,6 +4758,7 @@ struct OperatorSelectorButton: View {
             )
         }
         .buttonStyle(.plain)
+        .forestHoverHelp("Selects Operator \(FB01VoiceData.operatorNumber(forDataIndex: operatorData.index)) for editing in the console-style operator inspector.")
     }
 
     private var roleLabel: some View {
@@ -4699,7 +4990,7 @@ struct OperatorEnvelopeView: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
         )
-        .help("Drag envelope points to edit attack, decay, sustain, and release.")
+        .forestHoverHelp("Drag envelope points to edit attack, decay, sustain, and release.")
     }
 
     private func segmentWidth(rate: Int, maxRate: Int, rect: CGRect) -> CGFloat {

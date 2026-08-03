@@ -270,6 +270,53 @@ struct ConfigurationFetchOptions: Sendable {
     var slot: Int
 }
 
+struct VoiceBankSelectorItem: Identifiable, Equatable {
+    var bank: Int
+    var zeroBasedVoiceNumber: Int
+    var name: String
+
+    var id: String {
+        "bank-\(bank)-voice-\(zeroBasedVoiceNumber)"
+    }
+
+    var displayNumber: Int {
+        zeroBasedVoiceNumber + 1
+    }
+
+    var title: String {
+        name.isEmpty ? "Voice \(displayNumber)" : name
+    }
+
+    var fetchTitle: String {
+        "Bank \(bank) Voice \(displayNumber): \(title)"
+    }
+
+    var source: VoiceDocumentFetchSource {
+        .storedSlot(location: .bank(bank), voiceNumber: zeroBasedVoiceNumber)
+    }
+}
+
+struct ConfigurationSelectorItem: Identifiable, Equatable {
+    var slot: Int
+    var name: String
+
+    var id: Int { slot }
+
+    var displayNumber: Int { slot }
+
+    var title: String {
+        name.isEmpty ? "Configuration \(slot)" : name
+    }
+
+    var fetchTitle: String {
+        "Configuration \(slot) - \(title)"
+    }
+
+    var options: ConfigurationFetchOptions {
+        ConfigurationFetchOptions(isCurrent: false, slot: slot - 1)
+    }
+}
+
 struct ConfigurationDocumentStoreOptions: Sendable {
     var slot: Int
     var confirmAfterStore: Bool

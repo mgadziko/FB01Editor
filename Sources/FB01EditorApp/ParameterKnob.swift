@@ -1,5 +1,166 @@
 import SwiftUI
 
+private struct ForestHoverTextEnabledKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var forestHoverTextEnabled: Bool {
+        get { self[ForestHoverTextEnabledKey.self] }
+        set { self[ForestHoverTextEnabledKey.self] = newValue }
+    }
+}
+
+private struct ForestHoverHelpModifier: ViewModifier {
+    @Environment(\.forestHoverTextEnabled) private var hoverTextEnabled
+    var text: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if hoverTextEnabled, let text, !text.isEmpty {
+            content.help(text)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func forestHoverHelp(_ text: String?) -> some View {
+        modifier(ForestHoverHelpModifier(text: text))
+    }
+}
+
+enum ControlHoverText {
+    static func knob(label: String) -> String? {
+        switch normalized(label) {
+        case "":
+            return nil
+        case "User Code":
+            return "Stores a small voice ID value. It usually does not change the sound."
+        case "Transpose":
+            return "Moves the whole voice up or down in pitch."
+        case "Feedback", "OP4 Feedback":
+            return "Feeds Operator 4 back into itself. Adds edge, buzz, or metallic bite."
+        case "LFO Speed":
+            return "Controls how fast vibrato or tremolo movement cycles."
+        case "Amplitude MOD Depth":
+            return "Sets how deeply the LFO can move loudness for tremolo-like motion."
+        case "Pitch MOD Depth", "PMD":
+            return "Sets pitch modulation depth, usually heard as vibrato amount."
+        case "Amplitude MOD Sensitivity":
+            return "Sets how strongly the voice responds to amplitude modulation sources."
+        case "Pitch MOD Sensitivity":
+            return "Sets how strongly the voice responds to pitch modulation sources like the mod wheel."
+        case "OSC FRQ Multiplier":
+            return "Changes the operator frequency ratio. Higher values add brighter or more complex harmonics."
+        case "Detune", "Detune 1":
+            return "Fine-shifts pitch for beating, chorus, or rougher harmonic color."
+        case "Detune 2":
+            return "Adds another small pitch offset for thickness or shimmer."
+        case "Total Level":
+            return "Sets this operator's strength. Carriers get louder; modulators change brightness and complexity."
+        case "TL Adjust":
+            return "Offsets total level for this operator. Useful for fine balancing."
+        case "Vel to TL":
+            return "Makes playing harder change this operator's level, adding touch-sensitive brightness or volume."
+        case "Keyboard Level Depth":
+            return "Changes how this operator's level varies across the keyboard."
+        case "Keyboard Rate Scaling Depth":
+            return "Changes envelope speed across the keyboard, often making higher notes respond faster."
+        case "Attack":
+            return "Controls how quickly the sound reaches its initial level after a note starts."
+        case "Vel to Attack":
+            return "Makes harder playing change attack speed for more expressive starts."
+        case "Decay 1":
+            return "Controls the first drop after the attack, shaping punch or pluck."
+        case "Decay 2":
+            return "Controls the later decay toward sustain, shaping how the tone settles."
+        case "Sustain":
+            return "Sets the held level after the decay stages."
+        case "Release":
+            return "Controls how quickly the sound fades after you release a key."
+        case "Level":
+            return "Sets output level; higher values make this part louder."
+        case "Stereo Pan":
+            return "Moves this instrument left or right in the stereo field."
+        case "MIDI Channel", "Channel":
+            return "Chooses the MIDI channel used for this part or live keyboard."
+        case "Voice Bank":
+            return "Selects the voice bank used by this instrument."
+        case "Voice Number":
+            return "Selects the voice slot used by this instrument."
+        case "Active Notes":
+            return "Allocates polyphony to this instrument. More notes here leave fewer for other instruments."
+        case "Low Key":
+            return "Sets the lowest key this instrument will respond to."
+        case "High Key":
+            return "Sets the highest key this instrument will respond to."
+        case "Octave":
+            return "Moves the live keyboard or instrument up or down by octaves."
+        case "Portamento":
+            return "Adds glide between notes. Higher values make pitch slides slower."
+        case "Bend Range":
+            return "Sets how far pitch bend can move the pitch."
+        case "Velocity":
+            return "Sets how hard live keyboard notes are sent."
+        case "Volume":
+            return "Sets the output level used by the live keyboard controls."
+        case "Brightness":
+            return "Macro: shifts the voice toward a brighter, more forward tone."
+        case "Warmth":
+            return "Macro: softens hard edges and nudges the voice toward a rounder tone."
+        case "Bite":
+            return "Macro: emphasizes attack and harmonic edge for a more aggressive front."
+        case "Body":
+            return "Macro: adds weight and sustain so the voice feels fuller."
+        case "Motion":
+            return "Macro: adds movement through modulation and evolving tone."
+        case "Punch":
+            return "Macro: makes the start of notes hit harder."
+        case "Air":
+            return "Macro: opens the tone with lighter, more shimmering upper detail."
+        case "Character":
+            return "Macro: pushes the selected voice character toward a stronger identity."
+        default:
+            return "\(normalized(label)): drag up to increase, drag down to decrease."
+        }
+    }
+
+    static func toggle(label: String) -> String {
+        switch normalized(label) {
+        case "Left", "Left Output":
+            return "Sends this voice to the left output channel."
+        case "Right", "Right Output":
+            return "Sends this voice to the right output channel."
+        case "Load LFO Data":
+            return "Uses the voice's stored LFO settings when the voice is loaded."
+        case "LFO Sync":
+            return "Restarts LFO motion with each note for more consistent modulation."
+        case "Enabled", "Operator Enabled":
+            return "Turns this operator on or off. Disabled operators do not shape the sound."
+        case "Enable":
+            return "Lets Forest listen to the selected external MIDI source."
+        case "Memory Protect":
+            return "Shows whether device memory protection is on; protection blocks writes."
+        case "Memory Writable":
+            return "Allows device writes for this configured FB-01 device."
+        case "LFO Enabled":
+            return "Lets this instrument use LFO modulation."
+        case "Layer Instruments":
+            return "Layers active instruments so they can sound together."
+        default:
+            return "\(normalized(label)): toggles this setting on or off."
+        }
+    }
+
+    private static func normalized(_ label: String) -> String {
+        label
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+    }
+}
+
 struct ParameterKnob: View {
     var label: String
     @Binding var value: Int
@@ -7,6 +168,7 @@ struct ParameterKnob: View {
     var width: CGFloat = 82
     var knobSize: CGFloat = 48
     var displayTextProvider: ((Int) -> String)?
+    var helpText: String?
 
     @State private var dragStartValue: Int?
 
@@ -40,7 +202,6 @@ struct ParameterKnob: View {
                 )
                 .accessibilityLabel(label)
                 .accessibilityValue("\(value)")
-                .help("\(label): drag up to increase, drag down to decrease.")
 
             Text(label)
                 .font(.caption2.weight(.semibold))
@@ -51,6 +212,7 @@ struct ParameterKnob: View {
                 .frame(width: width, height: 28, alignment: .top)
         }
         .frame(width: width)
+        .forestHoverHelp(helpText ?? ControlHoverText.knob(label: label))
     }
 
     private var normalizedValue: Double {
@@ -128,6 +290,7 @@ struct RockerSwitch: View {
     @Binding var isOn: Bool
     var width: CGFloat = 58
     var height: CGFloat = 68
+    var helpText: String?
 
     var body: some View {
         Button {
@@ -152,7 +315,7 @@ struct RockerSwitch: View {
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityValue(isOn ? "On" : "Off")
-        .help("\(label): \(isOn ? "On" : "Off")")
+        .forestHoverHelp(helpText ?? ControlHoverText.toggle(label: label))
     }
 }
 

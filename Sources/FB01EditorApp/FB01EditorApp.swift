@@ -107,6 +107,21 @@ struct FB01EditorApplication: App {
                     .frame(width: 420, height: 180)
             }
         }
+        WindowGroup("Voice Bank", id: "voice-bank-selector", for: Int.self) { $bank in
+            if let bank {
+                VoiceBankSelectorWindow(bank: bank, document: document, workspace: documentWorkspace)
+                    .frame(minWidth: 650, minHeight: 545)
+            } else {
+                MissingEditorDocumentView()
+                    .frame(width: 420, height: 180)
+            }
+        }
+        .defaultSize(width: 720, height: 545)
+        WindowGroup("Configuration Bank", id: "configuration-bank-selector") {
+            ConfigurationSelectorWindow(document: document, workspace: documentWorkspace)
+                .frame(minWidth: 650, minHeight: 300)
+        }
+        .defaultSize(width: 720, height: 320)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About \(AppStrings.editorDisplayName)") {
@@ -168,6 +183,10 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Voice") {
+                VoiceSelectorCommands(document: document)
+
+                Divider()
+
                 Button(EditorFeatureAvailability.commandTitle(.copyVoiceToSlot, fallback: "Copy \(EditorSynthModule.vocabulary.voiceDisplayName) to Slot...")) {
                     EditorModuleCommandRunner.run(.copyVoiceToSlot, document: document)
                 }
@@ -208,6 +227,10 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Configuration") {
+                ConfigurationSelectorCommands(document: document)
+
+                Divider()
+
                 Button(EditorFeatureAvailability.commandTitle(.copyConfigurationToSlot, fallback: "Copy \(EditorSynthModule.vocabulary.configurationDisplayName) to Slot ...")) {
                     EditorModuleCommandRunner.run(.copyConfigurationToSlot, document: document)
                 }
@@ -576,6 +599,7 @@ struct PreferencesView: View {
     var close: () -> Void
 
     @State private var voiceEditorParadigm: VoiceEditorParadigm
+    @State private var hoverTextEnabled: Bool
     @State private var preCacheRAMVoiceBanksOnLaunch: Bool
     @State private var preCacheROMVoiceBanksOnLaunch: Bool
     @State private var preCacheConfigurationsOnLaunch: Bool
@@ -586,6 +610,7 @@ struct PreferencesView: View {
         self.document = document
         self.close = close
         _voiceEditorParadigm = State(initialValue: document.voiceEditorParadigm)
+        _hoverTextEnabled = State(initialValue: document.hoverTextEnabled)
         _preCacheRAMVoiceBanksOnLaunch = State(initialValue: document.preCacheRAMVoiceBanksOnLaunch)
         _preCacheROMVoiceBanksOnLaunch = State(initialValue: document.preCacheROMVoiceBanksOnLaunch)
         _preCacheConfigurationsOnLaunch = State(initialValue: document.preCacheConfigurationsOnLaunch)
@@ -605,6 +630,7 @@ struct PreferencesView: View {
                                 }
                             }
                             .pickerStyle(.radioGroup)
+                            .forestHoverHelp("Chooses the default voice editor layout: grouped console sections or FM routing patch bay.")
 
                             Text(voiceEditorParadigm.description)
                                 .font(.caption)
@@ -614,6 +640,20 @@ struct PreferencesView: View {
                         .padding(.top, 4)
                     } label: {
                         SectionTitle("Voice Editing")
+                    }
+
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Toggle("Show hovertext tooltips", isOn: $hoverTextEnabled)
+
+                            Text("Shows short musical hints when hovering over knobs and switches.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.top, 4)
+                    } label: {
+                        SectionTitle("Help")
                     }
 
                     GroupBox {
@@ -658,6 +698,7 @@ struct PreferencesView: View {
                                         }
                                     }
                                     .frame(width: 190)
+                                    .forestHoverHelp("Sets the command channel used for this configured FB-01 device.")
 
                                     RockerSwitch(label: "Memory Writable", isOn: Binding(
                                         get: { !preference.memoryProtectEnabled },
@@ -686,6 +727,7 @@ struct PreferencesView: View {
                     close()
                 }
                 .keyboardShortcut(.cancelAction)
+                .forestHoverHelp("Closes Preferences without applying the changes in this window.")
 
                 Button("Save Changes") {
                     saveChanges()
@@ -693,11 +735,13 @@ struct PreferencesView: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
+                .forestHoverHelp("Applies these Preferences settings and closes the window.")
             }
             .padding(.top, 4)
         }
         .padding(22)
         .frame(width: 620, height: 640, alignment: .topLeading)
+        .environment(\.forestHoverTextEnabled, hoverTextEnabled)
     }
 
     private func setDraftDeviceCount(_ count: Int) {
@@ -723,6 +767,7 @@ struct PreferencesView: View {
 
     private func saveChanges() {
         document.setVoiceEditorParadigm(voiceEditorParadigm)
+        document.setHoverTextEnabled(hoverTextEnabled)
         document.setPreCacheRAMVoiceBanksOnLaunch(preCacheRAMVoiceBanksOnLaunch)
         document.setPreCacheROMVoiceBanksOnLaunch(preCacheROMVoiceBanksOnLaunch)
         document.setPreCacheConfigurationsOnLaunch(preCacheConfigurationsOnLaunch)

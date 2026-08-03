@@ -57,6 +57,7 @@ final class DocumentModel: ObservableObject {
     @Published var systemMasterOutputLevel = 127
     @Published var systemDeviceStatus = "Not requested"
     @Published var voiceEditorParadigm: VoiceEditorParadigm = .fmRoutingPatchBay
+    @Published var hoverTextEnabled = true
     @Published var preCacheRAMVoiceBanksOnLaunch = true
     @Published var preCacheROMVoiceBanksOnLaunch = true
     @Published var preCacheConfigurationsOnLaunch = true
@@ -113,6 +114,7 @@ final class DocumentModel: ObservableObject {
         static let customControlsControllerProfile = "FB01Editor.customControlsControllerProfile"
         static let customControlChangeNumbers = "FB01Editor.customControlChangeNumbers"
         static let voiceEditorParadigm = "FB01Editor.voiceEditorParadigm"
+        static let hoverTextEnabled = "FB01Editor.hoverTextEnabled"
         static let preCacheRAMVoiceBanksOnLaunch = "FB01Editor.preCacheRAMVoiceBanksOnLaunch"
         static let preCacheROMVoiceBanksOnLaunch = "FB01Editor.preCacheROMVoiceBanksOnLaunch"
         static let preCacheConfigurationsOnLaunch = "FB01Editor.preCacheConfigurationsOnLaunch"
@@ -162,6 +164,9 @@ final class DocumentModel: ObservableObject {
            let paradigm = VoiceEditorParadigm(rawValue: rawParadigm) {
             voiceEditorParadigm = paradigm
         }
+        hoverTextEnabled = UserDefaults.standard.object(forKey: DefaultsKey.hoverTextEnabled) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: DefaultsKey.hoverTextEnabled)
         preCacheRAMVoiceBanksOnLaunch = UserDefaults.standard.object(forKey: DefaultsKey.preCacheRAMVoiceBanksOnLaunch) == nil
             ? true
             : UserDefaults.standard.bool(forKey: DefaultsKey.preCacheRAMVoiceBanksOnLaunch)
@@ -635,6 +640,64 @@ final class DocumentModel: ObservableObject {
         options.isCurrent ? cachedCurrentConfiguration : cachedConfigurations[options.slot + 1]
     }
 
+    func ensureVoiceBankSelectorItems(bank: Int) async -> [VoiceBankSelectorItem] {
+        let module = FB01ModuleServices.shared.module
+        guard module.isValidVoiceBank(bank) else {
+            return []
+        }
+
+        if cachedVoiceBanks[bank] == nil {
+            await fetchSelectorCache(
+                reason: "Fetching Voice Bank \(bank)",
+                voiceBanks: [bank],
+                fetchConfigurations: false
+            )
+        }
+
+        return voiceBankSelectorItems(bank: bank)
+    }
+
+    func ensureConfigurationSelectorItems() async -> [ConfigurationSelectorItem] {
+        let module = FB01ModuleServices.shared.module
+        let missingConfigurations = module.allConfigurationSlots.closedRange.contains { slot in
+            cachedConfigurations[slot] == nil
+        }
+        if missingConfigurations {
+            await fetchSelectorCache(
+                reason: "Fetching Configuration Bank",
+                voiceBanks: [],
+                fetchConfigurations: true
+            )
+        }
+
+        return configurationSelectorItems()
+    }
+
+    func voiceBankSelectorItems(bank: Int) -> [VoiceBankSelectorItem] {
+        let location = VoiceDocumentFetchLocation.bank(bank)
+        return (0..<FB01VoiceBankData.voiceCount).map { index in
+            let cachedVoices = cachedVoiceBanks[bank]?.voices ?? []
+            let cachedName = cachedVoices.indices.contains(index) ? cachedVoices[index].voice.name : nil
+            let lookupName = VoiceDocumentFetchNameLookup.empty.name(location: location, voiceNumber: index + 1)
+            return VoiceBankSelectorItem(
+                bank: bank,
+                zeroBasedVoiceNumber: index,
+                name: cachedName?.isEmpty == false ? cachedName! : (lookupName ?? "")
+            )
+        }
+    }
+
+    func configurationSelectorItems() -> [ConfigurationSelectorItem] {
+        FB01ModuleServices.shared.module.allConfigurationSlots.closedRange.map { slot in
+            let cachedName = cachedConfigurations[slot]?.name
+            let factoryName = FB01FactoryConfigurationNames.name(slot: slot)
+            return ConfigurationSelectorItem(
+                slot: slot,
+                name: cachedName?.isEmpty == false ? cachedName! : (factoryName ?? "")
+            )
+        }
+    }
+
     func voiceNameLookupFromCache() -> VoiceDocumentFetchNameLookup {
         var namesByBank: [Int: [String]] = [:]
         for bank in FB01ModuleServices.shared.module.writableVoiceBanks {
@@ -655,6 +718,78 @@ final class DocumentModel: ObservableObject {
             result[slot] = configuration.name.isEmpty ? "Untitled" : configuration.name
         }
         return ConfigurationFetchNameLookup(storedNames: names)
+    }
+
+    private func fetchSelectorCache(
+        reason: String,
+        voiceBanks requestedVoiceBanks: [Int],
+        fetchConfigurations: Bool
+    ) async {
+        guard !isBusy else {
+            return
+        }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        let sourceName = selectedSourceName
+        let destinationName = selectedDestinationName
+        let services = FB01ModuleServices.shared
+        let voiceBanks = services.cacheService.normalizedVoiceBanks(requestedVoiceBanks)
+        let progressText = cacheProgressText(voiceBanks: voiceBanks, fetchConfigurations: fetchConfigurations)
+
+        guard !voiceBanks.isEmpty || fetchConfigurations else {
+            return
+        }
+
+        isFetchingFromDevice = true
+        deviceCacheStatus = "\(reason)..."
+        statusMessage = "\(reason) from \(sourceName) -> \(destinationName)..."
+        errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: reason,
+            message: "The \(progressText.subject) \(progressText.verb) being fetched. Please wait."
+        )
+        progressPanel.show()
+
+        let cacheResult = await services.cacheService.fetch(
+            voiceBanks: voiceBanks,
+            fetchConfigurations: fetchConfigurations,
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel
+        ) { event, completed, total in
+            await MainActor.run {
+                let detail = Self.cacheProgressDetail(for: event)
+                self.statusMessage = "\(reason): \(detail)"
+                progressPanel.update(
+                    message: "The \(progressText.subject) \(progressText.verb) being fetched. Please wait.\n\(detail)",
+                    completed: completed,
+                    total: total
+                )
+            }
+        }
+
+        cachedVoiceBanks.merge(cacheResult.voiceBanks) { _, new in new }
+        cachedConfigurations.merge(cacheResult.configurations) { _, new in new }
+        if let currentConfiguration = cacheResult.currentConfiguration {
+            cachedCurrentConfiguration = currentConfiguration
+        }
+        for (bank, bankData) in cacheResult.voiceBanks where services.module.isWritableVoiceBank(bank) {
+            ramVoiceNameCache[bank] = bankData.voices.map { summary in
+                summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
+            }
+        }
+
+        deviceCacheStatus = cacheResult.failures.isEmpty
+            ? "Loaded \(cacheResult.loadedCount) items"
+            : "Loaded \(cacheResult.loadedCount) items; \(cacheResult.failures.count) failed"
+        statusMessage = cacheResult.failures.isEmpty
+            ? "\(reason) completed from \(sourceName) -> \(destinationName)."
+            : "\(reason) partially completed from \(sourceName) -> \(destinationName); \(cacheResult.failures.count) item\(cacheResult.failures.count == 1 ? "" : "s") failed."
+        errorMessage = nil
+        progressPanel.dismiss()
+        isFetchingFromDevice = false
     }
 
     func cacheVoiceBank(_ voiceBank: FB01VoiceBankData, userBankNumber: Int) {
@@ -860,6 +995,11 @@ final class DocumentModel: ObservableObject {
     func setPreCacheROMVoiceBanksOnLaunch(_ enabled: Bool) {
         preCacheROMVoiceBanksOnLaunch = enabled
         UserDefaults.standard.set(enabled, forKey: DefaultsKey.preCacheROMVoiceBanksOnLaunch)
+    }
+
+    func setHoverTextEnabled(_ enabled: Bool) {
+        hoverTextEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: DefaultsKey.hoverTextEnabled)
     }
 
     func setPreCacheConfigurationsOnLaunch(_ enabled: Bool) {

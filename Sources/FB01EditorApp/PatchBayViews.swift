@@ -62,6 +62,7 @@ struct FMRoutingPatchBayView: View {
                             TextField("Name", text: $name)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 180)
+                                .forestHoverHelp("Names the voice as it will appear in Forest documents and saved voice files.")
                         }
                     }
 
@@ -124,6 +125,7 @@ struct FMRoutingPatchBayView: View {
                     }
                     .labelsHidden()
                     .frame(width: 180)
+                    .forestHoverHelp("Chooses the musical character used to shape Performance Macro behavior.")
 
                     Text("These musical macros change the current editable voice in memory only. They are not stored FB-01 fields.")
                         .font(.caption2.weight(.semibold))
@@ -139,10 +141,10 @@ struct FMRoutingPatchBayView: View {
                                 value: macroValue(macro),
                                 range: PerformanceMacro.range,
                                 width: 88,
-                                knobSize: 46
+                                knobSize: 46,
+                                helpText: macro.help(for: voiceCharacterType)
                             )
                         }
-                        .help(macro.help(for: voiceCharacterType))
                     }
                 }
 
@@ -1175,7 +1177,7 @@ struct FMPatchOperatorModule: View {
         }
         .buttonStyle(.plain)
         .disabled(!operatorEnabled)
-        .help(macro.help)
+        .forestHoverHelp(macro.help)
     }
 
     private var editableOperatorEnabled: Binding<Bool> {
