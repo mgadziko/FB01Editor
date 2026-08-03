@@ -76,6 +76,8 @@ enum EditorModuleCommandRunner {
         switch kind {
         case .resetInstructions:
             document.resetDeviceToFactorySettings()
+        case .showVoiceBank, .showConfigurationBank:
+            break
         case .copyVoiceToSlot:
             document.copySelectedVoiceToLocalSlot()
         case .swapVoiceWithSlot:
@@ -87,6 +89,11 @@ enum EditorModuleCommandRunner {
         case .saveEditedVoiceBank:
             document.saveSelectedEditedVoiceBankAs()
         case .storeGeneralMIDIVoices:
+            guard EditorSynthModule.capabilities.supportsGeneralMIDIInstall else {
+                document.errorMessage = "General MIDI voice installation is not available for \(EditorSynthModule.identity.modelName)."
+                document.statusMessage = nil
+                return
+            }
             document.storeGeneralMIDIVoicesToDevice()
         case .copyConfigurationToSlot:
             document.copyConfigurationSlotOnDevice()

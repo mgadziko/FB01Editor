@@ -138,6 +138,36 @@ public struct SynthSelectorGridLayout: Equatable, Sendable {
     }
 }
 
+public struct SynthDeviceCacheScope: Equatable, Sendable {
+    public var voiceBanks: [Int]
+    public var configurationSlots: SynthSlotRange?
+    public var includesCurrentConfiguration: Bool
+
+    public init(
+        voiceBanks: [Int],
+        configurationSlots: SynthSlotRange? = nil,
+        includesCurrentConfiguration: Bool = false
+    ) {
+        self.voiceBanks = voiceBanks
+        self.configurationSlots = configurationSlots
+        self.includesCurrentConfiguration = includesCurrentConfiguration
+    }
+
+    public var supportsConfigurations: Bool {
+        configurationSlots != nil || includesCurrentConfiguration
+    }
+}
+
+public struct SynthDeviceCacheProgressText: Equatable, Sendable {
+    public var subject: String
+    public var verb: String
+
+    public init(subject: String, verb: String) {
+        self.subject = subject
+        self.verb = verb
+    }
+}
+
 public enum SynthParameterValueKind: Equatable, Sendable {
     case integer
     case signedInteger
@@ -291,12 +321,14 @@ public enum SynthModuleMenu: String, CaseIterable, Sendable {
 
 public enum SynthModuleCommandKind: String, CaseIterable, Sendable {
     case resetInstructions
+    case showVoiceBank
     case copyVoiceToSlot
     case swapVoiceWithSlot
     case resetSelectedVoice
     case resetAllVoiceEdits
     case saveEditedVoiceBank
     case storeGeneralMIDIVoices
+    case showConfigurationBank
     case copyConfigurationToSlot
     case refreshDeviceCache
     case sendSelectedConfigurationToEditBuffer
@@ -366,8 +398,57 @@ public protocol SynthModule: Sendable {
     var voicesPerBank: Int { get }
     var voiceBankSelectorLayout: SynthSelectorGridLayout { get }
     var configurationBankSelectorLayout: SynthSelectorGridLayout? { get }
+    var fullDeviceCacheScope: SynthDeviceCacheScope { get }
     var writableConfigurationSlots: SynthSlotRange { get }
     var readOnlyConfigurationSlots: SynthSlotRange { get }
+}
+
+public extension SynthModule {
+    var allConfiguredVoiceBanks: [Int] {
+        writableVoiceBanks + readOnlyVoiceBanks
+    }
+
+    var allConfiguredConfigurationSlots: SynthSlotRange {
+        SynthSlotRange(writableConfigurationSlots.lowerBound...readOnlyConfigurationSlots.upperBound)
+    }
+
+    func cacheVoiceBankDescription(for banks: [Int]) -> String {
+        let sortedBanks = banks.sorted()
+        if sortedBanks == writableVoiceBanks {
+            return "\(vocabulary.deviceDisplayName) \(vocabulary.writableVoiceBankSuffix) voice banks \(bankListDescription(sortedBanks))"
+        }
+        if sortedBanks == readOnlyVoiceBanks {
+            return "\(vocabulary.deviceDisplayName) \(vocabulary.readOnlyVoiceBankSuffixPrefix) voice banks \(bankListDescription(sortedBanks))"
+        }
+        if sortedBanks == fullDeviceCacheScope.voiceBanks {
+            return "\(vocabulary.deviceDisplayName) voice banks \(bankListDescription(sortedBanks))"
+        }
+        return "\(vocabulary.deviceDisplayName) voice banks \(bankListDescription(sortedBanks))"
+    }
+
+    func cacheProgressText(voiceBanks: [Int], fetchConfigurations: Bool) -> SynthDeviceCacheProgressText {
+        var subjects: [(text: String, isPlural: Bool)] = []
+        if !voiceBanks.isEmpty {
+            subjects.append((cacheVoiceBankDescription(for: voiceBanks), true))
+        }
+        if fetchConfigurations {
+            subjects.append(("\(vocabulary.deviceDisplayName) configurations", true))
+        }
+        if subjects.count == 1, let subject = subjects.first {
+            return SynthDeviceCacheProgressText(subject: subject.text, verb: subject.isPlural ? "are" : "is")
+        }
+        return SynthDeviceCacheProgressText(subject: "selected \(vocabulary.deviceDisplayName) cache items", verb: "are")
+    }
+
+    private func bankListDescription(_ banks: [Int]) -> String {
+        guard let first = banks.first, let last = banks.last else {
+            return ""
+        }
+        if banks == Array(first...last), banks.count > 1 {
+            return "\(first)-\(last)"
+        }
+        return banks.map(String.init).joined(separator: ", ")
+    }
 }
 
 public protocol SynthModuleServiceProviding: Sendable {

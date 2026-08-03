@@ -147,7 +147,7 @@ struct VoiceSelectorCommands: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Menu("Show Voice Bank") {
+        Menu(EditorFeatureAvailability.commandTitle(.showVoiceBank, fallback: "Show Voice Bank")) {
             ForEach(EditorSynthModule.module.allVoiceBanks, id: \.self) { bank in
                 Button("Bank \(bank)") {
                     let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank)
@@ -158,6 +158,7 @@ struct VoiceSelectorCommands: View {
                 .disabled(document.isBusy)
             }
         }
+        .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.showVoiceBank))
     }
 }
 
@@ -167,12 +168,12 @@ struct ConfigurationSelectorCommands: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Show Configuration Bank") {
+        Button(EditorFeatureAvailability.commandTitle(.showConfigurationBank, fallback: "Show Configuration Bank")) {
             if !workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.configurationBankSelectorWindowIdentifier) {
                 openWindow(id: "configuration-bank-selector")
             }
         }
-        .disabled(document.isBusy)
+        .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.showConfigurationBank))
     }
 }
 

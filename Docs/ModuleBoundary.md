@@ -28,6 +28,8 @@ A synth module owns:
 - supported document kinds
 - capability flags and module-owned command descriptors
 - slot ranges and bank rules
+- selector-window grid layouts for module-specific bank/configuration browsers
+- full-device cache scope and cache progress wording
 - parameter descriptors and parameter binding descriptors
 - default blank document templates
 - document candidate extraction from module-specific SysEx/data artifacts
@@ -57,6 +59,22 @@ routes those commands through a small command runner that currently dispatches
 to the existing FB-01 document model actions. Command labels and availability
 come through module descriptors instead of being only hardcoded in SwiftUI
 menus.
+
+The FB-01 module declares the selector layouts for its Voice Bank and
+Configuration Bank windows. These layouts are intentionally module-owned because
+other Yamaha 4-operator devices may have different bank counts, slot counts, or
+no configuration bank concept at all.
+
+The FB-01 module also declares the scope of a complete device cache: voice banks
+1-7, stored configurations 1-20, and the current configuration buffer. The app
+shell can report cache coverage and build progress messages from this module
+description instead of assuming that every supported device has the same cache
+shape.
+
+General MIDI bank installation remains an FB-01-specific command. It is exposed
+only through the FB-01 module command descriptors and guarded by the FB-01
+General MIDI capability flag. Future modules should not inherit that workflow
+unless they explicitly implement and verify an equivalent.
 
 `ActiveSynthModule.current` is an internal placeholder for future module
 selection. It is deliberately fixed to FB-01 until another real hardware module

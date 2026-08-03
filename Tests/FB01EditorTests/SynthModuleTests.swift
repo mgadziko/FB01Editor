@@ -28,7 +28,9 @@ import Testing
     #expect(module.supportedDocumentKinds == [.voice, .configuration, .voiceBank, .configurationBank])
     #expect(module.supportedDocumentDescriptors.map(\.kind) == module.supportedDocumentKinds)
     #expect(module.supportedDocumentDescriptors.first { $0.kind == .voice }?.supportsFetchFromDevice == true)
+    #expect(module.commandDescriptors.first { $0.kind == .showVoiceBank }?.displayName == "Show Voice Bank")
     #expect(module.commandDescriptors.first { $0.kind == .copyVoiceToSlot }?.displayName == "Copy Voice to Slot...")
+    #expect(module.commandDescriptors.first { $0.kind == .showConfigurationBank }?.displayName == "Show Configuration Bank")
     #expect(module.commandDescriptors.first { $0.kind == .storeGeneralMIDIVoices }?.menu == .voice)
     #expect(module.commandDescriptors.first { $0.kind == .sendSelectedConfigurationToEditBuffer }?.requiresConsoleSections == true)
     #expect(module.parameterDescriptors.contains { $0.id == "voice.operator.totalLevel" && $0.displayName == "Total Level" })
@@ -51,6 +53,12 @@ import Testing
     #expect(module.voiceBankSelectorLayout.rowsPerColumn == 12)
     #expect(module.configurationBankSelectorLayout?.columns == 4)
     #expect(module.configurationBankSelectorLayout?.rowsPerColumn == 5)
+    #expect(module.fullDeviceCacheScope.voiceBanks == [1, 2, 3, 4, 5, 6, 7])
+    #expect(module.fullDeviceCacheScope.configurationSlots?.closedRange == 1...20)
+    #expect(module.fullDeviceCacheScope.includesCurrentConfiguration)
+    #expect(module.cacheVoiceBankDescription(for: [1, 2]) == "FB-01 RAM voice banks 1-2")
+    #expect(module.cacheVoiceBankDescription(for: [3, 4, 5, 6, 7]) == "FB-01 ROM voice banks 3-7")
+    #expect(module.cacheProgressText(voiceBanks: [1, 2], fetchConfigurations: false).subject == "FB-01 RAM voice banks 1-2")
     #expect(module.writableVoiceSlotCount == 96)
     #expect(module.writableConfigurationSlots.closedRange == 1...16)
     #expect(module.readOnlyConfigurationSlots.closedRange == 17...20)
@@ -106,6 +114,7 @@ private struct MockFourOperatorModule: SynthModule {
         ),
     ]
     let commandDescriptors: [SynthModuleCommandDescriptor] = [
+        SynthModuleCommandDescriptor(kind: .showVoiceBank, menu: .voice, displayName: "Show Voice Bank"),
         SynthModuleCommandDescriptor(kind: .copyVoiceToSlot, menu: .voice, displayName: "Copy Voice to Slot...")
     ]
     let parameterDescriptors: [SynthParameterDescriptor] = [
@@ -136,6 +145,11 @@ private struct MockFourOperatorModule: SynthModule {
         minimumWindowHeight: 420
     )
     let configurationBankSelectorLayout: SynthSelectorGridLayout? = nil
+    let fullDeviceCacheScope = SynthDeviceCacheScope(
+        voiceBanks: [1],
+        configurationSlots: nil,
+        includesCurrentConfiguration: false
+    )
     let writableConfigurationSlots = SynthSlotRange(1...1)
     let readOnlyConfigurationSlots = SynthSlotRange(1...1)
 }
@@ -148,7 +162,7 @@ private struct MockFourOperatorModule: SynthModule {
     #expect(!module.capabilities.supportsConfigurations)
     #expect(module.supportedDocumentKinds == [.voice])
     #expect(module.supportedDocumentDescriptors.first?.displayName == "Voice")
-    #expect(module.commandDescriptors.map(\.kind) == [.copyVoiceToSlot])
+    #expect(module.commandDescriptors.map(\.kind) == [.showVoiceBank, .copyVoiceToSlot])
     #expect(module.parameterDescriptors.first?.range?.closedRange == 0...99)
     #expect(module.parameterBindingDescriptors.first?.fieldName == "operatorLevel")
     #expect(module.writableVoiceBanks == [1])
@@ -156,6 +170,8 @@ private struct MockFourOperatorModule: SynthModule {
     #expect(module.voiceBankSelectorLayout.columns == 2)
     #expect(module.voiceBankSelectorLayout.rowsPerColumn == 16)
     #expect(module.configurationBankSelectorLayout == nil)
+    #expect(module.fullDeviceCacheScope.voiceBanks == [1])
+    #expect(module.cacheProgressText(voiceBanks: [1], fetchConfigurations: false).subject == "Mock-4OP RAM voice banks 1")
 }
 
 @Test func fb01ModuleServicesExposeCurrentModuleServices() {

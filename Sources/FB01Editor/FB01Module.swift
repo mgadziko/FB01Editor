@@ -128,6 +128,11 @@ public struct FB01SynthModule: SynthModule {
             displayName: "Reset Instructions..."
         ),
         SynthModuleCommandDescriptor(
+            kind: .showVoiceBank,
+            menu: .voice,
+            displayName: "Show Voice Bank"
+        ),
+        SynthModuleCommandDescriptor(
             kind: .copyVoiceToSlot,
             menu: .voice,
             displayName: "Copy Voice to Slot..."
@@ -160,6 +165,11 @@ public struct FB01SynthModule: SynthModule {
             kind: .storeGeneralMIDIVoices,
             menu: .voice,
             displayName: "Store General MIDI voices..."
+        ),
+        SynthModuleCommandDescriptor(
+            kind: .showConfigurationBank,
+            menu: .configuration,
+            displayName: "Show Configuration Bank"
         ),
         SynthModuleCommandDescriptor(
             kind: .copyConfigurationToSlot,
@@ -325,6 +335,11 @@ public struct FB01SynthModule: SynthModule {
         rowsPerColumn: 5,
         buttonWidth: 136,
         minimumWindowHeight: 300
+    )
+    public let fullDeviceCacheScope = SynthDeviceCacheScope(
+        voiceBanks: [1, 2, 3, 4, 5, 6, 7],
+        configurationSlots: SynthSlotRange(1...20),
+        includesCurrentConfiguration: true
     )
     public let writableConfigurationSlots = SynthSlotRange(1...16)
     public let readOnlyConfigurationSlots = SynthSlotRange(17...20)

@@ -357,17 +357,19 @@ final class DocumentModel: ObservableObject {
         return [
             KeyValueRow("Status", deviceCacheStatus),
             KeyValueRow("Coverage", deviceCacheCoverageStatus),
-            KeyValueRow("Voice Banks", "\(cachedVoiceBanks.count)/\(module.allVoiceBanks.count)"),
-            KeyValueRow("Configurations", "\(cachedConfigurations.count)/\(module.allConfigurationSlots.upperBound)"),
+            KeyValueRow("Voice Banks", "\(cachedVoiceBanks.count)/\(module.fullDeviceCacheScope.voiceBanks.count)"),
+            KeyValueRow("Configurations", "\(cachedConfigurations.count)/\(module.fullDeviceCacheScope.configurationSlots?.upperBound ?? 0)"),
         ]
     }
 
     var deviceCacheCoverageStatus: String {
         let module = FB01ModuleServices.shared.module
-        let hasAllVoiceBanks = module.allVoiceBanks.allSatisfy { cachedVoiceBanks[$0] != nil }
-        let hasAllConfigurations = cachedCurrentConfiguration != nil && module.allConfigurationSlots.closedRange.allSatisfy { slot in
+        let cacheScope = module.fullDeviceCacheScope
+        let hasAllVoiceBanks = cacheScope.voiceBanks.allSatisfy { cachedVoiceBanks[$0] != nil }
+        let hasAllConfigurations = (cacheScope.includesCurrentConfiguration ? cachedCurrentConfiguration != nil : true)
+            && (cacheScope.configurationSlots?.closedRange.allSatisfy { slot in
             cachedConfigurations[slot] != nil
-        }
+        } ?? true)
         return hasAllVoiceBanks && hasAllConfigurations ? "Complete" : "Partial"
     }
 
@@ -387,7 +389,7 @@ final class DocumentModel: ObservableObject {
 
     func refreshDeviceCache(
         reason: String = "Refreshing device cache",
-        voiceBanksToFetch requestedVoiceBanks: [Int] = FB01ModuleServices.shared.module.allVoiceBanks,
+        voiceBanksToFetch requestedVoiceBanks: [Int] = FB01ModuleServices.shared.module.fullDeviceCacheScope.voiceBanks,
         fetchConfigurations: Bool = true,
         showsProgressPanel: Bool = true,
         completion: (() -> Void)? = nil
@@ -492,10 +494,12 @@ final class DocumentModel: ObservableObject {
         }
 
         let module = FB01ModuleServices.shared.module
-        let missingVoiceBanks = module.allVoiceBanks.filter { cachedVoiceBanks[$0] == nil }
-        let missingConfigurations = cachedCurrentConfiguration == nil || module.allConfigurationSlots.closedRange.contains { slot in
+        let cacheScope = module.fullDeviceCacheScope
+        let missingVoiceBanks = cacheScope.voiceBanks.filter { cachedVoiceBanks[$0] == nil }
+        let missingConfigurations = (cacheScope.includesCurrentConfiguration && cachedCurrentConfiguration == nil)
+            || (cacheScope.configurationSlots?.closedRange.contains { slot in
             cachedConfigurations[slot] == nil
-        }
+        } ?? false)
 
         guard !missingVoiceBanks.isEmpty || missingConfigurations else {
             backgroundDeviceCacheTask = nil
@@ -520,7 +524,7 @@ final class DocumentModel: ObservableObject {
         case .voiceBank(let bank):
             "Fetching Voice Bank \(bank)..."
         case .configuration(let slot):
-            "Fetching Configuration \(slot) of \(FB01ModuleServices.shared.module.allConfigurationSlots.upperBound)..."
+            "Fetching Configuration \(slot) of \(FB01ModuleServices.shared.module.fullDeviceCacheScope.configurationSlots?.upperBound ?? slot)..."
         case .finishing:
             "Finishing cache update..."
         }
@@ -539,32 +543,11 @@ final class DocumentModel: ObservableObject {
     }
 
     private func cacheProgressText(voiceBanks: [Int], fetchConfigurations: Bool) -> (subject: String, verb: String) {
-        var subjects: [(text: String, isPlural: Bool)] = []
-        if !voiceBanks.isEmpty {
-            subjects.append((voiceBankCacheDescription(for: voiceBanks), true))
-        }
-        if fetchConfigurations {
-            subjects.append(("FB-01 configurations", true))
-        }
-        if subjects.count == 1, let subject = subjects.first {
-            return (subject.text, subject.isPlural ? "are" : "is")
-        }
-        return ("selected FB-01 cache items", "are")
-    }
-
-    private func voiceBankCacheDescription(for banks: [Int]) -> String {
-        let sortedBanks = banks.sorted()
-        let module = FB01ModuleServices.shared.module
-        switch sortedBanks {
-        case module.writableVoiceBanks:
-            return "FB-01 RAM voice banks 1-2"
-        case module.readOnlyVoiceBanks:
-            return "FB-01 ROM voice banks 3-7"
-        case module.allVoiceBanks:
-            return "FB-01 voice banks 1-7"
-        default:
-            return "FB-01 voice banks \(sortedBanks.map(String.init).joined(separator: ", "))"
-        }
+        let text = FB01ModuleServices.shared.module.cacheProgressText(
+            voiceBanks: voiceBanks,
+            fetchConfigurations: fetchConfigurations
+        )
+        return (text.subject, text.verb)
     }
 
     nonisolated private static func fetchCachedConfiguration(
