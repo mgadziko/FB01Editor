@@ -314,6 +314,18 @@ public struct FB01SynthModule: SynthModule {
     public let writableVoiceBanks = [1, 2]
     public let readOnlyVoiceBanks = [3, 4, 5, 6, 7]
     public let voicesPerBank = 48
+    public let voiceBankSelectorLayout = SynthSelectorGridLayout(
+        columns: 4,
+        rowsPerColumn: 12,
+        buttonWidth: 136,
+        minimumWindowHeight: 545
+    )
+    public let configurationBankSelectorLayout: SynthSelectorGridLayout? = SynthSelectorGridLayout(
+        columns: 4,
+        rowsPerColumn: 5,
+        buttonWidth: 136,
+        minimumWindowHeight: 300
+    )
     public let writableConfigurationSlots = SynthSlotRange(1...16)
     public let readOnlyConfigurationSlots = SynthSlotRange(17...20)
 

@@ -47,6 +47,10 @@ import Testing
     #expect(module.voiceBankRange.closedRange == 1...7)
     #expect(module.writableVoiceBankRange.closedRange == 1...2)
     #expect(module.voicesPerBank == 48)
+    #expect(module.voiceBankSelectorLayout.columns == 4)
+    #expect(module.voiceBankSelectorLayout.rowsPerColumn == 12)
+    #expect(module.configurationBankSelectorLayout?.columns == 4)
+    #expect(module.configurationBankSelectorLayout?.rowsPerColumn == 5)
     #expect(module.writableVoiceSlotCount == 96)
     #expect(module.writableConfigurationSlots.closedRange == 1...16)
     #expect(module.readOnlyConfigurationSlots.closedRange == 17...20)
@@ -125,6 +129,13 @@ private struct MockFourOperatorModule: SynthModule {
     let writableVoiceBanks = [1]
     let readOnlyVoiceBanks: [Int] = []
     let voicesPerBank = 32
+    let voiceBankSelectorLayout = SynthSelectorGridLayout(
+        columns: 2,
+        rowsPerColumn: 16,
+        buttonWidth: 120,
+        minimumWindowHeight: 420
+    )
+    let configurationBankSelectorLayout: SynthSelectorGridLayout? = nil
     let writableConfigurationSlots = SynthSlotRange(1...1)
     let readOnlyConfigurationSlots = SynthSlotRange(1...1)
 }
@@ -142,6 +153,9 @@ private struct MockFourOperatorModule: SynthModule {
     #expect(module.parameterBindingDescriptors.first?.fieldName == "operatorLevel")
     #expect(module.writableVoiceBanks == [1])
     #expect(module.voicesPerBank == 32)
+    #expect(module.voiceBankSelectorLayout.columns == 2)
+    #expect(module.voiceBankSelectorLayout.rowsPerColumn == 16)
+    #expect(module.configurationBankSelectorLayout == nil)
 }
 
 @Test func fb01ModuleServicesExposeCurrentModuleServices() {

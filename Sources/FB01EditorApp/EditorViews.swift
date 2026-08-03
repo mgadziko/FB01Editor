@@ -186,15 +186,16 @@ struct VoiceBankSelectorWindow: View {
     @State private var errorMessage: String?
 
     var body: some View {
+        let layout = EditorSynthModule.module.voiceBankSelectorLayout
         SelectorWindowLayout(
             title: "Voice Bank \(bank)",
             subtitle: "Select a voice to fetch it into a new Voice Document.",
             isLoading: isLoading,
             errorMessage: errorMessage,
-            minHeight: 545
+            layout: layout
         ) {
-            fourColumnSelectorGrid(items: items, rowsPerColumn: 12) { item in
-                SelectorGridButton(number: item.displayNumber, title: item.title) {
+            selectorGrid(items: items, layout: layout) { item in
+                SelectorGridButton(number: item.displayNumber, title: item.title, buttonWidth: layout.buttonWidth) {
                     openVoiceDocument(item)
                 }
                 .disabled(document.isBusy)
@@ -243,15 +244,16 @@ struct ConfigurationSelectorWindow: View {
     @State private var errorMessage: String?
 
     var body: some View {
+        let layout = EditorSynthModule.module.configurationBankSelectorLayout ?? EditorSynthModule.module.voiceBankSelectorLayout
         SelectorWindowLayout(
             title: "Configuration Bank",
             subtitle: "Select a configuration to fetch it into a new Configuration Document.",
             isLoading: isLoading,
             errorMessage: errorMessage,
-            minHeight: 300
+            layout: layout
         ) {
-            fourColumnSelectorGrid(items: items, rowsPerColumn: 5) { item in
-                SelectorGridButton(number: item.displayNumber, title: item.title) {
+            selectorGrid(items: items, layout: layout) { item in
+                SelectorGridButton(number: item.displayNumber, title: item.title, buttonWidth: layout.buttonWidth) {
                     openConfigurationDocument(item)
                 }
                 .disabled(document.isBusy)
@@ -291,19 +293,12 @@ struct ConfigurationSelectorWindow: View {
     }
 }
 
-private enum SelectorWindowMetrics {
-    static let buttonWidth: CGFloat = 136
-    static let columnSpacing: CGFloat = 14
-    static let horizontalPadding: CGFloat = 36
-    static let width = buttonWidth * 4 + columnSpacing * 3 + horizontalPadding
-}
-
 private struct SelectorWindowLayout<Content: View>: View {
     var title: String
     var subtitle: String
     var isLoading: Bool
     var errorMessage: String?
-    var minHeight: CGFloat
+    var layout: SynthSelectorGridLayout
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -332,8 +327,8 @@ private struct SelectorWindowLayout<Content: View>: View {
             content()
         }
         .padding(18)
-        .frame(width: SelectorWindowMetrics.width, alignment: .topLeading)
-        .frame(minHeight: minHeight, alignment: .topLeading)
+        .frame(width: CGFloat(layout.windowWidth), alignment: .topLeading)
+        .frame(minHeight: CGFloat(layout.minimumWindowHeight), alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }
@@ -341,6 +336,7 @@ private struct SelectorWindowLayout<Content: View>: View {
 private struct SelectorGridButton: View {
     var number: Int
     var title: String
+    var buttonWidth: Double
     var action: () -> Void
 
     var body: some View {
@@ -358,7 +354,7 @@ private struct SelectorGridButton: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .frame(width: 136, alignment: .leading)
+            .frame(width: CGFloat(buttonWidth), alignment: .leading)
             .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
@@ -370,15 +366,15 @@ private struct SelectorGridButton: View {
     }
 }
 
-private func fourColumnSelectorGrid<Item: Identifiable, ButtonView: View>(
+private func selectorGrid<Item: Identifiable, ButtonView: View>(
     items: [Item],
-    rowsPerColumn: Int,
+    layout: SynthSelectorGridLayout,
     @ViewBuilder button: @escaping (Item) -> ButtonView
 ) -> some View {
-    HStack(alignment: .top, spacing: 14) {
-        ForEach(0..<4, id: \.self) { column in
+    HStack(alignment: .top, spacing: CGFloat(layout.columnSpacing)) {
+        ForEach(0..<layout.columns, id: \.self) { column in
             VStack(alignment: .leading, spacing: 8) {
-                ForEach(columnItems(items, column: column, rowsPerColumn: rowsPerColumn)) { item in
+                ForEach(columnItems(items, column: column, rowsPerColumn: layout.rowsPerColumn)) { item in
                     button(item)
                 }
             }

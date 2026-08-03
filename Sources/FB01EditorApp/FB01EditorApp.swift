@@ -73,6 +73,14 @@ struct FB01EditorApplication: App {
     @StateObject private var document = DocumentModel()
     @StateObject private var documentWorkspace = EditorDocumentWorkspace()
 
+    private var voiceSelectorLayout: SynthSelectorGridLayout {
+        EditorSynthModule.module.voiceBankSelectorLayout
+    }
+
+    private var configurationSelectorLayout: SynthSelectorGridLayout {
+        EditorSynthModule.module.configurationBankSelectorLayout ?? EditorSynthModule.module.voiceBankSelectorLayout
+    }
+
     var body: some Scene {
         WindowGroup(AppStrings.editorDisplayName) {
             ContentView(document: document, workspace: documentWorkspace)
@@ -115,12 +123,12 @@ struct FB01EditorApplication: App {
                     .frame(width: 420, height: 180)
             }
         }
-        .defaultSize(width: 622, height: 545)
+        .defaultSize(width: voiceSelectorLayout.windowWidth, height: voiceSelectorLayout.minimumWindowHeight)
         .windowResizability(.contentSize)
         WindowGroup("Configuration Bank", id: "configuration-bank-selector") {
             ConfigurationSelectorWindow(document: document, workspace: documentWorkspace)
         }
-        .defaultSize(width: 622, height: 320)
+        .defaultSize(width: configurationSelectorLayout.windowWidth, height: configurationSelectorLayout.minimumWindowHeight + 20)
         .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .appInfo) {

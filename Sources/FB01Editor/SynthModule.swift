@@ -109,6 +109,35 @@ public struct SynthSlotRange: Equatable, Sendable {
     }
 }
 
+public struct SynthSelectorGridLayout: Equatable, Sendable {
+    public var columns: Int
+    public var rowsPerColumn: Int
+    public var buttonWidth: Double
+    public var columnSpacing: Double
+    public var horizontalPadding: Double
+    public var minimumWindowHeight: Double
+
+    public init(
+        columns: Int,
+        rowsPerColumn: Int,
+        buttonWidth: Double,
+        columnSpacing: Double = 14,
+        horizontalPadding: Double = 36,
+        minimumWindowHeight: Double
+    ) {
+        self.columns = max(1, columns)
+        self.rowsPerColumn = max(1, rowsPerColumn)
+        self.buttonWidth = buttonWidth
+        self.columnSpacing = columnSpacing
+        self.horizontalPadding = horizontalPadding
+        self.minimumWindowHeight = minimumWindowHeight
+    }
+
+    public var windowWidth: Double {
+        buttonWidth * Double(columns) + columnSpacing * Double(max(columns - 1, 0)) + horizontalPadding
+    }
+}
+
 public enum SynthParameterValueKind: Equatable, Sendable {
     case integer
     case signedInteger
@@ -335,6 +364,8 @@ public protocol SynthModule: Sendable {
     var writableVoiceBanks: [Int] { get }
     var readOnlyVoiceBanks: [Int] { get }
     var voicesPerBank: Int { get }
+    var voiceBankSelectorLayout: SynthSelectorGridLayout { get }
+    var configurationBankSelectorLayout: SynthSelectorGridLayout? { get }
     var writableConfigurationSlots: SynthSlotRange { get }
     var readOnlyConfigurationSlots: SynthSlotRange { get }
 }
