@@ -303,45 +303,29 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
 
         operationTask = Task {
             do {
-                let messages = try Self.storeMessages(
-                    configuration: configurationToStore,
+                let readbackConfiguration = try await FB01ModuleServices.shared.configurationService.storeConfiguration(
+                    configurationToStore,
+                    zeroBasedSlot: options.slot,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
                     systemChannel: systemChannel,
-                    slot: options.slot
-                )
-                progressPanel.update(message: "The configuration is being stored. Please wait.\nTurning FB-01 Protect OFF...")
-                try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendSysEx([messages[0]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-                    try await Task.sleep(for: .milliseconds(300))
-                }.value
-                try Task.checkCancellation()
-
-                progressPanel.update(message: "The configuration is being stored. Please wait.\nSending configuration data...")
-                try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendSysEx([messages[1]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-                    try await Task.sleep(for: .milliseconds(1000))
-                }.value
-                try Task.checkCancellation()
-
-                progressPanel.update(message: "The configuration is being stored. Please wait.\nStoring configuration \(options.slot + 1) on the FB-01...")
-                try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendSysEx([messages[2]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-                }.value
-                try Task.checkCancellation()
+                    confirmAfterStore: options.confirmAfterStore
+                ) { event in
+                    await MainActor.run {
+                        switch event {
+                        case .turningProtectOff:
+                            progressPanel.update(message: "The configuration is being stored. Please wait.\nTurning FB-01 Protect OFF...")
+                        case .sendingConfigurationData:
+                            progressPanel.update(message: "The configuration is being stored. Please wait.\nSending configuration data...")
+                        case .storingSlot:
+                            progressPanel.update(message: "The configuration is being stored. Please wait.\nStoring configuration \(options.slot + 1) on the FB-01...")
+                        case .verifyingSlot:
+                            progressPanel.update(message: "The configuration is being stored. Please wait.\nVerifying configuration \(options.slot + 1) by readback...")
+                        }
+                    }
+                }
 
                 if options.confirmAfterStore {
-                    progressPanel.update(message: "The configuration is being stored. Please wait.\nVerifying configuration \(options.slot + 1) by readback...")
-                    let readback = try await Task.detached(priority: .userInitiated) {
-                        try await Task.sleep(for: .milliseconds(800))
-                        return try FB01MIDI.request(
-                            .configuration(options.slot + 1),
-                            sourceIndex: sourceIndex,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel,
-                            timeout: 8
-                        )
-                    }.value
-                    try Task.checkCancellation()
-                    let readbackConfiguration = try Self.storedConfiguration(from: readback, slot: options.slot)
                     statusMessage = readbackConfiguration?.bytes == configurationToStore.bytes
                         ? "FB-01 confirmed store to configuration \(options.slot + 1) on \(destinationName)."
                         : "Stored configuration \(options.slot + 1), but readback did not match exactly."
@@ -515,19 +499,4 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         )
     }
 
-    private static func storeMessages(configuration: FB01ConfigurationData, systemChannel: Int, slot: Int) throws -> [[UInt8]] {
-        do {
-            return try FB01ModuleServices.shared.configurationService.storeMessages(
-                configuration: configuration,
-                systemChannel: systemChannel,
-                zeroBasedSlot: slot
-            )
-        } catch is FB01SysExError {
-            throw FB01AppError.readOnlyConfigurationSlot
-        }
-    }
-
-    nonisolated private static func storedConfiguration(from bytes: [UInt8], slot: Int) throws -> FB01ConfigurationData? {
-        try FB01ModuleServices.shared.configurationService.storedConfiguration(fromDump: bytes, zeroBasedSlot: slot)
-    }
 }

@@ -2412,7 +2412,6 @@ final class DocumentModel: ObservableObject {
 
         Task {
             do {
-                let storeMessages = try storeConfigurationMessages(payload: payload, systemChannel: systemChannel, slot: slot)
                 let backupArtifact = try await Task.detached(priority: .userInitiated) { () -> FB01Artifact? in
                     if let backupURL {
                         let backupBytes = try FB01MIDI.request(
@@ -2430,31 +2429,31 @@ final class DocumentModel: ObservableObject {
                     return nil
                 }.value
 
-                let response = try await Task.detached(priority: .userInitiated) { () -> [[UInt8]] in
-                    try FB01MIDI.sendSysEx([storeMessages[0]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-                    try await Task.sleep(for: .milliseconds(300))
-                    try FB01MIDI.sendSysEx([storeMessages[1]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-                    try await Task.sleep(for: .milliseconds(1000))
-                    try FB01MIDI.sendSysEx([storeMessages[2]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-                    guard confirmAfterStore else {
-                        return []
+                let confirmedConfiguration = try await FB01ModuleServices.shared.configurationService.storeConfiguration(
+                    payload,
+                    zeroBasedSlot: slot,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    confirmAfterStore: confirmAfterStore
+                ) { [self] event in
+                    await MainActor.run {
+                        switch event {
+                        case .turningProtectOff:
+                            self.statusMessage = "Turning FB-01 Protect OFF before storing configuration \(slot + 1)..."
+                        case .sendingConfigurationData:
+                            self.statusMessage = "Sending \(sourceTitle) to the current configuration edit buffer..."
+                        case .storingSlot:
+                            self.statusMessage = "Storing \(sourceTitle) in configuration \(slot + 1)..."
+                        case .verifyingSlot:
+                            self.statusMessage = "Fetching configuration \(slot + 1) to verify store..."
+                        }
                     }
-                    try await Task.sleep(for: .milliseconds(800))
-                    return [
-                        try FB01MIDI.request(
-                            .configuration(slot + 1),
-                            sourceIndex: sourceIndex,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel,
-                            timeout: 8
-                        ),
-                    ]
-                }.value
+                }
 
                 let backupText = backupArtifact == nil ? "" : " Backup saved."
                 if confirmAfterStore {
-                    if let confirmedConfiguration = try storedConfigurationPayload(from: response, slot: slot),
-                       confirmedConfiguration.bytes == payload.bytes {
+                    if confirmedConfiguration?.bytes == payload.bytes {
                         statusMessage = "FB-01 confirmed \(sourceTitle) stored to configuration \(slot + 1) on \(destinationName).\(backupText)"
                     } else {
                         statusMessage = "Stored \(sourceTitle) to configuration \(slot + 1), but fetched data did not match exactly. Protect may still be ON, the MIDI path may be wrong, or the FB-01 did not accept the store.\(backupText)"
@@ -2514,31 +2513,29 @@ final class DocumentModel: ObservableObject {
             try originalArtifact.writeSysEx(to: backupURL)
         }.value
 
-        statusMessage = "\(statusPrefix): turning FB-01 Protect OFF..."
-        let storeMessages = try storeConfigurationMessages(
-            payload: payload,
+        let confirmedConfiguration = try await FB01ModuleServices.shared.configurationService.storeConfiguration(
+            payload,
+            zeroBasedSlot: slot,
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
             systemChannel: systemChannel,
-            slot: slot
-        )
-        let response = try await Task.detached(priority: .userInitiated) { () -> [[UInt8]] in
-            try FB01MIDI.sendSysEx([storeMessages[0]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-            try await Task.sleep(for: .milliseconds(300))
-            try FB01MIDI.sendSysEx([storeMessages[1]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-            try await Task.sleep(for: .milliseconds(1000))
-            try FB01MIDI.sendSysEx([storeMessages[2]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-            try await Task.sleep(for: .milliseconds(800))
-            return [
-                try FB01MIDI.request(
-                    .configuration(slotNumber),
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel,
-                    timeout: 8
-                ),
-            ]
-        }.value
+            confirmAfterStore: true
+        ) { [self] event in
+            await MainActor.run {
+                switch event {
+                case .turningProtectOff:
+                    self.statusMessage = "\(statusPrefix): turning FB-01 Protect OFF..."
+                case .sendingConfigurationData:
+                    self.statusMessage = "\(statusPrefix): sending configuration data..."
+                case .storingSlot:
+                    self.statusMessage = "\(statusPrefix): storing Configuration \(slotNumber)..."
+                case .verifyingSlot:
+                    self.statusMessage = "\(statusPrefix): fetching Configuration \(slotNumber) to verify store..."
+                }
+            }
+        }
 
-        guard let confirmedConfiguration = try storedConfigurationPayload(from: response, slot: slot),
+        guard let confirmedConfiguration,
               confirmedConfiguration.bytes == payload.bytes else {
             throw FB01AppError.message("Configuration \(slotNumber) did not verify after storing.")
         }
@@ -2741,10 +2738,6 @@ final class DocumentModel: ObservableObject {
 
     nonisolated private static func configurationName(fromDump bytes: [UInt8]) throws -> String? {
         try FB01ModuleServices.shared.configurationService.configurationName(fromDump: bytes)
-    }
-
-    nonisolated private static func storedConfigurationPayload(from bytes: [UInt8], slot: Int) throws -> FB01ConfigurationData? {
-        try FB01ModuleServices.shared.configurationService.storedConfiguration(fromDump: bytes, zeroBasedSlot: slot)
     }
 
     private static func chooseDeviceVoiceCopySelection(nameLookup: VoiceDocumentFetchNameLookup) -> DeviceVoiceCopySelection? {
@@ -4164,18 +4157,6 @@ final class DocumentModel: ObservableObject {
             let artifact = try FB01Artifact(sysexBytes: bytes)
             for message in artifact.messages {
                 if case let .currentConfigurationDump(_, packet) = message {
-                    return try FB01ConfigurationData(bytes: packet.payload)
-                }
-            }
-        }
-        return nil
-    }
-
-    private func storedConfigurationPayload(from messages: [[UInt8]], slot: Int) throws -> FB01ConfigurationData? {
-        for bytes in messages {
-            let artifact = try FB01Artifact(sysexBytes: bytes)
-            for message in artifact.messages {
-                if case let .configurationDump(_, number, packet) = message, number == slot {
                     return try FB01ConfigurationData(bytes: packet.payload)
                 }
             }

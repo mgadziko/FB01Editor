@@ -83,6 +83,12 @@ user prompts, progress panels, and backup file placement, but the FB-01 service
 owns Protect OFF, bank image rebuild, long SysEx send, readback request, and
 verification retry behavior.
 
+Configuration slot storage is similarly owned by
+`FB01ConfigurationService.storeConfiguration(...)`. The app shell still owns
+whether the user requested confirmation, status text, and backup file placement,
+while the FB-01 service owns the Protect OFF, current-configuration send,
+slot-store command, optional readback request, and parsed confirmation payload.
+
 `ActiveSynthModule.current` is an internal placeholder for future module
 selection. It is deliberately fixed to FB-01 until another real hardware module
 can be verified.

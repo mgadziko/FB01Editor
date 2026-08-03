@@ -9,6 +9,13 @@ public struct FB01ConfigurationService: SynthConfigurationServicing {
         self.module = module
     }
 
+    public enum StoreEvent: Equatable, Sendable {
+        case turningProtectOff
+        case sendingConfigurationData
+        case storingSlot
+        case verifyingSlot
+    }
+
     public func currentConfiguration(fromDump bytes: [UInt8]) throws -> FB01ConfigurationData? {
         let artifact = try FB01Artifact(sysexBytes: bytes)
         for message in artifact.messages {
@@ -128,5 +135,60 @@ public struct FB01ConfigurationService: SynthConfigurationServicing {
             number: zeroBasedSlot
         ))
         return try [protectOffCommand.bytes, currentMessage.bytes, storeCommand.bytes]
+    }
+
+    public func storeConfiguration(
+        _ configuration: FB01ConfigurationData,
+        zeroBasedSlot: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        confirmAfterStore: Bool,
+        progress: (@Sendable (StoreEvent) async -> Void)? = nil
+    ) async throws -> FB01ConfigurationData? {
+        let messages = try storeMessages(
+            configuration: configuration,
+            systemChannel: systemChannel,
+            zeroBasedSlot: zeroBasedSlot
+        )
+
+        await progress?(.turningProtectOff)
+        try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.sendSysEx([messages[0]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+            try await Task.sleep(for: .milliseconds(300))
+        }.value
+        try Task.checkCancellation()
+
+        await progress?(.sendingConfigurationData)
+        try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.sendSysEx([messages[1]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+            try await Task.sleep(for: .milliseconds(1000))
+        }.value
+        try Task.checkCancellation()
+
+        await progress?(.storingSlot)
+        try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.sendSysEx([messages[2]], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+        }.value
+        try Task.checkCancellation()
+
+        guard confirmAfterStore else {
+            return nil
+        }
+
+        await progress?(.verifyingSlot)
+        let readback = try await Task.detached(priority: .userInitiated) {
+            try await Task.sleep(for: .milliseconds(800))
+            return try FB01MIDI.request(
+                .configuration(zeroBasedSlot + 1),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 8
+            )
+        }.value
+        try Task.checkCancellation()
+
+        return try storedConfiguration(fromDump: readback, zeroBasedSlot: zeroBasedSlot)
     }
 }
