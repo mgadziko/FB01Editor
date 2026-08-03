@@ -33,6 +33,14 @@ public struct FB01FetchedVoice: Sendable {
     }
 }
 
+public struct FB01VoiceSendConfirmation: Sendable {
+    public var statusCode: UInt8?
+
+    public init(statusCode: UInt8?) {
+        self.statusCode = statusCode
+    }
+}
+
 public enum FB01VoiceBankImageStoreEvent: Equatable, Sendable {
     case turningProtectOff
     case storePass(Int)
@@ -156,6 +164,42 @@ public struct FB01VoiceService: SynthVoiceServicing {
             systemChannel: payload.systemChannel,
             title: "instrument \(displayInstrument) voice"
         )
+    }
+
+    public func sendInstrumentVoiceAndConfirm(
+        _ voice: FB01VoiceData,
+        instrument: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        timeout: Double = 8
+    ) async throws -> FB01VoiceSendConfirmation {
+        let status = try await Task.detached(priority: .userInitiated) {
+            let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument)
+            let request = try FB01MIDIRequestKind.instrumentVoice(instrument + 1).bytes(systemChannel: systemChannel)
+            return try FB01MIDI.sendAndReceive(
+                [try artifact.sysexBytes, request],
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                timeout: timeout,
+                maxMessages: 1,
+                delayBetweenMessages: 0.35
+            )
+        }.value
+
+        return FB01VoiceSendConfirmation(statusCode: try deviceStatusCode(from: status))
+    }
+
+    private func deviceStatusCode(from messages: [[UInt8]]) throws -> UInt8? {
+        for bytes in messages {
+            let artifact = try FB01Artifact(sysexBytes: bytes)
+            for message in artifact.messages {
+                if case .deviceStatus(let code) = message {
+                    return code
+                }
+            }
+        }
+        return nil
     }
 
     public func fetchStoredVoice(

@@ -89,6 +89,13 @@ whether the user requested confirmation, status text, and backup file placement,
 while the FB-01 service owns the Protect OFF, current-configuration send,
 slot-store command, optional readback request, and parsed confirmation payload.
 
+Current edit-buffer send/confirm workflows are now module-service owned:
+`FB01ConfigurationService.sendCurrentConfigurationAndConfirm(...)` handles the
+current configuration send plus readback parse, and
+`FB01VoiceService.sendInstrumentVoiceAndConfirm(...)` handles instrument voice
+send plus FB-01 status parsing. The app shell still chooses when to call these
+operations and how to word the resulting status messages.
+
 `ActiveSynthModule.current` is an internal placeholder for future module
 selection. It is deliberately fixed to FB-01 until another real hardware module
 can be verified.

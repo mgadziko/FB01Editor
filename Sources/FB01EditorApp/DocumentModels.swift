@@ -3164,18 +3164,17 @@ final class DocumentModel: ObservableObject {
     }
 
     func currentConfigurationMessageBytes(payload: FB01ConfigurationData, systemChannel: Int) throws -> [UInt8] {
-        let message = FB01SysExMessage.currentConfigurationDump(
-            systemChannel: systemChannel,
-            packet: try FB01SysExPacket(payload: payload.bytes)
+        try FB01ModuleServices.shared.configurationService.currentConfigurationMessageBytes(
+            configuration: payload,
+            systemChannel: systemChannel
         )
-        return try message.bytes
     }
 
     func currentConfigurationSendAndConfirmMessages(payload: FB01ConfigurationData, systemChannel: Int) throws -> [[UInt8]] {
-        [
-            try currentConfigurationMessageBytes(payload: payload, systemChannel: systemChannel),
-            try FB01MIDIRequestKind.currentConfiguration.bytes(systemChannel: systemChannel),
-        ]
+        try FB01ModuleServices.shared.configurationService.currentConfigurationSendAndConfirmMessages(
+            configuration: payload,
+            systemChannel: systemChannel
+        )
     }
 
     private func sendConfigurationPayload(_ payload: FB01ConfigurationData, systemChannel: Int, statusPrefix: String) {
@@ -3199,27 +3198,13 @@ final class DocumentModel: ObservableObject {
 
         Task {
             do {
-                let configurationBytes = try currentConfigurationMessageBytes(payload: payload, systemChannel: systemChannel)
-                let response = try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendSysEx(
-                        [configurationBytes],
-                        destinationIndex: destinationIndex,
-                        delayBetweenMessages: 0
-                    )
-                    try await Task.sleep(for: .milliseconds(800))
-                    return [
-                        try FB01MIDI.request(
-                            .currentConfiguration,
-                            sourceIndex: sourceIndex,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel,
-                            timeout: 8
-                        ),
-                    ]
-                }.value
-
-                if let confirmedConfiguration = try currentConfigurationPayload(from: response),
-                   confirmedConfiguration.bytes == payload.bytes {
+                let confirmedConfiguration = try await FB01ModuleServices.shared.configurationService.sendCurrentConfigurationAndConfirm(
+                    payload,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                )
+                if confirmedConfiguration?.bytes == payload.bytes {
                     statusMessage = "FB-01 confirmed current edit buffer matches \(sourceTitle) on \(destinationName)."
                 } else {
                     statusMessage = "Sent \(sourceTitle); FB-01 returned a current configuration that did not match exactly."
@@ -3256,20 +3241,14 @@ final class DocumentModel: ObservableObject {
 
         Task {
             do {
-                let status = try await Task.detached(priority: .userInitiated) {
-                    let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument)
-                    let request = try FB01MIDIRequestKind.instrumentVoice(instrument + 1).bytes(systemChannel: systemChannel)
-                    return try FB01MIDI.sendAndReceive(
-                        [try artifact.sysexBytes, request],
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        timeout: 8,
-                        maxMessages: 1,
-                        delayBetweenMessages: 0.35
-                    )
-                }.value
-
-                if let code = try deviceStatusCode(from: status) {
+                let confirmation = try await FB01ModuleServices.shared.voiceService.sendInstrumentVoiceAndConfirm(
+                    voice,
+                    instrument: instrument,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                )
+                if let code = confirmation.statusCode {
                     statusMessage = "FB-01 confirmed voice in instrument \(instrument + 1) on \(destinationName) (status \(String(format: "0x%02X", code)))."
                 } else {
                     statusMessage = "Sent voice to instrument \(instrument + 1); FB-01 returned an unrecognized response."
@@ -4147,18 +4126,6 @@ final class DocumentModel: ObservableObject {
                 }
             default:
                 break
-            }
-        }
-        return nil
-    }
-
-    private func currentConfigurationPayload(from messages: [[UInt8]]) throws -> FB01ConfigurationData? {
-        for bytes in messages {
-            let artifact = try FB01Artifact(sysexBytes: bytes)
-            for message in artifact.messages {
-                if case let .currentConfigurationDump(_, packet) = message {
-                    return try FB01ConfigurationData(bytes: packet.payload)
-                }
             }
         }
         return nil

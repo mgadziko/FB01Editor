@@ -16,6 +16,27 @@ public struct FB01ConfigurationService: SynthConfigurationServicing {
         case verifyingSlot
     }
 
+    public func currentConfigurationMessageBytes(
+        configuration: FB01ConfigurationData,
+        systemChannel: Int
+    ) throws -> [UInt8] {
+        let message = FB01SysExMessage.currentConfigurationDump(
+            systemChannel: systemChannel,
+            packet: try FB01SysExPacket(payload: configuration.bytes)
+        )
+        return try message.bytes
+    }
+
+    public func currentConfigurationSendAndConfirmMessages(
+        configuration: FB01ConfigurationData,
+        systemChannel: Int
+    ) throws -> [[UInt8]] {
+        [
+            try currentConfigurationMessageBytes(configuration: configuration, systemChannel: systemChannel),
+            try FB01MIDIRequestKind.currentConfiguration.bytes(systemChannel: systemChannel),
+        ]
+    }
+
     public func currentConfiguration(fromDump bytes: [UInt8]) throws -> FB01ConfigurationData? {
         let artifact = try FB01Artifact(sysexBytes: bytes)
         for message in artifact.messages {
@@ -69,6 +90,36 @@ public struct FB01ConfigurationService: SynthConfigurationServicing {
             throw FB01SysExError.unsupportedSysEx
         }
         return configuration
+    }
+
+    public func sendCurrentConfigurationAndConfirm(
+        _ configuration: FB01ConfigurationData,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        timeout: Double = 8
+    ) async throws -> FB01ConfigurationData? {
+        let configurationBytes = try currentConfigurationMessageBytes(
+            configuration: configuration,
+            systemChannel: systemChannel
+        )
+        let readback = try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.sendSysEx(
+                [configurationBytes],
+                destinationIndex: destinationIndex,
+                delayBetweenMessages: 0
+            )
+            try await Task.sleep(for: .milliseconds(800))
+            return try FB01MIDI.request(
+                .currentConfiguration,
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: timeout
+            )
+        }.value
+
+        return try currentConfiguration(fromDump: readback)
     }
 
     public func fetchStoredConfiguration(
