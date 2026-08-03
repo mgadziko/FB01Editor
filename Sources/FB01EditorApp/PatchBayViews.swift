@@ -574,6 +574,94 @@ private struct FMPatchBayLayout {
         feedbackControlCenter = layout.feedbackControlCenter
     }
 
+    func routingSubtitle(forOperator operatorNumber: Int) -> String {
+        switch algorithm {
+        case 1:
+            switch operatorNumber {
+            case 1: return carrierSubtitle(modifiedBy: [2])
+            case 2: return modulatorSubtitle(changes: [1])
+            case 3: return modulatorSubtitle(changes: [2])
+            case 4: return modulatorSubtitle(changes: [3])
+            default: return ""
+            }
+        case 2:
+            switch operatorNumber {
+            case 1: return carrierSubtitle(modifiedBy: [2])
+            case 2: return modulatorSubtitle(changes: [1])
+            case 3, 4: return modulatorSubtitle(changes: [2])
+            default: return ""
+            }
+        case 3:
+            switch operatorNumber {
+            case 1: return carrierSubtitle(modifiedBy: [2, 4])
+            case 2: return modulatorSubtitle(changes: [1])
+            case 3: return modulatorSubtitle(changes: [2])
+            case 4: return modulatorSubtitle(changes: [1])
+            default: return ""
+            }
+        case 4:
+            switch operatorNumber {
+            case 1: return carrierSubtitle(modifiedBy: [2, 3])
+            case 2: return modulatorSubtitle(changes: [1])
+            case 3: return modulatorSubtitle(changes: [1])
+            case 4: return modulatorSubtitle(changes: [3])
+            default: return ""
+            }
+        case 5:
+            switch operatorNumber {
+            case 1: return carrierSubtitle(modifiedBy: [2])
+            case 2: return modulatorSubtitle(changes: [1])
+            case 3: return carrierSubtitle(modifiedBy: [4])
+            case 4: return modulatorSubtitle(changes: [3])
+            default: return ""
+            }
+        case 6:
+            switch operatorNumber {
+            case 1, 2, 3: return carrierSubtitle(modifiedBy: [4])
+            case 4: return modulatorSubtitle(changes: [1, 2, 3])
+            default: return ""
+            }
+        case 7:
+            switch operatorNumber {
+            case 1, 2: return carrierSubtitle(modifiedBy: [])
+            case 3: return carrierSubtitle(modifiedBy: [4])
+            case 4: return modulatorSubtitle(changes: [3])
+            default: return ""
+            }
+        default:
+            switch operatorNumber {
+            case 1, 2, 3: return carrierSubtitle(modifiedBy: [])
+            case 4: return "Carrier - heard directly, with self-feedback available"
+            default: return ""
+            }
+        }
+    }
+
+    private func carrierSubtitle(modifiedBy modulators: [Int]) -> String {
+        guard !modulators.isEmpty else {
+            return "Carrier - heard directly"
+        }
+        return "Carrier - heard directly after modifications from \(operatorList(modulators))"
+    }
+
+    private func modulatorSubtitle(changes carriers: [Int]) -> String {
+        "Modulator: changes the harmonic content of \(operatorList(carriers))"
+    }
+
+    private func operatorList(_ numbers: [Int]) -> String {
+        let labels = numbers.map { "Operator \($0)" }
+        switch labels.count {
+        case 0:
+            return "no operator"
+        case 1:
+            return labels[0]
+        case 2:
+            return "\(labels[0]) and \(labels[1])"
+        default:
+            return "\(labels.dropLast().joined(separator: ", ")), and \(labels.last ?? "")"
+        }
+    }
+
     private static func makeLayout(for algorithm: Int) -> (
         positions: [Int: CGPoint],
         routes: [Route],
@@ -781,6 +869,7 @@ private struct FMPatchBayCanvas: View {
                    let origin = layout.positions[number] {
                     FMPatchOperatorModule(
                         operatorData: operatorData,
+                        routingSubtitle: layout.routingSubtitle(forOperator: number),
                         operatorEnabled: operatorEnabledBinding(operatorData.index),
                         isSelected: operatorData.index == selectedOperatorIndex,
                         select: { selectedOperatorIndex = operatorData.index },
@@ -878,6 +967,7 @@ private struct FMPatchBayRouteCanvas: View {
 
 struct FMPatchOperatorModule: View {
     var operatorData: FB01VoiceOperatorData
+    var routingSubtitle: String
     @Binding var operatorEnabled: Bool
     var isSelected: Bool
     var select: () -> Void
@@ -895,12 +985,15 @@ struct FMPatchOperatorModule: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Operator \(operatorNumber)")
-                    .font(.headline)
-                Text(operatorData.carrier ? "Carrier to Output" : "Modulator")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(operatorData.carrier ? Color.green : Color.blue)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Operator \(operatorNumber)")
+                        .font(.headline)
+                    Text(routingSubtitle)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(operatorData.carrier ? Color.green : Color.blue)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Spacer()
                 Image(systemName: operatorEnabled ? "power.circle.fill" : "power.circle")
                     .foregroundStyle(operatorEnabled ? Color.green : .secondary)
