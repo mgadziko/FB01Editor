@@ -179,7 +179,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let systemChannelName = "System channel \(systemChannel + 1)"
         errorMessage = nil
         if preselectedSource == nil {
-            statusMessage = "Reading Bank 1 and Bank 2 voice names from FB-01 on \(systemChannelName)..."
+            statusMessage = "Fetching Bank 1 and Bank 2 voice names from FB-01 on \(systemChannelName)..."
         } else {
             statusMessage = "Fetching \(recentTitle ?? "recent voice") from FB-01 on \(systemChannelName)..."
         }
@@ -193,8 +193,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     statusMessage = "Voice names loaded from device cache."
                 } else {
                     let progressPanel = EditorProgressPanel(
-                        title: "Reading Voice Names",
-                        message: "Reading Bank 1 and Bank 2 from the FB-01 on \(systemChannelName) so the Fetch dialog can show current RAM voice names."
+                        title: "Fetching Voice Names",
+                        message: "Fetching Bank 1 and Bank 2 from the FB-01 on \(systemChannelName) so the Fetch dialog can show current RAM voice names."
                     )
                     progressPanel.show()
                     nameLookup = await Task.detached(priority: .userInitiated) {
@@ -247,7 +247,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             let fetchTitle = recentTitle ?? source.title(nameLookup: nameLookup)
             let fetchProgressPanel = EditorProgressPanel(
                 title: "Fetching Voice",
-                message: "The voice is being fetched. Please wait.\nReading \(fetchTitle) from the FB-01..."
+                message: "The voice is being fetched. Please wait.\nFetching \(fetchTitle) from the FB-01..."
             )
             fetchProgressPanel.show()
             do {
@@ -355,11 +355,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     try Task.checkCancellation()
                     pass += 1
                     guard pass <= 60 else {
-                        throw FB01AppError.message("Bank \(bankNumber) Voice \(options.voiceNumber + 1) did not verify after 60 write passes.")
+                        throw FB01AppError.message("Bank \(bankNumber) Voice \(options.voiceNumber + 1) did not verify after 60 store passes.")
                     }
 
-                    statusMessage = "Writing Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying after send..."
-                    progressPanel.update(message: "The voice is being stored. Please wait.\nWriting Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying by readback...")
+                    statusMessage = "Storing Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying after send..."
+                    progressPanel.update(message: "The voice is being stored. Please wait.\nStoring Bank \(bankNumber) Voice \(options.voiceNumber + 1), pass \(pass); verifying by readback...")
                     let editedBank = try readback.replacingVoices([options.voiceNumber + 1: voiceToStore])
                     let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
                     let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
@@ -393,6 +393,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     func sendKeyboardNote(_ note: Int, isOn: Bool, device: DocumentModel) {
+        guard !device.isBusy else {
+            device.statusMessage = "Keyboard paused while the FB-01 is busy with a device operation."
+            return
+        }
+
         let boundedNote = min(max(note, 0), 127)
         let destinationIndex = device.selectedDestinationIndex
         let destinationName = device.selectedDestinationName
@@ -514,6 +519,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     func receiveExternalKeyboardMessage(_ message: [UInt8], device: DocumentModel) -> Bool {
+        guard !device.isBusy else {
+            device.externalKeyboardStatus = "Paused during device operation"
+            return true
+        }
+
         guard let status = message.first, (0x80...0xEF).contains(status) else {
             return false
         }

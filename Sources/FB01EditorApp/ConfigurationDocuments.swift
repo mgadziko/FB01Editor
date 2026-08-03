@@ -153,7 +153,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         isBusy = true
         errorMessage = nil
         statusMessage = preselectedOptions == nil
-            ? "Reading configuration names from FB-01..."
+            ? "Fetching configuration names from FB-01..."
             : "Fetching \(recentTitle ?? "recent configuration") from FB-01..."
 
         Task {
@@ -165,8 +165,8 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
                     statusMessage = "Configuration names loaded from device cache."
                 } else {
                     let progressPanel = EditorProgressPanel(
-                        title: "Reading Configuration Names",
-                        message: "Reading writable configuration names from the FB-01 so the Fetch dialog can show current slot names."
+                        title: "Fetching Configuration Names",
+                        message: "Fetching writable configuration names from the FB-01 so the Fetch dialog can show current slot names."
                     )
                     progressPanel.show()
                     nameLookup = await Task.detached(priority: .userInitiated) {
@@ -222,7 +222,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
             }
             let fetchProgressPanel = EditorProgressPanel(
                 title: "Fetching Configuration",
-                message: "The configuration is being fetched. Please wait.\nReading \(fetchTitle) from the FB-01..."
+                message: "The configuration is being fetched. Please wait.\nFetching \(fetchTitle) from the FB-01..."
             )
             fetchProgressPanel.show()
             do {
@@ -497,7 +497,7 @@ final class ConfigurationDocumentModel: ObservableObject, Identifiable {
         for slot in module.writableConfigurationSlots.closedRange {
             slotPopup.addItem(withTitle: "Configuration \(slot)")
         }
-        let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored slot after writing and compare it to this document", target: nil, action: nil)
+        let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored slot after storing and compare it to this document", target: nil, action: nil)
         confirmCheckbox.state = .on
 
         stack.addArrangedSubview(labelledEditorPopup(label: "Slot:", popup: slotPopup))

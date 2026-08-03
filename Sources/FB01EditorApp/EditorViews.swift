@@ -1330,7 +1330,7 @@ struct SystemSettingsView: View {
                             set: { document.setMemoryProtect($0) }
                         ))
 
-                        Text("Protect ON blocks stored voices and configurations. Store operations set Protect OFF before writing.")
+                        Text("Protect ON blocks stored voices and configurations. Store operations set Protect OFF before storing.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)

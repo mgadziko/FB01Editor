@@ -84,6 +84,8 @@ final class DocumentModel: ObservableObject {
     @Published private var cachedCurrentConfiguration: FB01ConfigurationData?
     @Published var deviceCacheStatus = "Not loaded"
 
+    private let generalMIDIStoreMaximumPasses = 5
+    private var backgroundDeviceCacheTask: Task<Void, Never>?
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
     private var preparedAuditionBufferSignature: String?
@@ -354,9 +356,19 @@ final class DocumentModel: ObservableObject {
         let module = FB01ModuleServices.shared.module
         return [
             KeyValueRow("Status", deviceCacheStatus),
+            KeyValueRow("Coverage", deviceCacheCoverageStatus),
             KeyValueRow("Voice Banks", "\(cachedVoiceBanks.count)/\(module.allVoiceBanks.count)"),
             KeyValueRow("Configurations", "\(cachedConfigurations.count)/\(module.allConfigurationSlots.upperBound)"),
         ]
+    }
+
+    var deviceCacheCoverageStatus: String {
+        let module = FB01ModuleServices.shared.module
+        let hasAllVoiceBanks = module.allVoiceBanks.allSatisfy { cachedVoiceBanks[$0] != nil }
+        let hasAllConfigurations = cachedCurrentConfiguration != nil && module.allConfigurationSlots.closedRange.allSatisfy { slot in
+            cachedConfigurations[slot] != nil
+        }
+        return hasAllVoiceBanks && hasAllConfigurations ? "Complete" : "Partial"
     }
 
     func startLaunchDeviceCacheRefreshIfNeeded() {
@@ -368,13 +380,17 @@ final class DocumentModel: ObservableObject {
             reason: "Fetching FB-01 device cache",
             voiceBanksToFetch: voiceBanksToCacheOnLaunch(),
             fetchConfigurations: preCacheConfigurationsOnLaunch
-        )
+        ) { [weak self] in
+            self?.startBackgroundFullDeviceCacheRefreshIfNeeded()
+        }
     }
 
     func refreshDeviceCache(
         reason: String = "Refreshing device cache",
         voiceBanksToFetch requestedVoiceBanks: [Int] = FB01ModuleServices.shared.module.allVoiceBanks,
-        fetchConfigurations: Bool = true
+        fetchConfigurations: Bool = true,
+        showsProgressPanel: Bool = true,
+        completion: (() -> Void)? = nil
     ) {
         guard !isBusy else {
             return
@@ -395,17 +411,22 @@ final class DocumentModel: ObservableObject {
             deviceCacheStatus = "Launch cache disabled"
             statusMessage = "Launch device cache skipped by Preferences."
             errorMessage = nil
+            completion?()
             return
         }
         isFetchingFromDevice = true
         deviceCacheStatus = "\(reason)..."
         statusMessage = "\(reason) from \(sourceName) -> \(destinationName)..."
         errorMessage = nil
-        let progressPanel = EditorProgressPanel(
-            title: "Fetching FB-01 Device Cache",
-            message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait."
-        )
-        progressPanel.show()
+        let progressPanel: EditorProgressPanel? = if showsProgressPanel {
+            EditorProgressPanel(
+                title: "Fetching FB-01 Device Cache",
+                message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait."
+            )
+        } else {
+            nil
+        }
+        progressPanel?.show()
 
         Task {
             let cacheResult = await services.cacheService.fetch(
@@ -418,7 +439,7 @@ final class DocumentModel: ObservableObject {
                 await MainActor.run {
                     let detail = Self.cacheProgressDetail(for: event)
                     self.statusMessage = "\(reason): \(detail)"
-                    progressPanel.update(
+                    progressPanel?.update(
                         message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.\n\(detail)",
                         completed: completed,
                         total: total
@@ -444,19 +465,62 @@ final class DocumentModel: ObservableObject {
                 ? "Device cache loaded from \(sourceName) -> \(destinationName)."
                 : "Device cache partially loaded from \(sourceName) -> \(destinationName); \(cacheResult.failures.count) item\(cacheResult.failures.count == 1 ? "" : "s") failed."
             errorMessage = nil
-            progressPanel.dismiss()
+            progressPanel?.dismiss()
             isFetchingFromDevice = false
+            completion?()
+        }
+    }
+
+    func startBackgroundFullDeviceCacheRefreshIfNeeded() {
+        guard backgroundDeviceCacheTask == nil else {
+            return
+        }
+
+        backgroundDeviceCacheTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            await MainActor.run {
+                self?.refreshMissingFullDeviceCacheInBackground()
+            }
+        }
+    }
+
+    private func refreshMissingFullDeviceCacheInBackground() {
+        guard !isBusy else {
+            backgroundDeviceCacheTask = nil
+            startBackgroundFullDeviceCacheRefreshIfNeeded()
+            return
+        }
+
+        let module = FB01ModuleServices.shared.module
+        let missingVoiceBanks = module.allVoiceBanks.filter { cachedVoiceBanks[$0] == nil }
+        let missingConfigurations = cachedCurrentConfiguration == nil || module.allConfigurationSlots.closedRange.contains { slot in
+            cachedConfigurations[slot] == nil
+        }
+
+        guard !missingVoiceBanks.isEmpty || missingConfigurations else {
+            backgroundDeviceCacheTask = nil
+            deviceCacheStatus = "Complete"
+            return
+        }
+
+        refreshDeviceCache(
+            reason: "Caching FB-01 contents in background",
+            voiceBanksToFetch: missingVoiceBanks,
+            fetchConfigurations: missingConfigurations,
+            showsProgressPanel: false
+        ) { [weak self] in
+            self?.backgroundDeviceCacheTask = nil
         }
     }
 
     private static func cacheProgressDetail(for event: FB01DeviceCacheEvent) -> String {
         switch event {
         case .currentConfiguration:
-            "Reading current configuration..."
+            "Fetching current configuration..."
         case .voiceBank(let bank):
-            "Reading Voice Bank \(bank)..."
+            "Fetching Voice Bank \(bank)..."
         case .configuration(let slot):
-            "Reading Configuration \(slot) of \(FB01ModuleServices.shared.module.allConfigurationSlots.upperBound)..."
+            "Fetching Configuration \(slot) of \(FB01ModuleServices.shared.module.allConfigurationSlots.upperBound)..."
         case .finishing:
             "Finishing cache update..."
         }
@@ -564,12 +628,12 @@ final class DocumentModel: ObservableObject {
         let systemChannelName = "System channel \(systemChannel + 1)"
         let wasFetchingFromDevice = isFetchingFromDevice
         isFetchingFromDevice = true
-        statusMessage = "\(reason). Reading assigned RAM voice names from \(bankListTitle(banks)) on \(systemChannelName)..."
-        configurationDocument?.statusMessage = "Reading assigned RAM voice names from the FB-01..."
+        statusMessage = "\(reason). Fetching assigned RAM voice names from \(bankListTitle(banks)) on \(systemChannelName)..."
+        configurationDocument?.statusMessage = "Fetching assigned RAM voice names from the FB-01..."
 
         var loadedBanks: [Int] = []
         for bank in banks {
-            let detail = "Reading Bank \(bank) voice names for assigned Instruments..."
+            let detail = "Fetching Bank \(bank) voice names for assigned Instruments..."
             statusMessage = detail
             configurationDocument?.statusMessage = detail
             progressPanel?.update(message: "The configuration is being fetched. Please wait.\n\(detail)")
@@ -1407,16 +1471,16 @@ final class DocumentModel: ObservableObject {
 
                 while !mismatches.isEmpty {
                     pass += 1
-                    guard pass <= 60 else {
-                        throw FB01AppError.message("Bank \(targetBank) still has \(mismatches.count) General MIDI mismatches after 60 write passes.")
+                    guard pass <= generalMIDIStoreMaximumPasses else {
+                        throw FB01AppError.message("Bank \(targetBank) still has \(mismatches.count) General MIDI mismatches after \(generalMIDIStoreMaximumPasses) store passes. The FB-01 may be rejecting the bulk dump; stop playing notes during store operations and check Protect/cabling before retrying.")
                     }
                     guard mismatches.count < previousMismatchCount else {
-                        throw FB01AppError.message("Bank \(targetBank) made no write progress; first mismatch: \(mismatches[0])")
+                        throw FB01AppError.message("Bank \(targetBank) made no store progress; first mismatch: \(mismatches[0])")
                     }
 
                     previousMismatchCount = mismatches.count
-                    statusMessage = "Writing General MIDI voices to Bank \(targetBank), pass \(pass); \(mismatches.count) mismatch\(mismatches.count == 1 ? "" : "es") remain..."
-                    progressPanel.update(message: "The voices are being stored. Please wait.\nWriting Bank \(targetBank), pass \(pass); verifying by readback...")
+                    statusMessage = "Storing General MIDI voices in Bank \(targetBank), pass \(pass); \(mismatches.count) mismatch\(mismatches.count == 1 ? "" : "es") remain..."
+                    progressPanel.update(message: "The voices are being stored. Please wait.\nStoring Bank \(targetBank), pass \(pass); verifying by readback...")
                     let editedBank = try readback.replacingVoices(selectedVoices)
                     let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
                     let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
@@ -1867,11 +1931,11 @@ final class DocumentModel: ObservableObject {
         let destinationName = selectedDestinationName
 
         isFetchingFromDevice = true
-        statusMessage = "Reading Bank 1 and Bank 2 voice names from FB-01..."
+        statusMessage = "Fetching Bank 1 and Bank 2 voice names from FB-01..."
         errorMessage = nil
         let progressPanel = EditorProgressPanel(
-            title: "Reading Voice Names",
-            message: "Reading Bank 1 and Bank 2 from the FB-01 so the Copy Voice to Slot dialog can show current RAM voice names."
+            title: "Fetching Voice Names",
+            message: "Fetching Bank 1 and Bank 2 from the FB-01 so the Copy Voice to Slot dialog can show current RAM voice names."
         )
         progressPanel.show()
 
@@ -1915,7 +1979,7 @@ final class DocumentModel: ObservableObject {
                 }.value
 
                 statusMessage = "Copying \(sourceTitle) to \(targetTitle)..."
-                copyProgressPanel.update(message: "The voice is being copied. Please wait.\nWriting \(targetTitle) and verifying by readback...")
+                copyProgressPanel.update(message: "The voice is being copied. Please wait.\nStoring \(targetTitle) and verifying by readback...")
                 let backupFileName = try await storeVoicePayloadByBankImage(
                     voice,
                     systemChannel: systemChannel,
@@ -1957,11 +2021,11 @@ final class DocumentModel: ObservableObject {
         let destinationName = selectedDestinationName
 
         isFetchingConfigurations = true
-        statusMessage = "Reading configuration names from FB-01..."
+        statusMessage = "Fetching configuration names from FB-01..."
         errorMessage = nil
         let progressPanel = EditorProgressPanel(
-            title: "Reading Configuration Names",
-            message: "Reading configurations 1-16 from the FB-01 so the Copy Configuration to Slot dialog can show current writable slot names."
+            title: "Fetching Configuration Names",
+            message: "Fetching configurations 1-16 from the FB-01 so the Copy Configuration to Slot dialog can show current writable slot names."
         )
         progressPanel.show()
 
@@ -2001,7 +2065,7 @@ final class DocumentModel: ObservableObject {
                 }.value
 
                 statusMessage = "Copying \(sourceTitle) to \(targetTitle)..."
-                copyProgressPanel.update(message: "The configuration is being copied. Please wait.\nWriting \(targetTitle) and verifying by readback...")
+                copyProgressPanel.update(message: "The configuration is being copied. Please wait.\nStoring \(targetTitle) and verifying by readback...")
                 let backupFileName = try await storeConfigurationPayloadForDeviceCopy(
                     configuration,
                     systemChannel: systemChannel,
@@ -2312,13 +2376,13 @@ final class DocumentModel: ObservableObject {
         }
         let backupCheckbox = NSButton(checkboxWithTitle: "Fetch and save a backup of the destination slot before overwriting", target: nil, action: nil)
         backupCheckbox.state = .on
-        let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored slot after writing and compare it to the source", target: nil, action: nil)
+        let confirmCheckbox = NSButton(checkboxWithTitle: "Fetch the stored slot after storing and compare it to the source", target: nil, action: nil)
         confirmCheckbox.state = requiresConfirmation ? .on : .off
         confirmCheckbox.isEnabled = !requiresConfirmation
         stack.addArrangedSubview(labelledPopup(label: "Overwrite slot:", popup: popup))
         stack.addArrangedSubview(backupCheckbox)
         stack.addArrangedSubview(confirmCheckbox)
-        stack.addArrangedSubview(makeWarningLabel("Writable slots are 1-16. Configurations 17-20 are read only and are intentionally unavailable here. Protect is set OFF before writing.", width: 500))
+        stack.addArrangedSubview(makeWarningLabel("Writable slots are 1-16. Configurations 17-20 are read only and are intentionally unavailable here. Protect is set OFF before storing.", width: 500))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -2506,7 +2570,7 @@ final class DocumentModel: ObservableObject {
 
         guard let confirmedConfiguration = try storedConfigurationPayload(from: response, slot: slot),
               confirmedConfiguration.bytes == payload.bytes else {
-            throw FB01AppError.message("Configuration \(slotNumber) did not verify after writing.")
+            throw FB01AppError.message("Configuration \(slotNumber) did not verify after storing.")
         }
 
         cacheConfiguration(confirmedConfiguration, slot: slotNumber)
@@ -2780,7 +2844,7 @@ final class DocumentModel: ObservableObject {
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
                     destinationName: destinationName,
-                    statusPrefix: "Writing Bank \(bankNumber) Voice \(voiceNumber)"
+                    statusPrefix: "Storing Bank \(bankNumber) Voice \(voiceNumber)"
                 )
                 statusMessage = "FB-01 verified Bank \(bankNumber) Voice \(voiceNumber) on \(destinationName). Backup saved to \(backupFileName)."
                 errorMessage = nil
@@ -2835,10 +2899,10 @@ final class DocumentModel: ObservableObject {
         while readback.voices[options.voiceNumber].voice.bytes != voice.bytes {
             pass += 1
             guard pass <= 60 else {
-                throw FB01AppError.message("Bank \(bankNumber) Voice \(voiceNumber) did not verify after 60 write passes.")
+                throw FB01AppError.message("Bank \(bankNumber) Voice \(voiceNumber) did not verify after 60 store passes.")
             }
 
-            statusMessage = "\(statusPrefix): write pass \(pass), verifying after send..."
+            statusMessage = "\(statusPrefix): store pass \(pass), verifying after send..."
             let editedBank = try readback.replacingVoices([voiceNumber: voice])
             let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
             let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
@@ -3370,6 +3434,11 @@ final class DocumentModel: ObservableObject {
     }
 
     func sendKeyboardNote(_ note: Int, isOn: Bool) {
+        guard !isBusy else {
+            statusMessage = "Keyboard paused while the FB-01 is busy with a device operation."
+            return
+        }
+
         let boundedNote = min(max(note, 0), 127)
         let destinationIndex = selectedDestinationIndex
         let destinationName = selectedDestinationName
@@ -3456,6 +3525,11 @@ final class DocumentModel: ObservableObject {
     }
 
     func sendKeyboardNoteWithoutVoicePreparation(_ note: Int, isOn: Bool) {
+        guard !isBusy else {
+            statusMessage = "Keyboard paused while the FB-01 is busy with a device operation."
+            return
+        }
+
         let boundedNote = min(max(note, 0), 127)
         let channel = UInt8(min(max(keyboardChannel, 0), 15))
         let velocity = UInt8(min(max(keyboardVelocity, 1), 127))
@@ -4030,8 +4104,15 @@ final class DocumentModel: ObservableObject {
 
         for bank in sourceBanks {
             try Task.checkCancellation()
-            statusMessage = "Reading source Bank \(bank) for General MIDI install..."
-            progressPanel.update(message: "The voices are being stored. Please wait.\nReading source Bank \(bank) from the FB-01...")
+            if let cachedBank = cachedVoiceBanks[bank] {
+                banks[bank] = cachedBank
+                statusMessage = "Using cached source Bank \(bank) for General MIDI store..."
+                progressPanel.update(message: "The voices are being stored. Please wait.\nUsing cached source Bank \(bank)...")
+                continue
+            }
+
+            statusMessage = "Fetching source Bank \(bank) for General MIDI store..."
+            progressPanel.update(message: "The voices are being stored. Please wait.\nFetching source Bank \(bank) from the FB-01...")
             let bytes = try await Task.detached(priority: .userInitiated) {
                 try FB01MIDI.request(
                     .voiceBank(bank),
@@ -4041,7 +4122,9 @@ final class DocumentModel: ObservableObject {
                     timeout: 15
                 )
             }.value
-            banks[bank] = try voiceBankData(from: bytes, expectedBankNumber: bank)
+            let bankData = try voiceBankData(from: bytes, expectedBankNumber: bank)
+            banks[bank] = bankData
+            cachedVoiceBanks[bank] = bankData
         }
         try Task.checkCancellation()
 
