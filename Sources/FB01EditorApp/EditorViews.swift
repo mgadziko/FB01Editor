@@ -143,13 +143,17 @@ struct EmptyStateView: View {
 
 struct VoiceSelectorCommands: View {
     @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Menu("Show Voice Bank") {
             ForEach(EditorSynthModule.module.allVoiceBanks, id: \.self) { bank in
                 Button("Bank \(bank)") {
-                    openWindow(id: "voice-bank-selector", value: bank)
+                    let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank)
+                    if !workspace.bringWindowToFront(identifier: identifier) {
+                        openWindow(id: "voice-bank-selector", value: bank)
+                    }
                 }
                 .disabled(document.isBusy)
             }
@@ -159,11 +163,14 @@ struct VoiceSelectorCommands: View {
 
 struct ConfigurationSelectorCommands: View {
     @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Button("Show Configuration Bank") {
-            openWindow(id: "configuration-bank-selector")
+            if !workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.configurationBankSelectorWindowIdentifier) {
+                openWindow(id: "configuration-bank-selector")
+            }
         }
         .disabled(document.isBusy)
     }
@@ -197,6 +204,7 @@ struct VoiceBankSelectorWindow: View {
         .task(id: bank) {
             await loadItems()
         }
+        .background(WindowIdentifierSetter(identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank)))
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
     }
 
@@ -253,6 +261,7 @@ struct ConfigurationSelectorWindow: View {
         .task {
             await loadItems()
         }
+        .background(WindowIdentifierSetter(identifier: EditorDocumentWorkspace.configurationBankSelectorWindowIdentifier))
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
     }
 
@@ -280,6 +289,13 @@ struct ConfigurationSelectorWindow: View {
             )
         }
     }
+}
+
+private enum SelectorWindowMetrics {
+    static let buttonWidth: CGFloat = 136
+    static let columnSpacing: CGFloat = 14
+    static let horizontalPadding: CGFloat = 36
+    static let width = buttonWidth * 4 + columnSpacing * 3 + horizontalPadding
 }
 
 private struct SelectorWindowLayout<Content: View>: View {
@@ -316,7 +332,8 @@ private struct SelectorWindowLayout<Content: View>: View {
             content()
         }
         .padding(18)
-        .frame(minWidth: 650, minHeight: minHeight, alignment: .topLeading)
+        .frame(width: SelectorWindowMetrics.width, alignment: .topLeading)
+        .frame(minHeight: minHeight, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 }
@@ -341,7 +358,7 @@ private struct SelectorGridButton: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .frame(width: 148, alignment: .leading)
+            .frame(width: 136, alignment: .leading)
             .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
@@ -380,6 +397,28 @@ private func columnItems<Item>(
     }
     let end = min(start + rowsPerColumn, items.count)
     return Array(items[start..<end])
+}
+
+private struct WindowIdentifierSetter: NSViewRepresentable {
+    var identifier: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let window = view.window {
+                window.identifier = NSUserInterfaceItemIdentifier(identifier)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                window.identifier = NSUserInterfaceItemIdentifier(identifier)
+            }
+        }
+    }
 }
 
 struct LiveKeyboardView: View {

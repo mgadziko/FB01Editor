@@ -110,18 +110,18 @@ struct FB01EditorApplication: App {
         WindowGroup("Voice Bank", id: "voice-bank-selector", for: Int.self) { $bank in
             if let bank {
                 VoiceBankSelectorWindow(bank: bank, document: document, workspace: documentWorkspace)
-                    .frame(minWidth: 650, minHeight: 545)
             } else {
                 MissingEditorDocumentView()
                     .frame(width: 420, height: 180)
             }
         }
-        .defaultSize(width: 720, height: 545)
+        .defaultSize(width: 622, height: 545)
+        .windowResizability(.contentSize)
         WindowGroup("Configuration Bank", id: "configuration-bank-selector") {
             ConfigurationSelectorWindow(document: document, workspace: documentWorkspace)
-                .frame(minWidth: 650, minHeight: 300)
         }
-        .defaultSize(width: 720, height: 320)
+        .defaultSize(width: 622, height: 320)
+        .windowResizability(.contentSize)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About \(AppStrings.editorDisplayName)") {
@@ -183,7 +183,7 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Voice") {
-                VoiceSelectorCommands(document: document)
+                VoiceSelectorCommands(document: document, workspace: documentWorkspace)
 
                 Divider()
 
@@ -227,7 +227,7 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Configuration") {
-                ConfigurationSelectorCommands(document: document)
+                ConfigurationSelectorCommands(document: document, workspace: documentWorkspace)
 
                 Divider()
 

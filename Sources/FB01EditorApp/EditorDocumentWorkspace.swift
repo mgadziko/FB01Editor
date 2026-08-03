@@ -389,13 +389,13 @@ final class EditorDocumentWorkspace: ObservableObject {
             .sorted { $0.value.title.localizedStandardCompare($1.value.title) == .orderedAscending }
 
         for (id, document) in editedVoices {
-            bringDocumentWindowToFront(identifier: Self.voiceWindowIdentifier(for: id))
+            bringWindowToFront(identifier: Self.voiceWindowIdentifier(for: id))
             guard confirmTermination(for: document.title, save: { document.save() }, isEdited: { document.isEdited }) else {
                 return .terminateCancel
             }
         }
         for (id, document) in editedConfigurations {
-            bringDocumentWindowToFront(identifier: Self.configurationWindowIdentifier(for: id))
+            bringWindowToFront(identifier: Self.configurationWindowIdentifier(for: id))
             guard confirmTermination(for: document.title, save: { document.save() }, isEdited: { document.isEdited }) else {
                 return .terminateCancel
             }
@@ -431,12 +431,21 @@ final class EditorDocumentWorkspace: ObservableObject {
         "configuration-document-\(id.uuidString)"
     }
 
-    private func bringDocumentWindowToFront(identifier: String) {
+    static func voiceBankSelectorWindowIdentifier(for bank: Int) -> String {
+        "voice-bank-selector-\(bank)"
+    }
+
+    static var configurationBankSelectorWindowIdentifier: String {
+        "configuration-bank-selector"
+    }
+
+    @discardableResult
+    func bringWindowToFront(identifier: String) -> Bool {
         guard let window = NSApp.windows.first(where: { $0.identifier?.rawValue == identifier }) else {
-            return
+            return false
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        return true
     }
 }
-
