@@ -322,6 +322,7 @@ public enum SynthModuleMenu: String, CaseIterable, Sendable {
 public enum SynthModuleCommandKind: String, CaseIterable, Sendable {
     case resetInstructions
     case showVoiceBank
+    case storeVoiceBank
     case copyVoiceToSlot
     case swapVoiceWithSlot
     case resetSelectedVoice

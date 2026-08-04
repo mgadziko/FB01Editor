@@ -8,7 +8,13 @@ enum SidebarSelection: Equatable {
     case source
 }
 
+enum ActiveEditorDocumentKind {
+    case voice
+    case configuration
+}
+
 struct ActiveEditorDocumentActions {
+    var kind: ActiveEditorDocumentKind
     var save: () -> Void
     var saveTitle: String
     var saveAs: () -> Void
@@ -31,10 +37,19 @@ private struct ActiveEditorDocumentActionsKey: FocusedValueKey {
     typealias Value = ActiveEditorDocumentActions
 }
 
+private struct ActiveVoiceBankSelectorKey: FocusedValueKey {
+    typealias Value = Int
+}
+
 extension FocusedValues {
     var activeEditorDocumentActions: ActiveEditorDocumentActions? {
         get { self[ActiveEditorDocumentActionsKey.self] }
         set { self[ActiveEditorDocumentActionsKey.self] = newValue }
+    }
+
+    var activeVoiceBankSelector: Int? {
+        get { self[ActiveVoiceBankSelectorKey.self] }
+        set { self[ActiveVoiceBankSelectorKey.self] = newValue }
     }
 }
 
@@ -119,29 +134,6 @@ struct EditorDocumentCommands: View {
             }
         }
 
-        Button("Fetch Voice from Device...") {
-            let id = workspace.createVoiceDocument()
-            openWindow(id: "voice-document", value: id)
-            Task { @MainActor in
-                await Task.yield()
-                workspace.voiceDocument(id: id)?.fetchFromDevice(device: document)
-            }
-        }
-        .disabled(document.isBusy)
-
-        Menu("Fetch Recent Voice") {
-            if document.recentFetchedVoices.isEmpty {
-                Text("No Recent Voice Fetches")
-            } else {
-                ForEach(document.recentFetchedVoices) { item in
-                    Button(item.title) {
-                        fetchRecentVoice(item)
-                    }
-                    .disabled(document.isBusy || item.source == nil)
-                }
-            }
-        }
-
         Divider()
 
         Button("Load Configuration from File...") {
@@ -175,29 +167,6 @@ struct EditorDocumentCommands: View {
             }
         }
 
-        Button("Fetch Configuration from Device...") {
-            let id = workspace.createConfigurationDocument()
-            openWindow(id: "configuration-document", value: id)
-            Task { @MainActor in
-                await Task.yield()
-                workspace.configurationDocument(id: id)?.fetchFromDevice(device: document)
-            }
-        }
-        .disabled(document.isBusy)
-
-        Menu("Fetch Recent Configuration") {
-            if document.recentFetchedConfigurations.isEmpty {
-                Text("No Recent Configuration Fetches")
-            } else {
-                ForEach(document.recentFetchedConfigurations) { item in
-                    Button(item.title) {
-                        fetchRecentConfiguration(item)
-                    }
-                    .disabled(document.isBusy)
-                }
-            }
-        }
-
         Divider()
 
         Button(activeDocumentActions?.importFromDiskTitle ?? "Import from File into Current Document...") {
@@ -209,16 +178,6 @@ struct EditorDocumentCommands: View {
             activeDocumentActions?.importFromLibrary(document)
         }
         .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true || activeDocumentActions?.canImportFromLibrary(document) != true)
-
-        Button(activeDocumentActions?.fetchFromDeviceTitle ?? "Fetch from Device into Current Document...") {
-            activeDocumentActions?.fetchFromDevice(document)
-        }
-        .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true || document.isBusy)
-
-        Button(activeDocumentActions?.storeToDeviceTitle ?? "Store Current Document to Device Slot...") {
-            activeDocumentActions?.storeToDevice(document)
-        }
-        .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true || document.isBusy)
 
         Divider()
 
@@ -272,6 +231,48 @@ struct EditorDocumentCommands: View {
             }
         }
     }
+}
+
+struct VoiceDocumentDeviceCommands: View {
+    @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
+    @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
+
+    var body: some View {
+        Button("Fetch Voice from Device...") {
+            let id = workspace.createVoiceDocument()
+            openWindow(id: "voice-document", value: id)
+            Task { @MainActor in
+                await Task.yield()
+                workspace.voiceDocument(id: id)?.fetchFromDevice(device: document)
+            }
+        }
+        .disabled(document.isBusy)
+
+        Menu("Fetch Recent Voice") {
+            if document.recentFetchedVoices.isEmpty {
+                Text("No Recent Voice Fetches")
+            } else {
+                ForEach(document.recentFetchedVoices) { item in
+                    Button(item.title) {
+                        fetchRecentVoice(item)
+                    }
+                    .disabled(document.isBusy || item.source == nil)
+                }
+            }
+        }
+
+        Button(activeDocumentActions?.fetchFromDeviceTitle ?? "Fetch Voice from Device into Current Document...") {
+            activeDocumentActions?.fetchFromDevice(document)
+        }
+        .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)
+
+        Button(activeDocumentActions?.storeToDeviceTitle ?? "Store Voice to Device Slot...") {
+            activeDocumentActions?.storeToDevice(document)
+        }
+        .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)
+    }
 
     private func fetchRecentVoice(_ item: RecentVoiceFetch) {
         guard let source = item.source else {
@@ -283,6 +284,48 @@ struct EditorDocumentCommands: View {
             await Task.yield()
             workspace.voiceDocument(id: id)?.fetchFromDevice(device: document, source: source, recentTitle: item.title)
         }
+    }
+}
+
+struct ConfigurationDocumentDeviceCommands: View {
+    @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
+    @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
+
+    var body: some View {
+        Button("Fetch Configuration from Device...") {
+            let id = workspace.createConfigurationDocument()
+            openWindow(id: "configuration-document", value: id)
+            Task { @MainActor in
+                await Task.yield()
+                workspace.configurationDocument(id: id)?.fetchFromDevice(device: document)
+            }
+        }
+        .disabled(document.isBusy)
+
+        Menu("Fetch Recent Configuration") {
+            if document.recentFetchedConfigurations.isEmpty {
+                Text("No Recent Configuration Fetches")
+            } else {
+                ForEach(document.recentFetchedConfigurations) { item in
+                    Button(item.title) {
+                        fetchRecentConfiguration(item)
+                    }
+                    .disabled(document.isBusy)
+                }
+            }
+        }
+
+        Button(activeDocumentActions?.fetchFromDeviceTitle ?? "Fetch Configuration from Device into Current Document...") {
+            activeDocumentActions?.fetchFromDevice(document)
+        }
+        .disabled(activeDocumentActions?.kind != .configuration || activeDocumentActions?.isBusy == true || document.isBusy)
+
+        Button(activeDocumentActions?.storeToDeviceTitle ?? "Store Configuration to Device Slot...") {
+            activeDocumentActions?.storeToDevice(document)
+        }
+        .disabled(activeDocumentActions?.kind != .configuration || activeDocumentActions?.isBusy == true || document.isBusy)
     }
 
     private func fetchRecentConfiguration(_ item: RecentConfigurationFetch) {

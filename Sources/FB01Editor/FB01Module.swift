@@ -133,6 +133,11 @@ public struct FB01SynthModule: SynthModule {
             displayName: "Show Voice Bank"
         ),
         SynthModuleCommandDescriptor(
+            kind: .storeVoiceBank,
+            menu: .voice,
+            displayName: "Store Bank"
+        ),
+        SynthModuleCommandDescriptor(
             kind: .copyVoiceToSlot,
             menu: .voice,
             displayName: "Copy Voice to Slot..."

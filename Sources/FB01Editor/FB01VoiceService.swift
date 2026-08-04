@@ -46,8 +46,15 @@ public enum FB01VoiceBankImageStoreEvent: Equatable, Sendable {
     case storePass(Int)
 }
 
+public enum FB01VoiceBankStoreEvent: Equatable, Sendable {
+    case turningProtectOff
+    case storingBank
+    case verifyingBank
+}
+
 public enum FB01VoiceStoreError: Error, Equatable, Sendable {
     case verificationFailed(bank: Int, voiceNumber: Int, maximumPasses: Int)
+    case bankVerificationFailed(bank: Int)
 }
 
 public struct FB01VoiceService: SynthVoiceServicing {
@@ -296,6 +303,65 @@ public struct FB01VoiceService: SynthVoiceServicing {
             data: bank.data,
             checksum: FB01.checksum(for: bank.data)
         ).bytes
+    }
+
+    public func retargetedVoiceBank(_ voiceBank: FB01VoiceBankData, displayBank: Int) throws -> FB01VoiceBankData {
+        guard module.isWritableVoiceBank(displayBank) else {
+            throw FB01SysExError.valueOutOfRange(
+                name: "voiceBank",
+                value: displayBank,
+                range: module.writableVoiceBankRange.closedRange
+            )
+        }
+
+        return try FB01VoiceBankData(
+            bank: module.storageVoiceBank(forDisplayBank: displayBank),
+            data: voiceBank.data
+        )
+    }
+
+    public func storeVoiceBank(
+        _ voiceBank: FB01VoiceBankData,
+        displayBank: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        progress: (@Sendable (FB01VoiceBankStoreEvent) async -> Void)? = nil
+    ) async throws -> FB01VoiceBankData {
+        let targetBank = try retargetedVoiceBank(voiceBank, displayBank: displayBank)
+
+        await progress?(.turningProtectOff)
+        let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
+        try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+        }.value
+        try await Task.sleep(for: .milliseconds(300))
+        try Task.checkCancellation()
+
+        await progress?(.storingBank)
+        let loadMessage = try voiceBankLoadMessage(bank: targetBank, systemChannel: systemChannel)
+        try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+        }.value
+        try Task.checkCancellation()
+
+        await progress?(.verifyingBank)
+        let readbackBytes = try await Task.detached(priority: .userInitiated) {
+            try await Task.sleep(for: .milliseconds(1500))
+            return try FB01MIDI.request(
+                .voiceBank(displayBank),
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 15
+            )
+        }.value
+        let readback = try voiceBankData(from: readbackBytes, expectedDisplayBank: displayBank)
+        guard readback.data == targetBank.data else {
+            throw FB01VoiceStoreError.bankVerificationFailed(bank: displayBank)
+        }
+
+        return readback
     }
 
     public func storeVoiceInBankImage(

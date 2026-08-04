@@ -76,7 +76,7 @@ enum EditorModuleCommandRunner {
         switch kind {
         case .resetInstructions:
             document.resetDeviceToFactorySettings()
-        case .showVoiceBank, .showConfigurationBank:
+        case .showVoiceBank, .storeVoiceBank, .showConfigurationBank:
             break
         case .copyVoiceToSlot:
             document.copySelectedVoiceToLocalSlot()

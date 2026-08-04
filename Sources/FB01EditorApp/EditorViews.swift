@@ -145,6 +145,7 @@ struct VoiceSelectorCommands: View {
     @ObservedObject var document: DocumentModel
     @ObservedObject var workspace: EditorDocumentWorkspace
     @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.activeVoiceBankSelector) private var activeVoiceBankSelector
 
     var body: some View {
         Menu(EditorFeatureAvailability.commandTitle(.showVoiceBank, fallback: "Show Voice Bank")) {
@@ -159,6 +160,18 @@ struct VoiceSelectorCommands: View {
             }
         }
         .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.showVoiceBank))
+
+        Menu(EditorFeatureAvailability.commandTitle(.storeVoiceBank, fallback: "Store Bank")) {
+            ForEach(EditorSynthModule.module.writableVoiceBanks, id: \.self) { targetBank in
+                Button("Bank \(targetBank)") {
+                    if let sourceBank = activeVoiceBankSelector {
+                        document.storeVoiceBankFromSelector(sourceBank: sourceBank, targetBank: targetBank)
+                    }
+                }
+                .disabled(document.isBusy || activeVoiceBankSelector == nil)
+            }
+        }
+        .disabled(document.isBusy || activeVoiceBankSelector == nil || !EditorFeatureAvailability.supportsCommand(.storeVoiceBank))
     }
 }
 
@@ -193,7 +206,8 @@ struct VoiceBankSelectorWindow: View {
             subtitle: "Select a voice to fetch it into a new Voice Document.",
             isLoading: isLoading,
             errorMessage: errorMessage,
-            layout: layout
+            layout: layout,
+            showsTitle: false
         ) {
             selectorGrid(items: items, layout: layout) { item in
                 SelectorGridButton(number: item.displayNumber, title: item.title, buttonWidth: layout.buttonWidth) {
@@ -206,7 +220,11 @@ struct VoiceBankSelectorWindow: View {
         .task(id: bank) {
             await loadItems()
         }
-        .background(WindowIdentifierSetter(identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank)))
+        .background(WindowIdentifierSetter(
+            identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank),
+            title: "Voice Bank \(bank)"
+        ))
+        .focusedSceneValue(\.activeVoiceBankSelector, bank)
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
     }
 
@@ -264,6 +282,9 @@ struct ConfigurationSelectorWindow: View {
         .task {
             await loadItems()
         }
+        .onChange(of: document.configurationSelectorRevision) {
+            items = document.configurationSelectorItems()
+        }
         .background(WindowIdentifierSetter(identifier: EditorDocumentWorkspace.configurationBankSelectorWindowIdentifier))
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
     }
@@ -281,6 +302,31 @@ struct ConfigurationSelectorWindow: View {
 
     @MainActor
     private func openConfigurationDocument(_ item: ConfigurationSelectorItem) {
+        if let cachedConfiguration = document.cachedConfigurationFetchResult(options: item.options) {
+            let id = workspace.createConfigurationDocument(
+                configuration: cachedConfiguration,
+                systemChannel: document.systemChannel,
+                statusMessage: "Opened cached \(item.fetchTitle)."
+            )
+            document.rememberRecentFetchedConfiguration(item.options, title: item.fetchTitle)
+            openWindow(id: "configuration-document", value: id)
+            Task { @MainActor in
+                await Task.yield()
+                if let configurationDocument = workspace.configurationDocument(id: id) {
+                    let voiceNameStatus = await document.prefetchConfigurationVoiceNames(
+                        for: cachedConfiguration,
+                        configurationDocument: configurationDocument,
+                        reason: "Opened cached \(item.fetchTitle)",
+                        fetchMissingBanks: false
+                    )
+                    if let voiceNameStatus {
+                        configurationDocument.statusMessage = "Opened cached \(item.fetchTitle). \(voiceNameStatus)"
+                    }
+                }
+            }
+            return
+        }
+
         let id = workspace.createConfigurationDocument(statusMessage: "Fetching \(item.fetchTitle)...")
         openWindow(id: "configuration-document", value: id)
         Task { @MainActor in
@@ -300,14 +346,17 @@ private struct SelectorWindowLayout<Content: View>: View {
     var isLoading: Bool
     var errorMessage: String?
     var layout: SynthSelectorGridLayout
+    var showsTitle = true
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.title2.weight(.semibold))
+                    if showsTitle {
+                        Text(title)
+                            .font(.title2.weight(.semibold))
+                    }
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -398,12 +447,16 @@ private func columnItems<Item>(
 
 private struct WindowIdentifierSetter: NSViewRepresentable {
     var identifier: String
+    var title: String?
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
         DispatchQueue.main.async {
             if let window = view.window {
                 window.identifier = NSUserInterfaceItemIdentifier(identifier)
+                if let title {
+                    window.title = title
+                }
             }
         }
         return view
@@ -413,6 +466,9 @@ private struct WindowIdentifierSetter: NSViewRepresentable {
         DispatchQueue.main.async {
             if let window = nsView.window {
                 window.identifier = NSUserInterfaceItemIdentifier(identifier)
+                if let title {
+                    window.title = title
+                }
             }
         }
     }
@@ -2353,6 +2409,7 @@ struct VoiceDocumentWindow: View {
             document.scheduleKeyboardVoicePreparation(device: device)
         }
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
+            kind: .voice,
             save: { document.save() },
             saveTitle: "Save Voice to File",
             saveAs: { document.saveAs() },
@@ -2532,6 +2589,7 @@ struct ConfigurationDocumentWindow: View {
             device.setExternalKeyboardDocumentHandler(nil)
         }
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
+            kind: .configuration,
             save: { document.save() },
             saveTitle: "Save Configuration to File",
             saveAs: { document.saveAs() },

@@ -1,3 +1,5 @@
+import Foundation
+
 public enum FB01DeviceCacheEvent: Equatable, Sendable {
     case currentConfiguration
     case voiceBank(Int)
@@ -25,6 +27,57 @@ public struct FB01DeviceCacheResult: Sendable {
 
     public var loadedCount: Int {
         voiceBanks.count + configurations.count + (currentConfiguration == nil ? 0 : 1)
+    }
+}
+
+public struct FB01DeviceCacheFetchProfile: Sendable {
+    public var voiceBankTimeout: TimeInterval
+    public var configurationTimeout: TimeInterval
+    public var currentConfigurationTimeout: TimeInterval
+    public var otherTimeout: TimeInterval
+    public var delayBetweenRequests: TimeInterval
+
+    public init(
+        voiceBankTimeout: TimeInterval,
+        configurationTimeout: TimeInterval,
+        currentConfigurationTimeout: TimeInterval,
+        otherTimeout: TimeInterval,
+        delayBetweenRequests: TimeInterval
+    ) {
+        self.voiceBankTimeout = voiceBankTimeout
+        self.configurationTimeout = configurationTimeout
+        self.currentConfigurationTimeout = currentConfigurationTimeout
+        self.otherTimeout = otherTimeout
+        self.delayBetweenRequests = delayBetweenRequests
+    }
+
+    public static let launch = FB01DeviceCacheFetchProfile(
+        voiceBankTimeout: 4.0,
+        configurationTimeout: 2.5,
+        currentConfigurationTimeout: 2.5,
+        otherTimeout: 2.0,
+        delayBetweenRequests: 0.03
+    )
+
+    public static let selector = FB01DeviceCacheFetchProfile(
+        voiceBankTimeout: 12.0,
+        configurationTimeout: 4.0,
+        currentConfigurationTimeout: 4.0,
+        otherTimeout: 3.0,
+        delayBetweenRequests: 0.05
+    )
+
+    public func timeout(for kind: FB01MIDIRequestKind) -> TimeInterval {
+        switch kind {
+        case .voiceBank:
+            return voiceBankTimeout
+        case .configuration:
+            return configurationTimeout
+        case .currentConfiguration:
+            return currentConfigurationTimeout
+        case .unitID, .instrumentVoice, .voiceRAM1:
+            return otherTimeout
+        }
     }
 }
 
@@ -70,58 +123,79 @@ public struct FB01DeviceCacheService: SynthDeviceCacheServicing {
         sourceIndex: Int,
         destinationIndex: Int,
         systemChannel: Int,
+        profile: FB01DeviceCacheFetchProfile = .launch,
         progress: (@Sendable (FB01DeviceCacheEvent, Double, Double) async -> Void)? = nil
     ) async -> FB01DeviceCacheResult {
         let voiceBanks = normalizedVoiceBanks(requestedVoiceBanks)
         let totalRequests = Double(totalRequestCount(voiceBanks: voiceBanks, fetchConfigurations: fetchConfigurations))
-        var completedRequests = 0.0
         var result = FB01DeviceCacheResult()
+        var requestKinds: [FB01MIDIRequestKind] = []
 
         if fetchConfigurations {
             if module.fullDeviceCacheScope.includesCurrentConfiguration {
-                await progress?(.currentConfiguration, completedRequests, totalRequests)
-                if let currentConfiguration = await fetchCurrentConfiguration(
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
-                ) {
-                    result.currentConfiguration = currentConfiguration
-                } else {
-                    result.failures.append("current configuration")
-                }
-                completedRequests += 1
+                requestKinds.append(.currentConfiguration)
             }
         }
 
         for bank in voiceBanks {
-            await progress?(.voiceBank(bank), completedRequests, totalRequests)
-            if let voiceBank = await fetchVoiceBank(
-                bank: bank,
-                sourceIndex: sourceIndex,
-                destinationIndex: destinationIndex,
-                systemChannel: systemChannel
-            ) {
-                result.voiceBanks[bank] = voiceBank
-            } else {
-                result.failures.append("Voice Bank \(bank)")
-            }
-            completedRequests += 1
+            requestKinds.append(.voiceBank(bank))
         }
 
         if fetchConfigurations {
             for slot in module.fullDeviceCacheScope.configurationSlots?.closedRange ?? module.allConfigurationSlots.closedRange {
-                await progress?(.configuration(slot), completedRequests, totalRequests)
-                if let configuration = await fetchConfiguration(
-                    slot: slot,
+                requestKinds.append(.configuration(slot))
+            }
+        }
+
+        let batchResults = await Task.detached(priority: .userInitiated) {
+            do {
+                return try FB01MIDI.requestBatchAllowingFailures(
+                    requestKinds,
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
-                ) {
+                    systemChannel: systemChannel,
+                    timeoutPerRequest: 3.0,
+                    timeoutForRequest: profile.timeout(for:),
+                    delayBetweenRequests: profile.delayBetweenRequests
+                ) { kind, completed, total in
+                    Task {
+                        await progress?(Self.cacheEvent(for: kind), Double(completed), Double(total))
+                    }
+                }
+            } catch {
+                return requestKinds.map {
+                    FB01MIDIRequestBatchResult(kind: $0, errorDescription: String(describing: error))
+                }
+            }
+        }.value
+
+        for batchResult in batchResults {
+            guard let bytes = batchResult.bytes else {
+                result.failures.append(batchResult.kind.displayName)
+                continue
+            }
+
+            switch batchResult.kind {
+            case .currentConfiguration:
+                if let currentConfiguration = try? configurationService.currentConfiguration(fromDump: bytes) {
+                    result.currentConfiguration = currentConfiguration
+                } else {
+                    result.failures.append("current configuration")
+                }
+            case .voiceBank(let bank):
+                if let voiceBank = try? voiceService.voiceBankData(from: bytes, expectedDisplayBank: bank) {
+                    result.voiceBanks[bank] = voiceBank
+                } else {
+                    result.failures.append("Voice Bank \(bank)")
+                }
+            case .configuration(let slot):
+                if let configuration = try? configurationService.storedConfiguration(fromDump: bytes, zeroBasedSlot: slot - 1) {
                     result.configurations[slot] = configuration
                 } else {
                     result.failures.append("Configuration \(slot)")
                 }
-                completedRequests += 1
+            case .unitID, .instrumentVoice, .voiceRAM1:
+                result.failures.append(batchResult.kind.displayName)
             }
         }
 
@@ -140,6 +214,19 @@ public struct FB01DeviceCacheService: SynthDeviceCacheServicing {
             return "Fetching Configuration \(slot) of \(upperBound)..."
         case .finishing:
             return "Finishing cache update..."
+        }
+    }
+
+    private static func cacheEvent(for kind: FB01MIDIRequestKind) -> FB01DeviceCacheEvent {
+        switch kind {
+        case .currentConfiguration:
+            return .currentConfiguration
+        case .voiceBank(let bank):
+            return .voiceBank(bank)
+        case .configuration(let slot):
+            return .configuration(slot)
+        case .unitID, .instrumentVoice, .voiceRAM1:
+            return .finishing
         }
     }
 

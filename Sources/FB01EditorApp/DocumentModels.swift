@@ -83,6 +83,7 @@ final class DocumentModel: ObservableObject {
     @Published private var cachedConfigurations: [Int: FB01ConfigurationData] = [:]
     @Published private var cachedCurrentConfiguration: FB01ConfigurationData?
     @Published var deviceCacheStatus = "Not loaded"
+    @Published private(set) var configurationSelectorRevision = 0
 
     private let generalMIDIStoreMaximumPasses = 5
     private var backgroundDeviceCacheTask: Task<Void, Never>?
@@ -176,7 +177,7 @@ final class DocumentModel: ObservableObject {
             ? true
             : UserDefaults.standard.bool(forKey: DefaultsKey.preCacheROMVoiceBanksOnLaunch)
         preCacheConfigurationsOnLaunch = UserDefaults.standard.object(forKey: DefaultsKey.preCacheConfigurationsOnLaunch) == nil
-            ? true
+            ? false
             : UserDefaults.standard.bool(forKey: DefaultsKey.preCacheConfigurationsOnLaunch)
         recentLoadedVoiceFiles = recentEditorItems(forKey: DefaultsKey.recentLoadedVoiceFiles)
         recentFetchedVoices = recentEditorItems(forKey: DefaultsKey.recentFetchedVoices)
@@ -382,9 +383,7 @@ final class DocumentModel: ObservableObject {
             reason: "Fetching FB-01 device cache",
             voiceBanksToFetch: voiceBanksToCacheOnLaunch(),
             fetchConfigurations: preCacheConfigurationsOnLaunch
-        ) { [weak self] in
-            self?.startBackgroundFullDeviceCacheRefreshIfNeeded()
-        }
+        )
     }
 
     func refreshDeviceCache(
@@ -451,6 +450,9 @@ final class DocumentModel: ObservableObject {
 
             cachedVoiceBanks.merge(cacheResult.voiceBanks) { _, new in new }
             cachedConfigurations.merge(cacheResult.configurations) { _, new in new }
+            if !cacheResult.configurations.isEmpty {
+                configurationSelectorRevision += 1
+            }
             if let currentConfiguration = cacheResult.currentConfiguration {
                 cachedCurrentConfiguration = currentConfiguration
             }
@@ -473,7 +475,7 @@ final class DocumentModel: ObservableObject {
         }
     }
 
-    func startBackgroundFullDeviceCacheRefreshIfNeeded() {
+    func startBackgroundFullDeviceCacheRefreshIfNeeded(showsProgressPanel: Bool = false) {
         guard backgroundDeviceCacheTask == nil else {
             return
         }
@@ -481,15 +483,15 @@ final class DocumentModel: ObservableObject {
         backgroundDeviceCacheTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
             await MainActor.run {
-                self?.refreshMissingFullDeviceCacheInBackground()
+                self?.refreshMissingFullDeviceCacheInBackground(showsProgressPanel: showsProgressPanel)
             }
         }
     }
 
-    private func refreshMissingFullDeviceCacheInBackground() {
+    private func refreshMissingFullDeviceCacheInBackground(showsProgressPanel: Bool = false) {
         guard !isBusy else {
             backgroundDeviceCacheTask = nil
-            startBackgroundFullDeviceCacheRefreshIfNeeded()
+            startBackgroundFullDeviceCacheRefreshIfNeeded(showsProgressPanel: showsProgressPanel)
             return
         }
 
@@ -508,10 +510,10 @@ final class DocumentModel: ObservableObject {
         }
 
         refreshDeviceCache(
-            reason: "Caching FB-01 contents in background",
+            reason: "Fetching FB-01 contents in background",
             voiceBanksToFetch: missingVoiceBanks,
             fetchConfigurations: missingConfigurations,
-            showsProgressPanel: false
+            showsProgressPanel: showsProgressPanel
         ) { [weak self] in
             self?.backgroundDeviceCacheTask = nil
         }
@@ -573,7 +575,8 @@ final class DocumentModel: ObservableObject {
         for configuration: FB01ConfigurationData,
         configurationDocument: ConfigurationDocumentModel?,
         reason: String,
-        progressPanel: EditorProgressPanel? = nil
+        progressPanel: EditorProgressPanel? = nil,
+        fetchMissingBanks: Bool = true
     ) async -> String? {
         let referencedBanks = Array(Set(configuration.instruments.compactMap { instrument -> Int? in
             guard instrument.noteCount > 0,
@@ -590,6 +593,10 @@ final class DocumentModel: ObservableObject {
 
         guard !banks.isEmpty else {
             return "Assigned RAM voice names are already cached."
+        }
+
+        guard fetchMissingBanks else {
+            return "Assigned RAM voice names are not cached."
         }
 
         let sourceIndex = selectedSourceIndex
@@ -680,7 +687,7 @@ final class DocumentModel: ObservableObject {
             return []
         }
 
-        if cachedVoiceBanks[bank] == nil {
+        if module.isWritableVoiceBank(bank), cachedVoiceBanks[bank] == nil {
             await fetchSelectorCache(
                 reason: "Fetching Voice Bank \(bank)",
                 voiceBanks: [bank],
@@ -688,15 +695,129 @@ final class DocumentModel: ObservableObject {
             )
         }
 
+        if module.isWritableVoiceBank(bank), cachedVoiceBanks[bank] == nil {
+            return []
+        }
+
         return voiceBankSelectorItems(bank: bank)
+    }
+
+    func storeVoiceBankFromSelector(sourceBank: Int, targetBank: Int) {
+        guard !isBusy else { return }
+        let module = FB01ModuleServices.shared.module
+        guard module.isValidVoiceBank(sourceBank),
+              module.isWritableVoiceBank(targetBank) else {
+            errorMessage = "Store Bank failed: invalid source or target bank."
+            statusMessage = nil
+            return
+        }
+        guard let sourceBankData = cachedVoiceBanks[sourceBank] else {
+            errorMessage = "Store Bank failed: Voice Bank \(sourceBank) is not loaded. Show Voice Bank \(sourceBank) again before storing it."
+            statusMessage = nil
+            return
+        }
+        guard confirmStoreVoiceBank(sourceBank: sourceBank, targetBank: targetBank) else {
+            return
+        }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        let destinationName = selectedDestinationName
+        isFetchingFromDevice = true
+        statusMessage = "Preparing to store Voice Bank \(sourceBank) in Bank \(targetBank)..."
+        errorMessage = nil
+
+        let progressPanel = EditorProgressPanel(
+            title: "Store Voice Bank",
+            message: "The voice bank is being stored. Please wait.\nPreparing Bank \(sourceBank) -> Bank \(targetBank)...",
+            showsCancelButton: true
+        )
+        progressPanel.show()
+
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
+
+        operationTask = Task {
+            do {
+                let backupDirectory = try ensureDefaultBackupDirectory()
+                let backupURL = backupDirectory.appendingPathComponent(
+                    backupFileName(prefix: "bank-\(targetBank)-before-store-bank")
+                )
+
+                statusMessage = "Backing up Bank \(targetBank) before storing Voice Bank \(sourceBank)..."
+                progressPanel.update(message: "The voice bank is being stored. Please wait.\nBacking up Bank \(targetBank)...")
+                let originalBytes = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.request(
+                        .voiceBank(targetBank),
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        timeout: 15
+                    )
+                }.value
+                let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
+                try await Task.detached(priority: .userInitiated) {
+                    try originalArtifact.writeSysEx(to: backupURL)
+                }.value
+                try Task.checkCancellation()
+
+                let readback = try await FB01ModuleServices.shared.voiceService.storeVoiceBank(
+                    sourceBankData,
+                    displayBank: targetBank,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                ) { [self] event in
+                    await MainActor.run {
+                        switch event {
+                        case .turningProtectOff:
+                            self.statusMessage = "Turning FB-01 Protect OFF before storing Bank \(targetBank)..."
+                            progressPanel.update(message: "The voice bank is being stored. Please wait.\nTurning FB-01 Protect OFF...")
+                        case .storingBank:
+                            self.statusMessage = "Storing Voice Bank \(sourceBank) in Bank \(targetBank)..."
+                            progressPanel.update(message: "The voice bank is being stored. Please wait.\nStoring Voice Bank \(sourceBank) in Bank \(targetBank)...")
+                        case .verifyingBank:
+                            self.statusMessage = "Fetching Bank \(targetBank) to verify store..."
+                            progressPanel.update(message: "The voice bank is being stored. Please wait.\nFetching Bank \(targetBank) to verify store...")
+                        }
+                    }
+                }
+
+                cacheVoiceBank(readback, userBankNumber: targetBank)
+                statusMessage = "FB-01 verified Voice Bank \(sourceBank) stored in Bank \(targetBank) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
+                errorMessage = nil
+            } catch is CancellationError {
+                statusMessage = nil
+                errorMessage = "Store Bank canceled."
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store Bank failed: \(error)"
+            }
+
+            progressPanel.dismiss()
+            isFetchingFromDevice = false
+        }
+    }
+
+    private func confirmStoreVoiceBank(sourceBank: Int, targetBank: Int) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Store Voice Bank?"
+        alert.informativeText = "This stores all 48 voices from Voice Bank \(sourceBank) into RAM Bank \(targetBank), overwriting the current contents of Bank \(targetBank) on the FB-01. A backup of Bank \(targetBank) will be saved before storing."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Store and Overwrite")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func ensureConfigurationSelectorItems() async -> [ConfigurationSelectorItem] {
         let module = FB01ModuleServices.shared.module
-        let missingConfigurations = module.allConfigurationSlots.closedRange.contains { slot in
+        let missingStoredConfigurations = module.writableConfigurationSlots.closedRange.contains { slot in
             cachedConfigurations[slot] == nil
         }
-        if missingConfigurations {
+        if missingStoredConfigurations {
             await fetchSelectorCache(
                 reason: "Fetching Configuration Bank",
                 voiceBanks: [],
@@ -791,7 +912,8 @@ final class DocumentModel: ObservableObject {
             fetchConfigurations: fetchConfigurations,
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
-            systemChannel: systemChannel
+            systemChannel: systemChannel,
+            profile: .selector
         ) { event, completed, total in
             await MainActor.run {
                 let detail = services.cacheService.progressDetail(for: event)
@@ -806,6 +928,9 @@ final class DocumentModel: ObservableObject {
 
         cachedVoiceBanks.merge(cacheResult.voiceBanks) { _, new in new }
         cachedConfigurations.merge(cacheResult.configurations) { _, new in new }
+        if !cacheResult.configurations.isEmpty {
+            configurationSelectorRevision += 1
+        }
         if let currentConfiguration = cacheResult.currentConfiguration {
             cachedCurrentConfiguration = currentConfiguration
         }
@@ -821,7 +946,9 @@ final class DocumentModel: ObservableObject {
         statusMessage = cacheResult.failures.isEmpty
             ? "\(reason) completed from \(sourceName) -> \(destinationName)."
             : "\(reason) partially completed from \(sourceName) -> \(destinationName); \(cacheResult.failures.count) item\(cacheResult.failures.count == 1 ? "" : "s") failed."
-        errorMessage = nil
+        errorMessage = cacheResult.failures.isEmpty
+            ? nil
+            : "\(reason) did not fetch: \(cacheResult.failures.joined(separator: ", "))."
         progressPanel.dismiss()
         isFetchingFromDevice = false
     }
@@ -838,6 +965,7 @@ final class DocumentModel: ObservableObject {
 
     func cacheConfiguration(_ configuration: FB01ConfigurationData, slot: Int) {
         cachedConfigurations[slot] = configuration
+        configurationSelectorRevision += 1
         deviceCacheStatus = "Updated Configuration \(slot)"
     }
 

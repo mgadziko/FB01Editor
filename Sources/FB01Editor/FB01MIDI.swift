@@ -82,6 +82,18 @@ public enum FB01MIDIRequestKind: Equatable, Sendable {
     }
 }
 
+public struct FB01MIDIRequestBatchResult: Sendable {
+    public var kind: FB01MIDIRequestKind
+    public var bytes: [UInt8]?
+    public var errorDescription: String?
+
+    public init(kind: FB01MIDIRequestKind, bytes: [UInt8]? = nil, errorDescription: String? = nil) {
+        self.kind = kind
+        self.bytes = bytes
+        self.errorDescription = errorDescription
+    }
+}
+
 public enum FB01MIDI {
     private static let requestLock = NSLock()
     private static let clientStore = FB01MIDIClientStore()
@@ -162,6 +174,81 @@ public enum FB01MIDI {
             systemChannel: systemChannel,
             timeoutPerRequest: timeoutPerRequest
         )
+    }
+
+    public static func requestBatchAllowingFailures(
+        _ kinds: [FB01MIDIRequestKind],
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        timeoutPerRequest: TimeInterval,
+        timeoutForRequest: ((FB01MIDIRequestKind) -> TimeInterval)? = nil,
+        delayBetweenRequests: TimeInterval = 0.05,
+        progress: ((FB01MIDIRequestKind, Int, Int) -> Void)? = nil
+    ) throws -> [FB01MIDIRequestBatchResult] {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+
+        let source = try sourceEndpoint(at: sourceIndex)
+        let destination = try destinationEndpoint(at: destinationIndex)
+        let state = FB01SysExCaptureState()
+        let client = try clientStore.client()
+
+        var inputPort = MIDIPortRef()
+        try check(MIDIInputPortCreateWithBlock(client, "FB01EditorMIDICacheBatchInput" as CFString, &inputPort) { packetList, _ in
+            state.append(packetList: packetList)
+        }, "MIDIInputPortCreateWithBlock")
+        defer { MIDIPortDispose(inputPort) }
+
+        var outputPort = MIDIPortRef()
+        try check(MIDIOutputPortCreate(client, "FB01EditorMIDICacheBatchOutput" as CFString, &outputPort), "MIDIOutputPortCreate")
+        defer { MIDIPortDispose(outputPort) }
+
+        try check(MIDIPortConnectSource(inputPort, source, nil), "MIDIPortConnectSource")
+
+        var results: [FB01MIDIRequestBatchResult] = []
+        results.reserveCapacity(kinds.count)
+
+        for (index, kind) in kinds.enumerated() {
+            progress?(kind, index, kinds.count)
+            _ = state.drain()
+
+            do {
+                try send(bytes: kind.bytes(systemChannel: systemChannel), to: destination, outputPort: outputPort)
+
+                let start = Date()
+                var received: [UInt8]?
+                let timeout = timeoutForRequest?(kind) ?? timeoutPerRequest
+                while Date().timeIntervalSince(start) < timeout {
+                    RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.02))
+                    if let message = state.drain().first {
+                        received = message
+                        break
+                    }
+                }
+
+                if let received {
+                    results.append(FB01MIDIRequestBatchResult(kind: kind, bytes: received))
+                } else {
+                    results.append(FB01MIDIRequestBatchResult(
+                        kind: kind,
+                        errorDescription: FB01MIDIError.timedOut(kind.displayName).description
+                    ))
+                }
+            } catch {
+                results.append(FB01MIDIRequestBatchResult(
+                    kind: kind,
+                    errorDescription: String(describing: error)
+                ))
+            }
+
+            if delayBetweenRequests > 0, index < kinds.index(before: kinds.endIndex) {
+                Thread.sleep(forTimeInterval: delayBetweenRequests)
+            }
+        }
+
+        progress?(kinds.last ?? .unitID, kinds.count, kinds.count)
+        return results
     }
 
     public static func sendSysEx(

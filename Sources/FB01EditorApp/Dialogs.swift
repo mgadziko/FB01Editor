@@ -330,6 +330,8 @@ final class EditorProgressPanel {
         )
         panel.title = title
         panel.isReleasedWhenClosed = false
+        panel.level = .floating
+        panel.collectionBehavior.insert(.transient)
         panel.center()
 
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: panelHeight))
@@ -366,6 +368,7 @@ final class EditorProgressPanel {
 
     func show() {
         progress.startAnimation(nil)
+        panel.orderFrontRegardless()
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

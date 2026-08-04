@@ -191,6 +191,10 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Voice") {
+                VoiceDocumentDeviceCommands(document: document, workspace: documentWorkspace)
+
+                Divider()
+
                 VoiceSelectorCommands(document: document, workspace: documentWorkspace)
 
                 Divider()
@@ -235,6 +239,10 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Configuration") {
+                ConfigurationDocumentDeviceCommands(document: document, workspace: documentWorkspace)
+
+                Divider()
+
                 ConfigurationSelectorCommands(document: document, workspace: documentWorkspace)
 
                 Divider()

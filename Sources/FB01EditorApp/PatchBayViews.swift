@@ -1019,7 +1019,7 @@ struct FMPatchOperatorModule: View {
                 subtitle: operatorData.carrier ? "Audible output loudness." : "Modulation strength and timbre intensity."
             ) {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top, spacing: 12) {
+                    LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                         ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127)
                         ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15)
                         ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
