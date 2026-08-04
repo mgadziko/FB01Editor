@@ -38,16 +38,28 @@ public struct DX100DocumentService: Sendable {
     }
 
     public func voiceCandidates(fromSysExBytes bytes: [UInt8]) throws -> [DX100VoiceDocumentCandidate] {
-        let candidates = DX100.splitSysExMessages(from: bytes).compactMap { message -> DX100VoiceDocumentCandidate? in
+        let candidates = DX100.splitSysExMessages(from: bytes).flatMap { message -> [DX100VoiceDocumentCandidate] in
             guard let voice = try? DX100VoiceData(singleVoiceBulkSysEx: message) else {
-                return nil
+                if let bank = try? DX100VoiceBankData(thirtyTwoVoiceBulkSysEx: message) {
+                    return (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
+                        guard let voice = try? bank.voice(atPackedVoiceIndex: index) else {
+                            return nil
+                        }
+                        return DX100VoiceDocumentCandidate(
+                            title: "Voice \(index + 1): \(voice.name.isEmpty ? "Untitled" : voice.name)",
+                            voice: voice,
+                            channel: bank.channel
+                        )
+                    }
+                }
+                return []
             }
             let channel = Int(message[2] & 0x0F)
-            return DX100VoiceDocumentCandidate(
+            return [DX100VoiceDocumentCandidate(
                 title: "Current Voice: \(voice.name.isEmpty ? "Untitled" : voice.name)",
                 voice: voice,
                 channel: channel
-            )
+            )]
         }
 
         guard !candidates.isEmpty else {

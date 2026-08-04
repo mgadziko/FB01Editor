@@ -9,6 +9,7 @@ public enum DX100SysExError: Error, Equatable, CustomStringConvertible {
     case invalidThirtyTwoVoiceBulkHeader
     case checksumMismatch(expected: UInt8, actual: UInt8)
     case operatorNumberOutOfRange(Int)
+    case voiceIndexOutOfRange(Int)
 
     public var description: String {
         switch self {
@@ -28,6 +29,8 @@ public enum DX100SysExError: Error, Equatable, CustomStringConvertible {
             "Invalid DX100 checksum: expected 0x\(String(expected, radix: 16)), got 0x\(String(actual, radix: 16))"
         case let .operatorNumberOutOfRange(number):
             "DX100 operator number must be 1...4, got \(number)"
+        case let .voiceIndexOutOfRange(index):
+            "DX100 packed voice index must be 0...31, got \(index)"
         }
     }
 }
@@ -313,6 +316,76 @@ public struct DX100VoiceBankData: Equatable, Sendable {
 
     public var dx100DisplayedVoiceNames: [String] {
         Array(voiceNames.prefix(Self.dx100DisplayedVoiceCount))
+    }
+
+    public func voice(atPackedVoiceIndex index: Int) throws -> DX100VoiceData {
+        guard (0..<Self.packedVoiceCount).contains(index) else {
+            throw DX100SysExError.voiceIndexOutOfRange(index)
+        }
+
+        let packedStart = index * Self.packedVoiceByteCount
+        let packed = Array(bytes[packedStart..<(packedStart + Self.packedVoiceByteCount)])
+        var expanded = Array(repeating: UInt8(0), count: DX100VoiceData.byteCount)
+
+        for operatorIndex in 0..<DX100VoiceData.operatorNumbersInDataOrder.count {
+            let packedOperatorStart = operatorIndex * 10
+            let expandedOperatorStart = operatorIndex * DX100VoiceData.operatorBlockByteCount
+            expanded[expandedOperatorStart + 0] = packed[packedOperatorStart + 0]
+            expanded[expandedOperatorStart + 1] = packed[packedOperatorStart + 1]
+            expanded[expandedOperatorStart + 2] = packed[packedOperatorStart + 2]
+            expanded[expandedOperatorStart + 3] = packed[packedOperatorStart + 3]
+            expanded[expandedOperatorStart + 4] = packed[packedOperatorStart + 4]
+            expanded[expandedOperatorStart + 5] = packed[packedOperatorStart + 5]
+
+            let sensitivityByte = packed[packedOperatorStart + 6]
+            expanded[expandedOperatorStart + 7] = (sensitivityByte >> 3) & 0x07
+            expanded[expandedOperatorStart + 8] = (sensitivityByte >> 6) & 0x01
+            expanded[expandedOperatorStart + 9] = sensitivityByte & 0x07
+
+            expanded[expandedOperatorStart + 10] = packed[packedOperatorStart + 7]
+            expanded[expandedOperatorStart + 11] = packed[packedOperatorStart + 8]
+
+            let scalingAndDetuneByte = packed[packedOperatorStart + 9]
+            expanded[expandedOperatorStart + 6] = (scalingAndDetuneByte >> 3) & 0x03
+            expanded[expandedOperatorStart + 12] = scalingAndDetuneByte & 0x07
+        }
+
+        let algorithmByte = packed[40]
+        expanded[52] = algorithmByte & 0x07
+        expanded[53] = (algorithmByte >> 3) & 0x07
+        expanded[58] = (algorithmByte >> 6) & 0x01
+        expanded[54] = packed[41]
+        expanded[55] = packed[42]
+        expanded[56] = packed[43]
+        expanded[57] = packed[44]
+
+        let lfoShapeByte = packed[45]
+        expanded[59] = lfoShapeByte & 0x03
+        expanded[61] = (lfoShapeByte >> 2) & 0x03
+        expanded[60] = (lfoShapeByte >> 4) & 0x07
+
+        expanded[62] = packed[46]
+        expanded[64] = packed[47]
+
+        let performanceByte = packed[48]
+        expanded[63] = performanceByte & 0x01
+        expanded[65] = (performanceByte >> 1) & 0x01
+        expanded[68] = (performanceByte >> 2) & 0x01
+        expanded[69] = (performanceByte >> 3) & 0x01
+        expanded[70] = (performanceByte >> 4) & 0x01
+
+        expanded[66] = packed[49]
+        expanded[67] = packed[50]
+        expanded[71] = packed[51]
+        expanded[72] = packed[52]
+        expanded[73] = packed[53]
+        expanded[74] = packed[54]
+        expanded[75] = packed[55]
+        expanded[76] = packed[56]
+        expanded.replaceSubrange(77..<87, with: packed[Self.packedVoiceNameRange])
+        expanded.replaceSubrange(87..<93, with: packed[67..<73])
+
+        return try DX100VoiceData(bytes: expanded)
     }
 
     public func thirtyTwoVoiceBulkSysEx(channel: Int? = nil) throws -> [UInt8] {

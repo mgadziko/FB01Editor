@@ -15,6 +15,19 @@ private let ivoryEbonySingleVoiceDump: [UInt8] = [
     0x3F, 0xF7,
 ]
 
+private let ivoryEbonyPackedVoiceRecord: [UInt8] = [
+    0x18, 0x01, 0x01, 0x03, 0x00, 0x34, 0x00, 0x41,
+    0x04, 0x0D, 0x16, 0x01, 0x01, 0x04, 0x0C, 0x63,
+    0x00, 0x4B, 0x00, 0x0B, 0x18, 0x05, 0x01, 0x03,
+    0x00, 0x63, 0x00, 0x32, 0x16, 0x10, 0x14, 0x08,
+    0x01, 0x06, 0x0C, 0x00, 0x00, 0x63, 0x04, 0x13,
+    0x32, 0x23, 0x00, 0x00, 0x00, 0x02, 0x18, 0x00,
+    0x04, 0x00, 0x63, 0x32, 0x00, 0x00, 0x00, 0x32,
+    0x00, 0x49, 0x76, 0x6F, 0x72, 0x79, 0x45, 0x62,
+    0x6F, 0x6E, 0x79, 0x63, 0x63, 0x63, 0x32, 0x32,
+    0x32,
+] + Array(repeating: UInt8(0), count: 55)
+
 @Test func dx100BuildsSingleVoiceDumpRequest() throws {
     #expect(try DX100.requestSingleVoiceBulk(channel: 0) == [0xF0, 0x43, 0x20, 0x03, 0xF7])
     #expect(try DX100.requestSingleVoiceBulk(channel: 3) == [0xF0, 0x43, 0x23, 0x03, 0xF7])
@@ -63,6 +76,21 @@ private let ivoryEbonySingleVoiceDump: [UInt8] = [
     #expect(bank.voiceNames.prefix(3) == ["IvoryEbony", "Uprt piano", "Vibrabell"])
     #expect(bank.dx100DisplayedVoiceNames.count == 24)
     #expect(try bank.thirtyTwoVoiceBulkSysEx() == message)
+}
+
+@Test func dx100VoiceBankExpandsPackedVoiceIntoEditableVoice() throws {
+    let currentVoice = try DX100VoiceData(singleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
+    var bankData = Array(repeating: UInt8(0), count: DX100.thirtyTwoVoiceDataByteCount)
+    bankData.replaceSubrange(0..<DX100VoiceBankData.packedVoiceByteCount, with: ivoryEbonyPackedVoiceRecord)
+    let bank = try DX100VoiceBankData(bytes: bankData)
+
+    let expandedVoice = try bank.voice(atPackedVoiceIndex: 0)
+
+    #expect(expandedVoice == currentVoice)
+    #expect(expandedVoice.name == "IvoryEbony")
+    #expect(throws: DX100SysExError.voiceIndexOutOfRange(32)) {
+        try bank.voice(atPackedVoiceIndex: 32)
+    }
 }
 
 @Test func dx100ParsesCapturedIvoryEbonySingleVoiceDump() throws {
@@ -185,6 +213,22 @@ private let ivoryEbonySingleVoiceDump: [UInt8] = [
 
     #expect(candidates.count == 2)
     #expect(candidates.map(\.voice.name) == ["IvoryEbony", "IvoryEbony"])
+}
+
+@Test func dx100DocumentServiceExtractsEditableVoicesFromPackedBankDump() throws {
+    var bankData = Array(repeating: UInt8(0), count: DX100.thirtyTwoVoiceDataByteCount)
+    bankData.replaceSubrange(0..<DX100VoiceBankData.packedVoiceByteCount, with: ivoryEbonyPackedVoiceRecord)
+    let bank = try DX100VoiceBankData(bytes: bankData, channel: 0)
+
+    let candidates = try DX100DocumentService.shared.voiceCandidates(
+        fromSysExBytes: try bank.thirtyTwoVoiceBulkSysEx()
+    )
+
+    #expect(candidates.count == 24)
+    #expect(candidates.first?.title == "Voice 1: IvoryEbony")
+    let currentVoice = try DX100VoiceData(singleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
+    #expect(candidates.first?.voice == currentVoice)
+    #expect(candidates.allSatisfy { $0.channel == 0 })
 }
 
 @Test func fb01VoiceAlsoProjectsIntoNeutralFourOperatorShape() throws {
