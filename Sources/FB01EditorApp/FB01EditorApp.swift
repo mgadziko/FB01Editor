@@ -245,58 +245,60 @@ struct FB01EditorApplication: App {
                 }
             }
 
-            CommandMenu("Configuration") {
-                if document.selectedDeviceSupportsConfigurations {
-                    ConfigurationDocumentDeviceCommands(document: document, workspace: documentWorkspace)
+            if document.selectedEditorDevice != .dx100 {
+                CommandMenu("Configuration") {
+                    if document.selectedDeviceSupportsConfigurations {
+                        ConfigurationDocumentDeviceCommands(document: document, workspace: documentWorkspace)
 
-                    Divider()
+                        Divider()
 
-                    ConfigurationSelectorCommands(document: document, workspace: documentWorkspace)
+                        ConfigurationSelectorCommands(document: document, workspace: documentWorkspace)
 
-                    Divider()
+                        Divider()
 
-                    Button(document.selectedDeviceCommandTitle(.copyConfigurationToSlot, fallback: "Copy Configuration to Slot ...")) {
-                        EditorModuleCommandRunner.run(.copyConfigurationToSlot, document: document)
+                        Button(document.selectedDeviceCommandTitle(.copyConfigurationToSlot, fallback: "Copy Configuration to Slot ...")) {
+                            EditorModuleCommandRunner.run(.copyConfigurationToSlot, document: document)
+                        }
+                        .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.copyConfigurationToSlot))
+
+                        Button(document.selectedDeviceCommandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
+                            EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
+                        }
+                        .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.refreshDeviceCache))
+                    } else {
+                        Text(document.selectedEditorDevice == nil ? "Select a device first." : "No configuration commands for \(document.selectedEditorDevice?.displayName ?? "this device").")
                     }
-                    .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.copyConfigurationToSlot))
 
-                    Button(document.selectedDeviceCommandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
-                        EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
+                    if !document.selectedDeviceSupportsConfigurations, document.supportsSelectedDeviceCommand(.refreshDeviceCache) {
+                        Button(document.selectedDeviceCommandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
+                            EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
+                        }
+                        .disabled(document.isBusy)
                     }
-                    .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.refreshDeviceCache))
-                } else {
-                    Text(document.selectedEditorDevice == nil ? "Select a device first." : "No configuration commands for \(document.selectedEditorDevice?.displayName ?? "this device").")
-                }
 
-                if !document.selectedDeviceSupportsConfigurations, document.supportsSelectedDeviceCommand(.refreshDeviceCache) {
-                    Button(document.selectedDeviceCommandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
-                        EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
+                    if document.selectedDeviceSupportsConfigurations, document.voiceEditorParadigm == .consoleSections {
+                        Divider()
+
+                        Button(document.selectedDeviceCommandTitle(.sendSelectedConfigurationToEditBuffer, fallback: "Send Selected Configuration to Current Edit Buffer...")) {
+                            EditorModuleCommandRunner.run(.sendSelectedConfigurationToEditBuffer, document: document)
+                        }
+                        .disabled(!document.canSendSelectedConfiguration || !document.supportsSelectedDeviceCommand(.sendSelectedConfigurationToEditBuffer))
+
+                        Button(document.selectedDeviceCommandTitle(.sendAndConfirmSelectedConfiguration, fallback: "Send and Confirm Selected Configuration...")) {
+                            EditorModuleCommandRunner.run(.sendAndConfirmSelectedConfiguration, document: document)
+                        }
+                        .disabled(!document.canSendSelectedConfiguration || !document.supportsSelectedDeviceCommand(.sendAndConfirmSelectedConfiguration))
+
+                        Button(document.selectedDeviceCommandTitle(.storeSelectedConfigurationToSlot, fallback: "Store Selected Configuration to Slot...")) {
+                            EditorModuleCommandRunner.run(.storeSelectedConfigurationToSlot, document: document)
+                        }
+                        .disabled(!document.canStoreSelectedConfiguration || !document.supportsSelectedDeviceCommand(.storeSelectedConfigurationToSlot))
+
+                        Button(document.selectedDeviceCommandTitle(.storeAndConfirmSelectedConfiguration, fallback: "Store and Confirm Selected Configuration...")) {
+                            EditorModuleCommandRunner.run(.storeAndConfirmSelectedConfiguration, document: document)
+                        }
+                        .disabled(!document.canStoreSelectedConfiguration || !document.supportsSelectedDeviceCommand(.storeAndConfirmSelectedConfiguration))
                     }
-                    .disabled(document.isBusy)
-                }
-
-                if document.selectedDeviceSupportsConfigurations, document.voiceEditorParadigm == .consoleSections {
-                    Divider()
-
-                    Button(document.selectedDeviceCommandTitle(.sendSelectedConfigurationToEditBuffer, fallback: "Send Selected Configuration to Current Edit Buffer...")) {
-                        EditorModuleCommandRunner.run(.sendSelectedConfigurationToEditBuffer, document: document)
-                    }
-                    .disabled(!document.canSendSelectedConfiguration || !document.supportsSelectedDeviceCommand(.sendSelectedConfigurationToEditBuffer))
-
-                    Button(document.selectedDeviceCommandTitle(.sendAndConfirmSelectedConfiguration, fallback: "Send and Confirm Selected Configuration...")) {
-                        EditorModuleCommandRunner.run(.sendAndConfirmSelectedConfiguration, document: document)
-                    }
-                    .disabled(!document.canSendSelectedConfiguration || !document.supportsSelectedDeviceCommand(.sendAndConfirmSelectedConfiguration))
-
-                    Button(document.selectedDeviceCommandTitle(.storeSelectedConfigurationToSlot, fallback: "Store Selected Configuration to Slot...")) {
-                        EditorModuleCommandRunner.run(.storeSelectedConfigurationToSlot, document: document)
-                    }
-                    .disabled(!document.canStoreSelectedConfiguration || !document.supportsSelectedDeviceCommand(.storeSelectedConfigurationToSlot))
-
-                    Button(document.selectedDeviceCommandTitle(.storeAndConfirmSelectedConfiguration, fallback: "Store and Confirm Selected Configuration...")) {
-                        EditorModuleCommandRunner.run(.storeAndConfirmSelectedConfiguration, document: document)
-                    }
-                    .disabled(!document.canStoreSelectedConfiguration || !document.supportsSelectedDeviceCommand(.storeAndConfirmSelectedConfiguration))
                 }
             }
         }
