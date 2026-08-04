@@ -22,6 +22,10 @@ let package = Package(
             targets: ["fb01-gm-load"]
         ),
         .executable(
+            name: "dx100-dump",
+            targets: ["dx100-dump"]
+        ),
+        .executable(
             name: "FB01EditorApp",
             targets: ["FB01EditorApp"]
         ),
@@ -36,6 +40,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "fb01-gm-load",
+            dependencies: ["FB01Editor"]
+        ),
+        .executableTarget(
+            name: "dx100-dump",
             dependencies: ["FB01Editor"]
         ),
         .executableTarget(
