@@ -2313,6 +2313,7 @@ struct VoiceDocumentWindow: View {
                                 }
                             )
                         },
+                        savedVoice: document.savedVoice,
                         selectedOperatorIndex: Binding(
                             get: { document.selectedOperatorIndex },
                             set: { document.selectedOperatorIndex = $0 }
@@ -3956,6 +3957,7 @@ struct VoiceDetailView: View {
                             set: { setOperatorEnabled(index: index, enabled: $0) }
                         )
                     },
+                    savedVoice: summary.voice,
                     selectedOperatorIndex: $selectedOperatorIndex,
                     updateOperator: updateOperator
                 )
@@ -4236,6 +4238,7 @@ struct VoiceEditorControls: View {
 
 struct WaveformPicker: View {
     @Binding var selection: Int
+    var isModified = false
     @Environment(\.colorScheme) private var colorScheme
     private let optionSize = CGSize(width: 84, height: 86)
 
@@ -4266,7 +4269,7 @@ struct WaveformPicker: View {
             VStack(spacing: 3) {
                 Text(title)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(isSelected ? Color.black : Color.primary)
+                    .foregroundStyle(isModified && isSelected ? Color.orange : (isSelected ? Color.black : Color.primary))
                 WaveformShape(kind: waveform)
                     .stroke(isSelected ? Color(red: 0.0, green: 0.30, blue: 0.08) : Color.green, style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
                     .frame(width: 44, height: 16)
@@ -4460,6 +4463,7 @@ struct AlgorithmSelectorView: View {
 
 struct CompactAlgorithmSelectorView: View {
     @Binding var selection: Int
+    var isModified = false
 
     var body: some View {
         VStack(alignment: .center, spacing: 12) {
@@ -4493,7 +4497,7 @@ struct CompactAlgorithmSelectorView: View {
                     Text("\(algorithm)")
                         .font(.caption.weight(.semibold))
                 }
-                .foregroundStyle(isSelected ? .green : .secondary)
+                .foregroundStyle(isSelected && isModified ? .orange : (isSelected ? .green : .secondary))
             }
             .padding(10)
             .frame(width: cardWidth)
@@ -5214,7 +5218,7 @@ struct OperatorControlGroup<Content: View>: View {
             SectionTitle(title)
         }
         .background(
-            Color.secondary.opacity(colorScheme == .light ? 0.13 : 0.0),
+            Color.secondary.opacity(colorScheme == .light ? 0.16 : 0.06),
             in: RoundedRectangle(cornerRadius: 8)
         )
     }

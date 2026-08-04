@@ -21,6 +21,7 @@ struct FMRoutingPatchBayView: View {
     var macroValue: (PerformanceMacro) -> Binding<Int>
     var operators: [FB01VoiceOperatorData]
     var operatorEnabled: [Binding<Bool>]
+    var savedVoice: FB01VoiceData
     @Binding var selectedOperatorIndex: Int
     var updateOperator: (FB01VoiceOperatorData) -> Void
 
@@ -58,7 +59,7 @@ struct FMRoutingPatchBayView: View {
                         GridRow {
                             Text("Name")
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(name != savedVoice.name ? Color.orange : Color.secondary)
                             TextField("Name", text: $name)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 180)
@@ -67,15 +68,15 @@ struct FMRoutingPatchBayView: View {
                     }
 
                     HStack(alignment: .top, spacing: 14) {
-                        ParameterKnob(label: "User Code", value: $userCode, range: 0...255)
-                        ParameterKnob(label: "Transpose", value: $transpose, range: -128...127)
+                        ParameterKnob(label: "User Code", value: $userCode, range: 0...255, isModified: userCode != savedVoice.userCode)
+                        ParameterKnob(label: "Transpose", value: $transpose, range: -128...127, isModified: transpose != savedVoice.transpose)
                     }
                 }
                 .frame(width: 238, alignment: .topLeading)
 
                 HStack(alignment: .top, spacing: 12) {
-                    RockerSwitch(label: "Left Output", isOn: $leftOutputEnabled, width: 70, height: 62)
-                    RockerSwitch(label: "Right Output", isOn: $rightOutputEnabled, width: 74, height: 62)
+                    RockerSwitch(label: "Left Output", isOn: $leftOutputEnabled, width: 70, height: 62, isModified: leftOutputEnabled != savedVoice.leftOutputEnabled)
+                    RockerSwitch(label: "Right Output", isOn: $rightOutputEnabled, width: 74, height: 62, isModified: rightOutputEnabled != savedVoice.rightOutputEnabled)
                 }
                 .padding(.top, 49)
             }
@@ -85,7 +86,7 @@ struct FMRoutingPatchBayView: View {
 
     private var algorithmChooser: some View {
         OperatorControlGroup(title: "Algorithm") {
-            CompactAlgorithmSelectorView(selection: $algorithm)
+            CompactAlgorithmSelectorView(selection: $algorithm, isModified: algorithm != savedVoice.algorithm + 1)
         }
         .frame(width: 780, alignment: .center)
     }
@@ -93,19 +94,19 @@ struct FMRoutingPatchBayView: View {
     private var modulationPanel: some View {
         OperatorControlGroup(title: "Global LFO and Modulation") {
             HStack(alignment: .top, spacing: 12) {
-                ParameterKnob(label: "LFO Speed", value: $lfoSpeed, range: 0...255)
-                ParameterKnob(label: "Amplitude MOD\nDepth", value: $amplitudeModulationDepth, range: 0...127)
-                ParameterKnob(label: "Pitch MOD\nDepth", value: $pitchModulationDepth, range: 0...127)
-                ParameterKnob(label: "Amplitude MOD\nSensitivity", value: $amplitudeModulationSensitivity, range: 0...3)
-                ParameterKnob(label: "Pitch MOD\nSensitivity", value: $pitchModulationSensitivity, range: 0...7)
+                ParameterKnob(label: "LFO Speed", value: $lfoSpeed, range: 0...255, isModified: lfoSpeed != savedVoice.lfoSpeed)
+                ParameterKnob(label: "Amplitude MOD\nDepth", value: $amplitudeModulationDepth, range: 0...127, isModified: amplitudeModulationDepth != savedVoice.amplitudeModulationDepth)
+                ParameterKnob(label: "Pitch MOD\nDepth", value: $pitchModulationDepth, range: 0...127, isModified: pitchModulationDepth != savedVoice.pitchModulationDepth)
+                ParameterKnob(label: "Amplitude MOD\nSensitivity", value: $amplitudeModulationSensitivity, range: 0...3, isModified: amplitudeModulationSensitivity != savedVoice.amplitudeModulationSensitivity)
+                ParameterKnob(label: "Pitch MOD\nSensitivity", value: $pitchModulationSensitivity, range: 0...7, isModified: pitchModulationSensitivity != savedVoice.pitchModulationSensitivity)
             }
 
             HStack(alignment: .top, spacing: 14) {
-                WaveformPicker(selection: $lfoWaveform)
+                WaveformPicker(selection: $lfoWaveform, isModified: lfoWaveform != savedVoice.lfoWaveform)
                     .frame(width: 342)
 
-                RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58)
-                RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58)
+                RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58, isModified: loadLFODataEnabled != savedVoice.loadLFODataEnabled)
+                RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58, isModified: lfoSyncEnabled != savedVoice.lfoSyncEnabled)
             }
         }
         .frame(minWidth: 520, maxWidth: 680, alignment: .topLeading)
@@ -165,6 +166,9 @@ struct FMRoutingPatchBayView: View {
                 operatorsByNumber: operatorsByNumber,
                 operatorEnabledBinding: operatorEnabledBinding,
                 feedback: $feedback,
+                feedbackIsModified: feedback != savedVoice.feedbackLevel,
+                savedOperatorsByNumber: savedOperatorsByNumber,
+                savedOperatorEnabled: savedVoice.operatorEnabled,
                 selectedOperatorIndex: $selectedOperatorIndex,
                 updateOperator: updateOperator
             )
@@ -176,6 +180,12 @@ struct FMRoutingPatchBayView: View {
 
     private var operatorsByNumber: [Int: FB01VoiceOperatorData] {
         Dictionary(uniqueKeysWithValues: operators.map { operatorData in
+            (FB01VoiceData.operatorNumber(forDataIndex: operatorData.index), operatorData)
+        })
+    }
+
+    private var savedOperatorsByNumber: [Int: FB01VoiceOperatorData] {
+        Dictionary(uniqueKeysWithValues: savedVoice.operators.map { operatorData in
             (FB01VoiceData.operatorNumber(forDataIndex: operatorData.index), operatorData)
         })
     }
@@ -845,13 +855,17 @@ private struct FMPatchBayCanvas: View {
     var operatorsByNumber: [Int: FB01VoiceOperatorData]
     var operatorEnabledBinding: (Int) -> Binding<Bool>
     @Binding var feedback: Int
+    var feedbackIsModified: Bool
+    var savedOperatorsByNumber: [Int: FB01VoiceOperatorData]
+    var savedOperatorEnabled: [Bool]
     @Binding var selectedOperatorIndex: Int
     var updateOperator: (FB01VoiceOperatorData) -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.secondary.opacity(0.045))
+                .fill(Color.secondary.opacity(colorScheme == .light ? 0.16 : 0.06))
                 .allowsHitTesting(false)
 
             FMPatchBayRouteCanvas(layout: layout)
@@ -863,7 +877,7 @@ private struct FMPatchBayCanvas: View {
                 .position(x: layout.outputPoint.x, y: layout.outputPoint.y + 22)
                 .allowsHitTesting(false)
 
-            ParameterKnob(label: "OP4 Feedback", value: $feedback, range: 0...7)
+            ParameterKnob(label: "OP4 Feedback", value: $feedback, range: 0...7, isModified: feedbackIsModified)
                 .position(layout.feedbackControlCenter)
 
             ForEach(1...4, id: \.self) { number in
@@ -871,8 +885,10 @@ private struct FMPatchBayCanvas: View {
                    let origin = layout.positions[number] {
                     FMPatchOperatorModule(
                         operatorData: operatorData,
+                        savedOperatorData: savedOperatorsByNumber[number],
                         routingSubtitle: layout.routingSubtitle(forOperator: number),
                         operatorEnabled: operatorEnabledBinding(operatorData.index),
+                        savedOperatorEnabled: savedOperatorEnabled.indices.contains(operatorData.index) ? savedOperatorEnabled[operatorData.index] : true,
                         isSelected: operatorData.index == selectedOperatorIndex,
                         select: { selectedOperatorIndex = operatorData.index },
                         updateOperator: updateOperator
@@ -943,7 +959,7 @@ private struct FMPatchBayRouteCanvas: View {
         case .carrier:
             return .green.opacity(0.86)
         case .feedback:
-            return .orange.opacity(0.92)
+            return .blue.opacity(0.86)
         }
     }
 
@@ -969,8 +985,10 @@ private struct FMPatchBayRouteCanvas: View {
 
 struct FMPatchOperatorModule: View {
     var operatorData: FB01VoiceOperatorData
+    var savedOperatorData: FB01VoiceOperatorData?
     var routingSubtitle: String
     @Binding var operatorEnabled: Bool
+    var savedOperatorEnabled: Bool
     var isSelected: Bool
     var select: () -> Void
     var updateOperator: (FB01VoiceOperatorData) -> Void
@@ -1008,9 +1026,9 @@ struct FMPatchOperatorModule: View {
                 subtitle: "Pitch and frequency source."
             ) {
                 LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                    ParameterKnob(label: "OSC FRQ Multiplier", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15)
-                    ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7)
-                    ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3)
+                    ParameterKnob(label: "OSC FRQ Multiplier", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15, isModified: isModified(\.multiple))
+                    ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7, isModified: isModified(\.detune1))
+                    ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3, isModified: isModified(\.detune2))
                 }
             }
 
@@ -1020,13 +1038,13 @@ struct FMPatchOperatorModule: View {
             ) {
                 VStack(alignment: .leading, spacing: 10) {
                     LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                        ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127)
-                        ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15)
-                        ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7)
+                        ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127, isModified: isModified(\.totalLevel))
+                        ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, isModified: isModified(\.totalLevelAdjust))
+                        ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7, isModified: isModified(\.velocitySensitivityForTotalLevel))
                     }
 
                     HStack(alignment: .top, spacing: 16) {
-                        ParameterKnob(label: "Keyboard Level\nDepth", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15)
+                        ParameterKnob(label: "Keyboard Level\nDepth", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15, isModified: isModified(\.keyboardLevelScalingDepth))
                         keyLevelScalingTypeControl
                     }
                 }
@@ -1051,19 +1069,19 @@ struct FMPatchOperatorModule: View {
                 .allowsHitTesting(operatorEnabled)
 
                 LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                    ParameterKnob(label: "Attack", value: operatorBinding({ $0.attackRate }, update: { try $0.settingAttackRate($1) }), range: 0...31)
-                    ParameterKnob(label: "Vel to Attack", value: operatorBinding({ $0.velocitySensitivityForAttackRate }, update: { try $0.settingVelocitySensitivityForAttackRate($1) }), range: 0...7)
-                    ParameterKnob(label: "Decay 1", value: operatorBinding({ $0.decay1Rate }, update: { try $0.settingDecay1Rate($1) }), range: 0...15)
-                    ParameterKnob(label: "Decay 2", value: operatorBinding({ $0.decay2Rate }, update: { try $0.settingDecay2Rate($1) }), range: 0...31)
-                    ParameterKnob(label: "Sustain", value: operatorBinding({ $0.sustainLevel }, update: { try $0.settingSustainLevel($1) }), range: 0...15)
-                    ParameterKnob(label: "Release", value: operatorBinding({ $0.releaseRate }, update: { try $0.settingReleaseRate($1) }), range: 0...15)
+                    ParameterKnob(label: "Attack", value: operatorBinding({ $0.attackRate }, update: { try $0.settingAttackRate($1) }), range: 0...31, isModified: isModified(\.attackRate))
+                    ParameterKnob(label: "Vel to Attack", value: operatorBinding({ $0.velocitySensitivityForAttackRate }, update: { try $0.settingVelocitySensitivityForAttackRate($1) }), range: 0...7, isModified: isModified(\.velocitySensitivityForAttackRate))
+                    ParameterKnob(label: "Decay 1", value: operatorBinding({ $0.decay1Rate }, update: { try $0.settingDecay1Rate($1) }), range: 0...15, isModified: isModified(\.decay1Rate))
+                    ParameterKnob(label: "Decay 2", value: operatorBinding({ $0.decay2Rate }, update: { try $0.settingDecay2Rate($1) }), range: 0...31, isModified: isModified(\.decay2Rate))
+                    ParameterKnob(label: "Sustain", value: operatorBinding({ $0.sustainLevel }, update: { try $0.settingSustainLevel($1) }), range: 0...15, isModified: isModified(\.sustainLevel))
+                    ParameterKnob(label: "Release", value: operatorBinding({ $0.releaseRate }, update: { try $0.settingReleaseRate($1) }), range: 0...15, isModified: isModified(\.releaseRate))
                 }
             }
 
             HStack(alignment: .top, spacing: 20) {
                 Spacer()
-                RockerSwitch(label: "Enabled", isOn: editableOperatorEnabled, width: 82, height: 58)
-                ParameterKnob(label: "Keyboard Rate\nScaling Depth", value: operatorBinding({ $0.keyboardRateScalingDepth }, update: { try $0.settingKeyboardRateScalingDepth($1) }), range: 0...7)
+                RockerSwitch(label: "Enabled", isOn: editableOperatorEnabled, width: 82, height: 58, isModified: operatorEnabled != savedOperatorEnabled)
+                ParameterKnob(label: "Keyboard Rate\nScaling Depth", value: operatorBinding({ $0.keyboardRateScalingDepth }, update: { try $0.settingKeyboardRateScalingDepth($1) }), range: 0...7, isModified: isModified(\.keyboardRateScalingDepth))
                 Spacer()
             }
             .padding(.top, 8)
@@ -1100,7 +1118,7 @@ struct FMPatchOperatorModule: View {
 
             Text("Keyboard Level\nScaling Type")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(keyLevelScalingTypeIsModified ? Color.orange : Color.secondary)
                 .lineLimit(2)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1224,6 +1242,21 @@ struct FMPatchOperatorModule: View {
                 }
             }
         )
+    }
+
+    private func isModified(_ keyPath: KeyPath<FB01VoiceOperatorData, Int>) -> Bool {
+        guard let savedOperatorData else {
+            return false
+        }
+        return operatorData[keyPath: keyPath] != savedOperatorData[keyPath: keyPath]
+    }
+
+    private var keyLevelScalingTypeIsModified: Bool {
+        guard let savedOperatorData else {
+            return false
+        }
+        return operatorData.keyboardLevelScalingTypeBit0 != savedOperatorData.keyboardLevelScalingTypeBit0
+            || operatorData.keyboardLevelScalingTypeBit1 != savedOperatorData.keyboardLevelScalingTypeBit1
     }
 
     private var keyLevelScalingTypeBinding: Binding<Int> {

@@ -169,6 +169,7 @@ struct ParameterKnob: View {
     var knobSize: CGFloat = 48
     var displayTextProvider: ((Int) -> String)?
     var helpText: String?
+    var isModified: Bool = false
 
     @State private var dragStartValue: Int?
 
@@ -205,7 +206,7 @@ struct ParameterKnob: View {
 
             Text(label)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.primary)
+                .foregroundStyle(isModified ? Color.orange : Color.primary)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .minimumScaleFactor(0.75)
@@ -291,6 +292,7 @@ struct RockerSwitch: View {
     var width: CGFloat = 58
     var height: CGFloat = 68
     var helpText: String?
+    var isModified: Bool = false
 
     var body: some View {
         Button {
@@ -302,7 +304,7 @@ struct RockerSwitch: View {
 
                 Text(label)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(isModified ? Color.orange : Color.primary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .minimumScaleFactor(0.75)
