@@ -117,9 +117,10 @@ descriptors, and a neutral parameter descriptor catalogue. See
 `Docs/ModuleBoundary.md` for the working rule of thumb about what belongs to the
 app shell and what belongs to a synth module.
 
-This is deliberately not a DX100 implementation. The boundary is present so the
-FB-01 behavior can stay stable while other Yamaha 4-operator devices are studied
-later with real hardware attached.
+The active app behavior remains FB-01. A dormant DX100 foundation now exists for
+hardware-verified single-voice SysEx parsing, document round-tripping, and module
+metadata, but DX100 UI/device switching is not active yet. This keeps the FB-01
+workflow stable while the DX100 module is built up behind the boundary.
 
 ## Files And Document Types
 
