@@ -6,6 +6,7 @@ public enum DX100SysExError: Error, Equatable, CustomStringConvertible {
     case invalidVoiceDataLength(expected: Int, actual: Int)
     case invalidSingleVoiceBulkLength(expected: Int, actual: Int)
     case invalidSingleVoiceBulkHeader
+    case invalidThirtyTwoVoiceBulkHeader
     case checksumMismatch(expected: UInt8, actual: UInt8)
     case operatorNumberOutOfRange(Int)
 
@@ -21,6 +22,8 @@ public enum DX100SysExError: Error, Equatable, CustomStringConvertible {
             "Invalid DX100 single-voice bulk length: expected \(expected), got \(actual)"
         case .invalidSingleVoiceBulkHeader:
             "Invalid DX100 single-voice bulk header"
+        case .invalidThirtyTwoVoiceBulkHeader:
+            "Invalid DX100 32-voice bulk header or checksum"
         case let .checksumMismatch(expected, actual):
             "Invalid DX100 checksum: expected 0x\(String(expected, radix: 16)), got 0x\(String(actual, radix: 16))"
         case let .operatorNumberOutOfRange(number):
@@ -265,6 +268,75 @@ public struct DX100VoiceData: Equatable, Sendable {
                 )
             }
         )
+    }
+}
+
+public struct DX100VoiceBankData: Equatable, Sendable {
+    public static let packedVoiceCount = 32
+    public static let packedVoiceByteCount = 128
+    public static let dx100DisplayedVoiceCount = 24
+    public static let packedVoiceNameRange = 57..<67
+
+    public var bytes: [UInt8]
+    public var channel: Int
+
+    public init(bytes: [UInt8], channel: Int = 0) throws {
+        guard bytes.count == DX100.thirtyTwoVoiceDataByteCount else {
+            throw DX100SysExError.invalidVoiceDataLength(
+                expected: DX100.thirtyTwoVoiceDataByteCount,
+                actual: bytes.count
+            )
+        }
+        guard (0...15).contains(channel) else {
+            throw DX100SysExError.invalidChannel(channel)
+        }
+        self.bytes = try bytes.map { try DX100.validateDataByte($0) }
+        self.channel = channel
+    }
+
+    public init(thirtyTwoVoiceBulkSysEx bytes: [UInt8]) throws {
+        guard DX100.isThirtyTwoVoiceBulkSysEx(bytes) else {
+            throw DX100SysExError.invalidThirtyTwoVoiceBulkHeader
+        }
+        let dataStart = 6
+        try self.init(
+            bytes: Array(bytes[dataStart..<(dataStart + DX100.thirtyTwoVoiceDataByteCount)]),
+            channel: Int(bytes[2] & 0x0F)
+        )
+    }
+
+    public var voiceNames: [String] {
+        (0..<Self.packedVoiceCount).map { index in
+            name(atPackedVoiceIndex: index)
+        }
+    }
+
+    public var dx100DisplayedVoiceNames: [String] {
+        Array(voiceNames.prefix(Self.dx100DisplayedVoiceCount))
+    }
+
+    public func thirtyTwoVoiceBulkSysEx(channel: Int? = nil) throws -> [UInt8] {
+        let channel = channel ?? self.channel
+        guard (0...15).contains(channel) else {
+            throw DX100SysExError.invalidChannel(channel)
+        }
+
+        return [
+            DX100.start,
+            DX100.yamahaID,
+            UInt8(channel),
+            DX100.thirtyTwoVoiceFormat,
+            DX100.thirtyTwoVoiceByteCountMSB,
+            DX100.thirtyTwoVoiceByteCountLSB,
+        ] + bytes + [DX100.checksum(for: bytes), DX100.end]
+    }
+
+    private func name(atPackedVoiceIndex index: Int) -> String {
+        let start = index * Self.packedVoiceByteCount
+        let range = Self.packedVoiceNameRange
+        let nameBytes = bytes[(start + range.lowerBound)..<(start + range.upperBound)]
+        let name = String(bytes: nameBytes, encoding: .ascii) ?? ""
+        return name.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

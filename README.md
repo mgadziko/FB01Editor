@@ -146,7 +146,7 @@ load and save folders.
 
 ## Command-Line Tools
 
-The package includes two command-line tools.
+The package includes command-line tools for hardware capture and maintenance.
 
 `fb01-dump` lists MIDI endpoints, listens for manual dumps, and sends safe dump
 requests:
@@ -160,6 +160,17 @@ swift run fb01-dump request voice-bank --bank 2 --source 0 --destination 0 --out
 ```
 
 `fb01-gm-load` supports the General MIDI bank-loading workflow used by the app.
+
+`dx100-dump` is an experimental, read-only DX100 helper used while the DX100
+module is being developed. It can list MIDI endpoints, request the current
+edit-buffer voice, and request a raw 32-voice bulk dump with name/checksum
+validation:
+
+```sh
+swift run dx100-dump list
+swift run dx100-dump current-voice --source 0 --destination 0 --output current.dxv
+swift run dx100-dump voice-bank --source 0 --destination 0 --output current-bank.dxx
+```
 
 ## Build And Run
 

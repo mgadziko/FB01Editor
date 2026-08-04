@@ -336,11 +336,16 @@ func requestDump(kind: DX100DumpRequestKind, options: RequestOptions) throws {
             }
 
             if kind == .voiceBank, DX100.isThirtyTwoVoiceBulkSysEx(message) {
+                let voiceBank = try DX100VoiceBankData(thirtyTwoVoiceBulkSysEx: message)
                 print("Received DX100 32-voice bulk dump")
-                print("Channel: \(Int(message[2] & 0x0F))")
+                print("Channel: \(voiceBank.channel)")
                 print("Bytes: \(message.count)")
                 print("Data bytes: \(DX100.thirtyTwoVoiceDataByteCount)")
                 print("Checksum: valid")
+                print("Voice names:")
+                for (index, name) in voiceBank.voiceNames.enumerated() {
+                    print("  \(String(format: "%02d", index + 1)) \(name.isEmpty ? "Untitled" : name)")
+                }
                 if let outputURL = options.outputURL {
                     try Data(message).write(to: outputURL)
                     print("Wrote \(outputURL.path)")

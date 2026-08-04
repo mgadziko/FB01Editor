@@ -41,6 +41,30 @@ private let ivoryEbonySingleVoiceDump: [UInt8] = [
     #expect(!DX100.isThirtyTwoVoiceBulkSysEx(message.dropLast(2) + [0x01, DX100.end]))
 }
 
+@Test func dx100VoiceBankParsesPackedVoiceNamesAndRoundTrips() throws {
+    var data = Array(repeating: UInt8(0), count: DX100.thirtyTwoVoiceDataByteCount)
+    for (index, name) in ["IvoryEbony", "Uprt piano", "Vibrabell"].enumerated() {
+        let paddedName = Array(name.utf8.prefix(10)) + Array(repeating: UInt8(ascii: " "), count: 10 - min(name.count, 10))
+        let start = index * DX100VoiceBankData.packedVoiceByteCount + DX100VoiceBankData.packedVoiceNameRange.lowerBound
+        data.replaceSubrange(start..<(start + 10), with: paddedName)
+    }
+
+    let message: [UInt8] = [
+        DX100.start,
+        DX100.yamahaID,
+        0x00,
+        DX100.thirtyTwoVoiceFormat,
+        DX100.thirtyTwoVoiceByteCountMSB,
+        DX100.thirtyTwoVoiceByteCountLSB,
+    ] + data + [DX100.checksum(for: data), DX100.end]
+
+    let bank = try DX100VoiceBankData(thirtyTwoVoiceBulkSysEx: message)
+    #expect(bank.channel == 0)
+    #expect(bank.voiceNames.prefix(3) == ["IvoryEbony", "Uprt piano", "Vibrabell"])
+    #expect(bank.dx100DisplayedVoiceNames.count == 24)
+    #expect(try bank.thirtyTwoVoiceBulkSysEx() == message)
+}
+
 @Test func dx100ParsesCapturedIvoryEbonySingleVoiceDump() throws {
     let voice = try DX100VoiceData(singleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
 
