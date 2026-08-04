@@ -240,38 +240,42 @@ struct VoiceDocumentDeviceCommands: View {
     @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
 
     var body: some View {
-        Button("Fetch Voice from Device...") {
-            let id = workspace.createVoiceDocument()
-            openWindow(id: "voice-document", value: id)
-            Task { @MainActor in
-                await Task.yield()
-                workspace.voiceDocument(id: id)?.fetchFromDevice(device: document)
-            }
-        }
-        .disabled(document.isBusy)
-
-        Menu("Fetch Recent Voice") {
-            if document.recentFetchedVoices.isEmpty {
-                Text("No Recent Voice Fetches")
-            } else {
-                ForEach(document.recentFetchedVoices) { item in
-                    Button(item.title) {
-                        fetchRecentVoice(item)
-                    }
-                    .disabled(document.isBusy || item.source == nil)
+        if document.selectedDeviceUsesFB01DocumentWorkflows {
+            Button("Fetch Voice from Device...") {
+                let id = workspace.createVoiceDocument()
+                openWindow(id: "voice-document", value: id)
+                Task { @MainActor in
+                    await Task.yield()
+                    workspace.voiceDocument(id: id)?.fetchFromDevice(device: document)
                 }
             }
-        }
+            .disabled(document.isBusy)
 
-        Button(activeDocumentActions?.fetchFromDeviceTitle ?? "Fetch Voice from Device into Current Document...") {
-            activeDocumentActions?.fetchFromDevice(document)
-        }
-        .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)
+            Menu("Fetch Recent Voice") {
+                if document.recentFetchedVoices.isEmpty {
+                    Text("No Recent Voice Fetches")
+                } else {
+                    ForEach(document.recentFetchedVoices) { item in
+                        Button(item.title) {
+                            fetchRecentVoice(item)
+                        }
+                        .disabled(document.isBusy || item.source == nil)
+                    }
+                }
+            }
 
-        Button(activeDocumentActions?.storeToDeviceTitle ?? "Store Voice to Device Slot...") {
-            activeDocumentActions?.storeToDevice(document)
+            Button(activeDocumentActions?.fetchFromDeviceTitle ?? "Fetch Voice from Device into Current Document...") {
+                activeDocumentActions?.fetchFromDevice(document)
+            }
+            .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)
+
+            Button(activeDocumentActions?.storeToDeviceTitle ?? "Store Voice to Device Slot...") {
+                activeDocumentActions?.storeToDevice(document)
+            }
+            .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)
+        } else {
+            Text(document.selectedEditorDevice == nil ? "Select a device first." : "\(document.selectedEditorDevice?.displayName ?? "This device") voice document commands are not connected yet.")
         }
-        .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)
     }
 
     private func fetchRecentVoice(_ item: RecentVoiceFetch) {

@@ -140,10 +140,10 @@ struct FB01EditorApplication: App {
                 }
                 .keyboardShortcut(",", modifiers: .command)
 
-                Button(EditorFeatureAvailability.commandTitle(.resetInstructions, fallback: "Reset Instructions...")) {
+                Button(document.selectedDeviceCommandTitle(.resetInstructions, fallback: "Reset Instructions...")) {
                     EditorModuleCommandRunner.run(.resetInstructions, document: document)
                 }
-                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.resetInstructions))
+                .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.resetInstructions))
             }
 
             CommandGroup(replacing: .newItem) {
@@ -190,94 +190,113 @@ struct FB01EditorApplication: App {
             }
 
             CommandMenu("Voice") {
-                VoiceDocumentDeviceCommands(document: document, workspace: documentWorkspace)
-
-                Divider()
-
-                VoiceSelectorCommands(document: document, workspace: documentWorkspace)
-
-                Divider()
-
-                Button(EditorFeatureAvailability.commandTitle(.copyVoiceToSlot, fallback: "Copy \(EditorSynthModule.vocabulary.voiceDisplayName) to Slot...")) {
-                    EditorModuleCommandRunner.run(.copyVoiceToSlot, document: document)
-                }
-                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.copyVoiceToSlot))
-
-                if document.voiceEditorParadigm == .consoleSections {
-                    Button(EditorFeatureAvailability.commandTitle(.swapVoiceWithSlot, fallback: "Swap \(EditorSynthModule.vocabulary.voiceDisplayName) with Slot...")) {
-                        EditorModuleCommandRunner.run(.swapVoiceWithSlot, document: document)
-                    }
-                    .disabled(!document.canUseSelectedVoiceLibrarianActions || !EditorFeatureAvailability.supportsCommand(.swapVoiceWithSlot))
+                if document.selectedEditorDevice == nil {
+                    Text("Select a device first.")
+                } else if document.selectedDeviceUsesFB01DocumentWorkflows {
+                    VoiceDocumentDeviceCommands(document: document, workspace: documentWorkspace)
 
                     Divider()
 
-                    Button(EditorFeatureAvailability.commandTitle(.resetSelectedVoice, fallback: "Reset Selected \(EditorSynthModule.vocabulary.voiceDisplayName)")) {
-                        EditorModuleCommandRunner.run(.resetSelectedVoice, document: document)
-                    }
-                    .disabled(!document.canResetSelectedVoice || !EditorFeatureAvailability.supportsCommand(.resetSelectedVoice))
-
-                    Button(EditorFeatureAvailability.commandTitle(.resetAllVoiceEdits, fallback: "Reset All \(EditorSynthModule.vocabulary.voiceDisplayName) Edits")) {
-                        EditorModuleCommandRunner.run(.resetAllVoiceEdits, document: document)
-                    }
-                    .disabled(!document.canResetAllSelectedVoiceEdits || !EditorFeatureAvailability.supportsCommand(.resetAllVoiceEdits))
+                    VoiceSelectorCommands(document: document, workspace: documentWorkspace)
 
                     Divider()
 
-                    Button(EditorFeatureAvailability.commandTitle(.saveEditedVoiceBank, fallback: "Save Edited Bank As...")) {
-                        EditorModuleCommandRunner.run(.saveEditedVoiceBank, document: document)
+                    Button(document.selectedDeviceCommandTitle(.copyVoiceToSlot, fallback: "Copy Voice to Slot...")) {
+                        EditorModuleCommandRunner.run(.copyVoiceToSlot, document: document)
                     }
-                    .disabled(!document.canResetAllSelectedVoiceEdits || !EditorFeatureAvailability.supportsCommand(.saveEditedVoiceBank))
+                    .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.copyVoiceToSlot))
 
-                    Divider()
-                }
+                    if document.voiceEditorParadigm == .consoleSections {
+                        Button(document.selectedDeviceCommandTitle(.swapVoiceWithSlot, fallback: "Swap Voice with Slot...")) {
+                            EditorModuleCommandRunner.run(.swapVoiceWithSlot, document: document)
+                        }
+                        .disabled(!document.canUseSelectedVoiceLibrarianActions || !document.supportsSelectedDeviceCommand(.swapVoiceWithSlot))
 
-                Button(EditorFeatureAvailability.commandTitle(.storeGeneralMIDIVoices, fallback: "Store General MIDI voices...")) {
-                    EditorModuleCommandRunner.run(.storeGeneralMIDIVoices, document: document)
+                        Divider()
+
+                        Button(document.selectedDeviceCommandTitle(.resetSelectedVoice, fallback: "Reset Selected Voice")) {
+                            EditorModuleCommandRunner.run(.resetSelectedVoice, document: document)
+                        }
+                        .disabled(!document.canResetSelectedVoice || !document.supportsSelectedDeviceCommand(.resetSelectedVoice))
+
+                        Button(document.selectedDeviceCommandTitle(.resetAllVoiceEdits, fallback: "Reset All Voice Edits")) {
+                            EditorModuleCommandRunner.run(.resetAllVoiceEdits, document: document)
+                        }
+                        .disabled(!document.canResetAllSelectedVoiceEdits || !document.supportsSelectedDeviceCommand(.resetAllVoiceEdits))
+
+                        Divider()
+
+                        Button(document.selectedDeviceCommandTitle(.saveEditedVoiceBank, fallback: "Save Edited Bank As...")) {
+                            EditorModuleCommandRunner.run(.saveEditedVoiceBank, document: document)
+                        }
+                        .disabled(!document.canResetAllSelectedVoiceEdits || !document.supportsSelectedDeviceCommand(.saveEditedVoiceBank))
+
+                        Divider()
+                    }
+
+                    if document.supportsSelectedDeviceCommand(.storeGeneralMIDIVoices) {
+                        Button(document.selectedDeviceCommandTitle(.storeGeneralMIDIVoices, fallback: "Store General MIDI voices...")) {
+                            EditorModuleCommandRunner.run(.storeGeneralMIDIVoices, document: document)
+                        }
+                        .disabled(document.isBusy)
+                    }
+                } else {
+                    Text("DX100/27 voice commands are not connected yet.")
                 }
-                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.storeGeneralMIDIVoices))
             }
 
             CommandMenu("Configuration") {
-                ConfigurationDocumentDeviceCommands(document: document, workspace: documentWorkspace)
+                if document.selectedDeviceSupportsConfigurations {
+                    ConfigurationDocumentDeviceCommands(document: document, workspace: documentWorkspace)
 
-                Divider()
-
-                ConfigurationSelectorCommands(document: document, workspace: documentWorkspace)
-
-                Divider()
-
-                Button(EditorFeatureAvailability.commandTitle(.copyConfigurationToSlot, fallback: "Copy \(EditorSynthModule.vocabulary.configurationDisplayName) to Slot ...")) {
-                    EditorModuleCommandRunner.run(.copyConfigurationToSlot, document: document)
-                }
-                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.copyConfigurationToSlot))
-
-                Button(EditorFeatureAvailability.commandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
-                    EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
-                }
-                .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.refreshDeviceCache))
-
-                if document.voiceEditorParadigm == .consoleSections {
                     Divider()
 
-                    Button(EditorFeatureAvailability.commandTitle(.sendSelectedConfigurationToEditBuffer, fallback: "Send Selected Configuration to Current Edit Buffer...")) {
+                    ConfigurationSelectorCommands(document: document, workspace: documentWorkspace)
+
+                    Divider()
+
+                    Button(document.selectedDeviceCommandTitle(.copyConfigurationToSlot, fallback: "Copy Configuration to Slot ...")) {
+                        EditorModuleCommandRunner.run(.copyConfigurationToSlot, document: document)
+                    }
+                    .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.copyConfigurationToSlot))
+
+                    Button(document.selectedDeviceCommandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
+                        EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
+                    }
+                    .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.refreshDeviceCache))
+                } else {
+                    Text(document.selectedEditorDevice == nil ? "Select a device first." : "No configuration commands for \(document.selectedEditorDevice?.displayName ?? "this device").")
+                }
+
+                if !document.selectedDeviceSupportsConfigurations, document.supportsSelectedDeviceCommand(.refreshDeviceCache) {
+                    Button(document.selectedDeviceCommandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
+                        EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
+                    }
+                    .disabled(document.isBusy)
+                }
+
+                if document.selectedDeviceSupportsConfigurations, document.voiceEditorParadigm == .consoleSections {
+                    Divider()
+
+                    Button(document.selectedDeviceCommandTitle(.sendSelectedConfigurationToEditBuffer, fallback: "Send Selected Configuration to Current Edit Buffer...")) {
                         EditorModuleCommandRunner.run(.sendSelectedConfigurationToEditBuffer, document: document)
                     }
-                    .disabled(!document.canSendSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.sendSelectedConfigurationToEditBuffer))
+                    .disabled(!document.canSendSelectedConfiguration || !document.supportsSelectedDeviceCommand(.sendSelectedConfigurationToEditBuffer))
 
-                    Button(EditorFeatureAvailability.commandTitle(.sendAndConfirmSelectedConfiguration, fallback: "Send and Confirm Selected Configuration...")) {
+                    Button(document.selectedDeviceCommandTitle(.sendAndConfirmSelectedConfiguration, fallback: "Send and Confirm Selected Configuration...")) {
                         EditorModuleCommandRunner.run(.sendAndConfirmSelectedConfiguration, document: document)
                     }
-                    .disabled(!document.canSendSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.sendAndConfirmSelectedConfiguration))
+                    .disabled(!document.canSendSelectedConfiguration || !document.supportsSelectedDeviceCommand(.sendAndConfirmSelectedConfiguration))
 
-                    Button(EditorFeatureAvailability.commandTitle(.storeSelectedConfigurationToSlot, fallback: "Store Selected Configuration to Slot...")) {
+                    Button(document.selectedDeviceCommandTitle(.storeSelectedConfigurationToSlot, fallback: "Store Selected Configuration to Slot...")) {
                         EditorModuleCommandRunner.run(.storeSelectedConfigurationToSlot, document: document)
                     }
-                    .disabled(!document.canStoreSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.storeSelectedConfigurationToSlot))
+                    .disabled(!document.canStoreSelectedConfiguration || !document.supportsSelectedDeviceCommand(.storeSelectedConfigurationToSlot))
 
-                    Button(EditorFeatureAvailability.commandTitle(.storeAndConfirmSelectedConfiguration, fallback: "Store and Confirm Selected Configuration...")) {
+                    Button(document.selectedDeviceCommandTitle(.storeAndConfirmSelectedConfiguration, fallback: "Store and Confirm Selected Configuration...")) {
                         EditorModuleCommandRunner.run(.storeAndConfirmSelectedConfiguration, document: document)
                     }
-                    .disabled(!document.canStoreSelectedConfiguration || !EditorFeatureAvailability.supportsCommand(.storeAndConfirmSelectedConfiguration))
+                    .disabled(!document.canStoreSelectedConfiguration || !document.supportsSelectedDeviceCommand(.storeAndConfirmSelectedConfiguration))
                 }
             }
         }
@@ -297,7 +316,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return documentWorkspace?.confirmApplicationTermination() ?? .terminateNow
     }
 }
-
 @MainActor
 final class AboutBoxController {
     static let shared = AboutBoxController()

@@ -226,6 +226,29 @@ import UniformTypeIdentifiers
     #expect(model.deviceCacheSummaryRows.map(\.value) == ["None selected", "Waiting for device selection", "None"])
 }
 
+@MainActor
+@Test func selectedDeviceCommandsReflectModuleCapabilities() {
+    let model = DocumentModel()
+
+    #expect(!model.supportsSelectedDeviceCommand(.showVoiceBank))
+    #expect(!model.selectedDeviceSupportsConfigurations)
+
+    model.selectedEditorDevice = .fb01
+    #expect(model.supportsSelectedDeviceCommand(.showVoiceBank))
+    #expect(model.supportsSelectedDeviceCommand(.showConfigurationBank))
+    #expect(model.supportsSelectedDeviceCommand(.storeGeneralMIDIVoices))
+    #expect(model.selectedDeviceSupportsConfigurations)
+    #expect(model.selectedDeviceUsesFB01DocumentWorkflows)
+
+    model.selectedEditorDevice = .dx100
+    #expect(!model.supportsSelectedDeviceCommand(.showVoiceBank))
+    #expect(!model.supportsSelectedDeviceCommand(.copyVoiceToSlot))
+    #expect(!model.supportsSelectedDeviceCommand(.showConfigurationBank))
+    #expect(!model.supportsSelectedDeviceCommand(.storeGeneralMIDIVoices))
+    #expect(!model.selectedDeviceSupportsConfigurations)
+    #expect(!model.selectedDeviceUsesFB01DocumentWorkflows)
+}
+
 @Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {
     let messages = try keyboardAuditionPreparationMessages(systemChannel: 0, midiChannel: 4)
 

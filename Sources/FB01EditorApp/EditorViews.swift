@@ -54,9 +54,13 @@ struct MainWindowStatusFooter: View {
 struct ToolbarView: View {
     @ObservedObject var document: DocumentModel
 
+    private var deviceName: String {
+        document.selectedEditorDevice?.displayName ?? "Device"
+    }
+
     var body: some View {
         HStack(spacing: 10) {
-            Text("MIDI In from \(EditorSynthModule.vocabulary.deviceDisplayName)")
+            Text("MIDI In from \(deviceName)")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -72,9 +76,9 @@ struct ToolbarView: View {
                 Label(document.selectedSourceName, systemImage: "arrow.down.circle")
             }
             .disabled(document.midiSources.isEmpty || document.isBusy)
-            .forestHoverHelp("Selects the MIDI input that receives replies and dumps from the FB-01.")
+            .forestHoverHelp("Selects the MIDI input that receives replies and dumps from the selected device.")
 
-            Text("MIDI Out to \(EditorSynthModule.vocabulary.deviceDisplayName)")
+            Text("MIDI Out to \(deviceName)")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
 
@@ -90,7 +94,7 @@ struct ToolbarView: View {
                 Label(document.selectedDestinationName, systemImage: "arrow.up.circle")
             }
             .disabled(document.midiDestinations.isEmpty || document.isBusy)
-            .forestHoverHelp("Selects the MIDI output used to send notes, edits, fetch requests, and store commands to the FB-01.")
+            .forestHoverHelp("Selects the MIDI output used to send notes, edits, fetch requests, and store commands to the selected device.")
 
             Button {
                 document.refreshMIDIEndpoints()
@@ -148,9 +152,9 @@ struct VoiceSelectorCommands: View {
     @FocusedValue(\.activeVoiceBankSelector) private var activeVoiceBankSelector
 
     var body: some View {
-        Menu(EditorFeatureAvailability.commandTitle(.showVoiceBank, fallback: "Show Voice Bank")) {
-            ForEach(EditorSynthModule.module.allVoiceBanks, id: \.self) { bank in
-                Button("Bank \(bank)") {
+        Menu(document.selectedDeviceCommandTitle(.showVoiceBank, fallback: "Show Voice Bank")) {
+            ForEach(document.selectedDeviceVoiceBanks, id: \.self) { bank in
+                Button(document.selectedDeviceVoiceBankTitle(bank)) {
                     let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank)
                     if !workspace.bringWindowToFront(identifier: identifier) {
                         openWindow(id: "voice-bank-selector", value: bank)
@@ -159,11 +163,11 @@ struct VoiceSelectorCommands: View {
                 .disabled(document.isBusy)
             }
         }
-        .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.showVoiceBank))
+        .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.showVoiceBank))
 
-        Menu(EditorFeatureAvailability.commandTitle(.storeVoiceBank, fallback: "Store Bank")) {
-            ForEach(EditorSynthModule.module.writableVoiceBanks, id: \.self) { targetBank in
-                Button("Bank \(targetBank)") {
+        Menu(document.selectedDeviceCommandTitle(.storeVoiceBank, fallback: "Store Bank")) {
+            ForEach(document.selectedDeviceWritableVoiceBanks, id: \.self) { targetBank in
+                Button(document.selectedDeviceVoiceBankTitle(targetBank)) {
                     if let sourceBank = activeVoiceBankSelector {
                         document.storeVoiceBankFromSelector(sourceBank: sourceBank, targetBank: targetBank)
                     }
@@ -171,7 +175,7 @@ struct VoiceSelectorCommands: View {
                 .disabled(document.isBusy || activeVoiceBankSelector == nil)
             }
         }
-        .disabled(document.isBusy || activeVoiceBankSelector == nil || !EditorFeatureAvailability.supportsCommand(.storeVoiceBank))
+        .disabled(document.isBusy || activeVoiceBankSelector == nil || !document.supportsSelectedDeviceCommand(.storeVoiceBank))
     }
 }
 
@@ -181,12 +185,12 @@ struct ConfigurationSelectorCommands: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button(EditorFeatureAvailability.commandTitle(.showConfigurationBank, fallback: "Show Configuration Bank")) {
+        Button(document.selectedDeviceCommandTitle(.showConfigurationBank, fallback: "Show Configuration Bank")) {
             if !workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.configurationBankSelectorWindowIdentifier) {
                 openWindow(id: "configuration-bank-selector")
             }
         }
-        .disabled(document.isBusy || !EditorFeatureAvailability.supportsCommand(.showConfigurationBank))
+        .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.showConfigurationBank))
     }
 }
 

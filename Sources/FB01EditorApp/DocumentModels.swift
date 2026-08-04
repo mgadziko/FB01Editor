@@ -421,6 +421,73 @@ final class DocumentModel: ObservableObject {
         return hasAllVoiceBanks && hasAllConfigurations ? "Complete" : "Partial"
     }
 
+    var selectedDeviceSupportsConfigurations: Bool {
+        switch selectedEditorDevice {
+        case .fb01:
+            return FB01ModuleServices.shared.module.capabilities.supportsConfigurations
+        case .dx100:
+            return DX100ModuleServices.shared.module.capabilities.supportsConfigurations
+        case nil:
+            return false
+        }
+    }
+
+    var selectedDeviceUsesFB01DocumentWorkflows: Bool {
+        selectedEditorDevice == .fb01
+    }
+
+    func supportsSelectedDeviceCommand(_ kind: SynthModuleCommandKind) -> Bool {
+        selectedDeviceCommandDescriptor(for: kind) != nil
+    }
+
+    func selectedDeviceCommandTitle(_ kind: SynthModuleCommandKind, fallback: String) -> String {
+        selectedDeviceCommandDescriptor(for: kind)?.displayName ?? fallback
+    }
+
+    private func selectedDeviceCommandDescriptor(for kind: SynthModuleCommandKind) -> SynthModuleCommandDescriptor? {
+        switch selectedEditorDevice {
+        case .dx100 where [.showVoiceBank, .storeVoiceBank, .copyVoiceToSlot].contains(kind):
+            return nil
+        case .fb01:
+            return FB01ModuleServices.shared.module.commandDescriptors.first { $0.kind == kind }
+        case .dx100:
+            return DX100ModuleServices.shared.module.commandDescriptors.first { $0.kind == kind }
+        case nil:
+            return nil
+        }
+    }
+
+    var selectedDeviceVoiceBanks: [Int] {
+        switch selectedEditorDevice {
+        case .fb01:
+            return FB01ModuleServices.shared.module.allVoiceBanks
+        case .dx100:
+            return [1]
+        case nil:
+            return []
+        }
+    }
+
+    var selectedDeviceWritableVoiceBanks: [Int] {
+        switch selectedEditorDevice {
+        case .fb01:
+            return FB01ModuleServices.shared.module.writableVoiceBanks
+        case .dx100:
+            return [1]
+        case nil:
+            return []
+        }
+    }
+
+    func selectedDeviceVoiceBankTitle(_ bank: Int) -> String {
+        switch selectedEditorDevice {
+        case .dx100:
+            return DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)"
+        case .fb01, nil:
+            return "Bank \(bank)"
+        }
+    }
+
     func startLaunchDeviceCacheRefreshIfNeeded() {
         guard !hasStartedLaunchDeviceCacheRefresh else {
             return
