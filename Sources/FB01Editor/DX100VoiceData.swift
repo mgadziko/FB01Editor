@@ -55,6 +55,30 @@ public enum DX100 {
         }
         return byte
     }
+
+    public static func splitSysExMessages(from bytes: [UInt8]) -> [[UInt8]] {
+        var messages: [[UInt8]] = []
+        var buffer: [UInt8] = []
+
+        for byte in bytes {
+            if byte == start {
+                buffer = [byte]
+                continue
+            }
+
+            guard !buffer.isEmpty else {
+                continue
+            }
+
+            buffer.append(byte)
+            if byte == end {
+                messages.append(buffer)
+                buffer.removeAll(keepingCapacity: true)
+            }
+        }
+
+        return messages
+    }
 }
 
 public struct DX100VoiceData: Equatable, Sendable {
@@ -71,6 +95,21 @@ public struct DX100VoiceData: Equatable, Sendable {
             throw DX100SysExError.invalidVoiceDataLength(expected: Self.byteCount, actual: bytes.count)
         }
         self.bytes = try bytes.map { try DX100.validateDataByte($0) }
+    }
+
+    public func settingName(_ name: String) throws -> DX100VoiceData {
+        var copy = bytes
+        let allowed = name.prefix(Self.nameLength).map { character -> UInt8 in
+            guard character.unicodeScalars.count == 1,
+                  let scalar = character.unicodeScalars.first,
+                  scalar.isASCII,
+                  (0x20...0x7E).contains(UInt8(scalar.value)) else {
+                return 0x20
+            }
+            return UInt8(scalar.value)
+        }
+        copy.replaceSubrange(77..<87, with: allowed + Array(repeating: 0x20, count: Self.nameLength - allowed.count))
+        return try DX100VoiceData(bytes: copy)
     }
 
     public init(singleVoiceBulkSysEx bytes: [UInt8]) throws {

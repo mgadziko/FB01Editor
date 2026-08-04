@@ -1,0 +1,67 @@
+import Foundation
+
+public struct DX100VoiceDocumentCandidate: Sendable {
+    public var title: String
+    public var voice: DX100VoiceData
+    public var channel: Int
+
+    public init(title: String, voice: DX100VoiceData, channel: Int) {
+        self.title = title
+        self.voice = voice
+        self.channel = channel
+    }
+}
+
+public enum DX100DocumentServiceError: Error, Equatable, CustomStringConvertible {
+    case noVoiceCandidates
+    case configurationsUnsupported
+
+    public var description: String {
+        switch self {
+        case .noVoiceCandidates:
+            "The file does not contain a DX100 single-voice dump."
+        case .configurationsUnsupported:
+            "DX100 configurations are not supported; use voice documents and voice banks."
+        }
+    }
+}
+
+public struct DX100DocumentService: Sendable {
+    public static let shared = DX100DocumentService()
+
+    private init() {}
+
+    public func templateVoice() throws -> DX100VoiceData {
+        var voice = try DX100VoiceData(bytes: Array(repeating: 0, count: DX100VoiceData.byteCount))
+        voice = try voice.settingName("Init")
+        return voice
+    }
+
+    public func voiceCandidates(fromSysExBytes bytes: [UInt8]) throws -> [DX100VoiceDocumentCandidate] {
+        let candidates = DX100.splitSysExMessages(from: bytes).compactMap { message -> DX100VoiceDocumentCandidate? in
+            guard let voice = try? DX100VoiceData(singleVoiceBulkSysEx: message) else {
+                return nil
+            }
+            let channel = Int(message[2] & 0x0F)
+            return DX100VoiceDocumentCandidate(
+                title: "Current Voice: \(voice.name.isEmpty ? "Untitled" : voice.name)",
+                voice: voice,
+                channel: channel
+            )
+        }
+
+        guard !candidates.isEmpty else {
+            throw DX100DocumentServiceError.noVoiceCandidates
+        }
+        return candidates
+    }
+
+    public func readVoiceCandidates(from url: URL) throws -> [DX100VoiceDocumentCandidate] {
+        try voiceCandidates(fromSysExBytes: Array(Data(contentsOf: url)))
+    }
+
+    public func writeVoice(_ voice: DX100VoiceData, channel: Int, to url: URL) throws {
+        let data = Data(try voice.singleVoiceBulkSysEx(channel: channel))
+        try data.write(to: url)
+    }
+}

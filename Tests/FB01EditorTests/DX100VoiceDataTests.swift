@@ -101,6 +101,50 @@ private let ivoryEbonySingleVoiceDump: [UInt8] = [
     #expect(op4.detune == 2)
 }
 
+@Test func dx100VoiceServiceExtractsCurrentVoiceAndBuildsEditBufferMessage() throws {
+    let service = DX100VoiceService.shared
+    let fetched = try service.currentVoice(fromSingleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
+
+    #expect(fetched.voice.name == "IvoryEbony")
+    #expect(fetched.channel == 0)
+    #expect(fetched.title == "Current Voice: IvoryEbony")
+    #expect(try service.currentVoice(from: [ivoryEbonySingleVoiceDump]).voice == fetched.voice)
+    #expect(try service.neutralVoice(fromSingleVoiceBulkSysEx: ivoryEbonySingleVoiceDump).name == "IvoryEbony")
+    #expect(try service.editBufferMessages(for: fetched.voice, channel: fetched.channel) == [ivoryEbonySingleVoiceDump])
+}
+
+@Test func dx100DocumentServiceTemplatesAndRoundTripsSingleVoiceFiles() throws {
+    let service = DX100DocumentService.shared
+    let template = try service.templateVoice()
+    #expect(template.name == "Init")
+
+    let voice = try DX100VoiceData(singleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("DX100DocumentServiceTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    let voiceURL = directory.appendingPathComponent("ivory-ebony.dxv")
+    try service.writeVoice(voice, channel: 0, to: voiceURL)
+
+    let candidates = try service.readVoiceCandidates(from: voiceURL)
+    #expect(candidates.count == 1)
+    #expect(candidates[0].voice == voice)
+    #expect(candidates[0].channel == 0)
+    #expect(candidates[0].title == "Current Voice: IvoryEbony")
+}
+
+@Test func dx100DocumentServiceReadsMultipleSingleVoiceMessagesFromSysEx() throws {
+    let candidates = try DX100DocumentService.shared.voiceCandidates(
+        fromSysExBytes: ivoryEbonySingleVoiceDump + ivoryEbonySingleVoiceDump
+    )
+
+    #expect(candidates.count == 2)
+    #expect(candidates.map(\.voice.name) == ["IvoryEbony", "IvoryEbony"])
+}
+
 @Test func fb01VoiceAlsoProjectsIntoNeutralFourOperatorShape() throws {
     let fb01Voice = try FB01DocumentService.shared.templateVoice()
     let neutral = fb01Voice.fourOperatorVoice

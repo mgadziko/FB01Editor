@@ -77,6 +77,64 @@ import Testing
     #expect(module.storageVoiceBank(forDisplayBank: 1) == 0)
 }
 
+@Test func dx100ModuleDeclaresDormantDeviceBoundary() {
+    let module = DX100SynthModule.shared
+
+    #expect(module.identity.manufacturer == "Yamaha")
+    #expect(module.identity.modelName == "DX100")
+    #expect(module.identity.editorDisplayName == "Forest Editor")
+    #expect(module.vocabulary.deviceDisplayName == "DX100")
+    #expect(module.fileProfile.singleVoiceExtension == "dxv")
+    #expect(module.fileProfile.voiceBankExtension == "dxvb")
+    #expect(module.fileProfile.genericSysExExtension == "dxx")
+    #expect(module.fileProfile.importExtensions.contains("syx"))
+    #expect(module.capabilities.supportsVoices)
+    #expect(!module.capabilities.supportsConfigurations)
+    #expect(!module.capabilities.supportsMultiInstrumentConfigurations)
+    #expect(module.capabilities.supportsWritableVoiceBanks)
+    #expect(module.capabilities.supportsReadOnlyVoiceBanks)
+    #expect(module.capabilities.supportsMemoryProtect)
+    #expect(module.capabilities.supportsLiveAuditionBuffer)
+    #expect(!module.capabilities.supportsGeneralMIDIInstall)
+    #expect(module.supportedDocumentKinds == [.voice, .voiceBank])
+    #expect(module.supportedDocumentDescriptors.map(\.kind) == [.voice, .voiceBank])
+    #expect(module.commandDescriptors.map(\.kind) == [.showVoiceBank, .storeVoiceBank, .copyVoiceToSlot])
+    #expect(module.parameterDescriptors.contains { $0.id == "voice.lfoDelay" && $0.displayName == "LFO Delay" })
+    #expect(module.parameterDescriptors.contains { $0.id == "voice.operator.frequency" && $0.displayName == "OSC Frequency" })
+    #expect(module.parameterBindingDescriptors.contains { $0.parameterID == "voice.operator.frequency" && $0.fieldName == "oscillatorFrequency" })
+    #expect(module.writableVoiceBanks == [1, 2, 3, 4, 5])
+    #expect(module.readOnlyVoiceBanks == [6, 7, 8, 9, 10, 11, 12, 13])
+    #expect(module.allVoiceBanks == Array(1...13))
+    #expect(module.voicesPerBank == 24)
+    #expect(module.voiceBankSelectorLayout.columns == 4)
+    #expect(module.voiceBankSelectorLayout.rowsPerColumn == 6)
+    #expect(module.configurationBankSelectorLayout == nil)
+    #expect(module.fullDeviceCacheScope.voiceBanks == Array(1...13))
+    #expect(module.fullDeviceCacheScope.configurationSlots == nil)
+    #expect(!module.fullDeviceCacheScope.includesCurrentConfiguration)
+    #expect(module.isWritableVoiceBank(1))
+    #expect(module.isWritableVoiceBank(5))
+    #expect(!module.isWritableVoiceBank(6))
+    #expect(module.isReadOnlyVoiceBank(13))
+    #expect(module.isValidVoiceBank(13))
+    #expect(!module.isValidVoiceBank(14))
+    #expect(module.voiceBankKind(displayBank: 1) == .internalRAM)
+    #expect(module.voiceBankKind(displayBank: 2) == .bankMemory(1))
+    #expect(module.voiceBankKind(displayBank: 6) == .preset(normalMode: true, group: 1))
+    #expect(module.voiceBankKind(displayBank: 13) == .preset(normalMode: false, group: 4))
+    #expect(module.cacheVoiceBankDescription(for: module.writableVoiceBanks) == "DX100 RAM/Bank voice banks 1-5")
+    #expect(module.cacheVoiceBankDescription(for: module.readOnlyVoiceBanks) == "DX100 Preset voice banks 6-13")
+}
+
+@Test func dx100ModuleServicesExposeDormantVoiceService() throws {
+    let services = DX100ModuleServices.shared
+
+    #expect(services.module.identity.modelName == "DX100")
+    #expect(services.voiceService.module.identity == services.module.identity)
+    #expect(try services.voiceService.singleVoiceDumpRequest(channel: 0) == [0xF0, 0x43, 0x20, 0x03, 0xF7])
+    #expect(try services.documentService.templateVoice().name == "Init")
+}
+
 private struct MockFourOperatorModule: SynthModule {
     let identity = SynthModuleIdentity(
         manufacturer: "Test",
