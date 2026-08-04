@@ -318,6 +318,63 @@ public struct DX100VoiceBankData: Equatable, Sendable {
         Array(voiceNames.prefix(Self.dx100DisplayedVoiceCount))
     }
 
+    public static func packedVoiceRecord(from voice: DX100VoiceData) -> [UInt8] {
+        var packed = Array(repeating: UInt8(0), count: packedVoiceByteCount)
+
+        for operatorIndex in 0..<DX100VoiceData.operatorNumbersInDataOrder.count {
+            let packedOperatorStart = operatorIndex * 10
+            let expandedOperatorStart = operatorIndex * DX100VoiceData.operatorBlockByteCount
+            packed[packedOperatorStart + 0] = voice.bytes[expandedOperatorStart + 0]
+            packed[packedOperatorStart + 1] = voice.bytes[expandedOperatorStart + 1]
+            packed[packedOperatorStart + 2] = voice.bytes[expandedOperatorStart + 2]
+            packed[packedOperatorStart + 3] = voice.bytes[expandedOperatorStart + 3]
+            packed[packedOperatorStart + 4] = voice.bytes[expandedOperatorStart + 4]
+            packed[packedOperatorStart + 5] = voice.bytes[expandedOperatorStart + 5]
+            packed[packedOperatorStart + 6] =
+                ((voice.bytes[expandedOperatorStart + 8] & 0x01) << 6)
+                | ((voice.bytes[expandedOperatorStart + 7] & 0x07) << 3)
+                | (voice.bytes[expandedOperatorStart + 9] & 0x07)
+            packed[packedOperatorStart + 7] = voice.bytes[expandedOperatorStart + 10]
+            packed[packedOperatorStart + 8] = voice.bytes[expandedOperatorStart + 11]
+            packed[packedOperatorStart + 9] =
+                ((voice.bytes[expandedOperatorStart + 6] & 0x03) << 3)
+                | (voice.bytes[expandedOperatorStart + 12] & 0x07)
+        }
+
+        packed[40] =
+            ((voice.bytes[58] & 0x01) << 6)
+            | ((voice.bytes[53] & 0x07) << 3)
+            | (voice.bytes[52] & 0x07)
+        packed[41] = voice.bytes[54]
+        packed[42] = voice.bytes[55]
+        packed[43] = voice.bytes[56]
+        packed[44] = voice.bytes[57]
+        packed[45] =
+            ((voice.bytes[60] & 0x07) << 4)
+            | ((voice.bytes[61] & 0x03) << 2)
+            | (voice.bytes[59] & 0x03)
+        packed[46] = voice.bytes[62]
+        packed[47] = voice.bytes[64]
+        packed[48] =
+            (voice.bytes[63] & 0x01)
+            | ((voice.bytes[65] & 0x01) << 1)
+            | ((voice.bytes[68] & 0x01) << 2)
+            | ((voice.bytes[69] & 0x01) << 3)
+            | ((voice.bytes[70] & 0x01) << 4)
+        packed[49] = voice.bytes[66]
+        packed[50] = voice.bytes[67]
+        packed[51] = voice.bytes[71]
+        packed[52] = voice.bytes[72]
+        packed[53] = voice.bytes[73]
+        packed[54] = voice.bytes[74]
+        packed[55] = voice.bytes[75]
+        packed[56] = voice.bytes[76]
+        packed.replaceSubrange(packedVoiceNameRange, with: voice.bytes[77..<87])
+        packed.replaceSubrange(67..<73, with: voice.bytes[87..<93])
+
+        return packed
+    }
+
     public func voice(atPackedVoiceIndex index: Int) throws -> DX100VoiceData {
         guard (0..<Self.packedVoiceCount).contains(index) else {
             throw DX100SysExError.voiceIndexOutOfRange(index)
@@ -386,6 +443,17 @@ public struct DX100VoiceBankData: Equatable, Sendable {
         expanded.replaceSubrange(87..<93, with: packed[67..<73])
 
         return try DX100VoiceData(bytes: expanded)
+    }
+
+    public func replacingVoice(atPackedVoiceIndex index: Int, with voice: DX100VoiceData) throws -> DX100VoiceBankData {
+        guard (0..<Self.packedVoiceCount).contains(index) else {
+            throw DX100SysExError.voiceIndexOutOfRange(index)
+        }
+
+        var copy = bytes
+        let start = index * Self.packedVoiceByteCount
+        copy.replaceSubrange(start..<(start + Self.packedVoiceByteCount), with: Self.packedVoiceRecord(from: voice))
+        return try DX100VoiceBankData(bytes: copy, channel: channel)
     }
 
     public func thirtyTwoVoiceBulkSysEx(channel: Int? = nil) throws -> [UInt8] {

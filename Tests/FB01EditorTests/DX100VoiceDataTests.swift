@@ -93,6 +93,26 @@ private let ivoryEbonyPackedVoiceRecord: [UInt8] = [
     }
 }
 
+@Test func dx100VoiceBankPacksEditableVoiceIntoPackedRecord() throws {
+    let currentVoice = try DX100VoiceData(singleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
+    let packed = DX100VoiceBankData.packedVoiceRecord(from: currentVoice)
+
+    #expect(packed == ivoryEbonyPackedVoiceRecord)
+}
+
+@Test func dx100VoiceBankReplacesPackedVoiceSlot() throws {
+    let currentVoice = try DX100VoiceData(singleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
+    let initialBank = try DX100VoiceBankData(bytes: Array(repeating: 0, count: DX100.thirtyTwoVoiceDataByteCount))
+
+    let editedBank = try initialBank.replacingVoice(atPackedVoiceIndex: 3, with: currentVoice)
+
+    #expect(editedBank.voiceNames[3] == "IvoryEbony")
+    #expect(try editedBank.voice(atPackedVoiceIndex: 3) == currentVoice)
+    #expect(throws: DX100SysExError.voiceIndexOutOfRange(32)) {
+        try initialBank.replacingVoice(atPackedVoiceIndex: 32, with: currentVoice)
+    }
+}
+
 @Test func dx100ParsesCapturedIvoryEbonySingleVoiceDump() throws {
     let voice = try DX100VoiceData(singleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
 
