@@ -36,12 +36,39 @@ public enum DX100 {
     public static let singleVoiceFormat: UInt8 = 0x03
     public static let singleVoiceByteCountMSB: UInt8 = 0x00
     public static let singleVoiceByteCountLSB: UInt8 = 0x5D
+    public static let thirtyTwoVoiceFormat: UInt8 = 0x04
+    public static let thirtyTwoVoiceByteCountMSB: UInt8 = 0x20
+    public static let thirtyTwoVoiceByteCountLSB: UInt8 = 0x00
+    public static let thirtyTwoVoiceDataByteCount = 4096
 
     public static func requestSingleVoiceBulk(channel: Int = 0) throws -> [UInt8] {
         guard (0...15).contains(channel) else {
             throw DX100SysExError.invalidChannel(channel)
         }
         return [start, yamahaID, 0x20 | UInt8(channel), singleVoiceFormat, end]
+    }
+
+    public static func requestThirtyTwoVoiceBulk(channel: Int = 0) throws -> [UInt8] {
+        guard (0...15).contains(channel) else {
+            throw DX100SysExError.invalidChannel(channel)
+        }
+        return [start, yamahaID, 0x20 | UInt8(channel), thirtyTwoVoiceFormat, end]
+    }
+
+    public static func isThirtyTwoVoiceBulkSysEx(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count == thirtyTwoVoiceDataByteCount + 8,
+              bytes[0] == start,
+              bytes[1] == yamahaID,
+              (bytes[2] & 0xF0) == 0x00,
+              bytes[3] == thirtyTwoVoiceFormat,
+              bytes[4] == thirtyTwoVoiceByteCountMSB,
+              bytes[5] == thirtyTwoVoiceByteCountLSB,
+              bytes.last == end else {
+            return false
+        }
+
+        let data = Array(bytes[6..<(6 + thirtyTwoVoiceDataByteCount)])
+        return checksum(for: data) == bytes[6 + thirtyTwoVoiceDataByteCount]
     }
 
     public static func checksum(for data: [UInt8]) -> UInt8 {

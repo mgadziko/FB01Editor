@@ -49,6 +49,29 @@ struct RequestOptions {
     var timeoutSeconds: TimeInterval = 4
 }
 
+enum DX100DumpRequestKind {
+    case currentVoice
+    case voiceBank
+
+    var displayName: String {
+        switch self {
+        case .currentVoice:
+            "current voice"
+        case .voiceBank:
+            "32-voice bulk"
+        }
+    }
+
+    func bytes(channel: Int) throws -> [UInt8] {
+        switch self {
+        case .currentVoice:
+            try DX100.requestSingleVoiceBulk(channel: channel)
+        case .voiceBank:
+            try DX100.requestThirtyTwoVoiceBulk(channel: channel)
+        }
+    }
+}
+
 final class SysExCaptureState: @unchecked Sendable {
     private let lock = NSLock()
     private var buffer: [UInt8] = []
@@ -260,10 +283,10 @@ func send(bytes: [UInt8], to destination: MIDIEndpointInfo, outputPort: MIDIPort
     try check(MIDISend(outputPort, destination.endpoint, packetListPointer), "MIDISend")
 }
 
-func requestCurrentVoice(options: RequestOptions) throws {
+func requestDump(kind: DX100DumpRequestKind, options: RequestOptions) throws {
     let source = try selectedSource(matching: options.sourceQuery)
     let destination = try selectedDestination(matching: options.destinationQuery)
-    let requestBytes = try DX100.requestSingleVoiceBulk(channel: options.channel)
+    let requestBytes = try kind.bytes(channel: options.channel)
     let state = SysExCaptureState()
 
     var client = MIDIClientRef()
@@ -286,7 +309,7 @@ func requestCurrentVoice(options: RequestOptions) throws {
     try check(MIDIPortConnectSource(inputPort, source.endpoint, nil), "MIDIPortConnectSource")
 
     print("Listening to [\(source.index)] \(source.displayName)")
-    print("Requesting DX100 current voice from [\(destination.index)] \(destination.displayName)")
+    print("Requesting DX100 \(kind.displayName) from [\(destination.index)] \(destination.displayName)")
     try send(bytes: requestBytes, to: destination, outputPort: outputPort)
 
     let start = Date()
@@ -300,7 +323,7 @@ func requestCurrentVoice(options: RequestOptions) throws {
         }
 
         for message in messages[inspectedCount...] {
-            if let fetched = try? DX100VoiceService.shared.currentVoice(fromSingleVoiceBulkSysEx: message) {
+            if kind == .currentVoice, let fetched = try? DX100VoiceService.shared.currentVoice(fromSingleVoiceBulkSysEx: message) {
                 print("Received DX100 current voice: \(fetched.voice.name)")
                 print("Channel: \(fetched.channel)")
                 print("Bytes: \(message.count)")
@@ -311,7 +334,21 @@ func requestCurrentVoice(options: RequestOptions) throws {
                 }
                 return
             }
-            print("Received \(message.count)-byte SysEx message that is not a DX100 single-voice bulk dump.")
+
+            if kind == .voiceBank, DX100.isThirtyTwoVoiceBulkSysEx(message) {
+                print("Received DX100 32-voice bulk dump")
+                print("Channel: \(Int(message[2] & 0x0F))")
+                print("Bytes: \(message.count)")
+                print("Data bytes: \(DX100.thirtyTwoVoiceDataByteCount)")
+                print("Checksum: valid")
+                if let outputURL = options.outputURL {
+                    try Data(message).write(to: outputURL)
+                    print("Wrote \(outputURL.path)")
+                }
+                return
+            }
+
+            print("Received \(message.count)-byte SysEx message that is not a DX100 \(kind.displayName) dump.")
         }
         inspectedCount = messages.count
     }
@@ -323,8 +360,9 @@ func printUsage() {
     print("""
     dx100-dump list
     dx100-dump current-voice [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxv>] [--timeout <seconds>]
+    dx100-dump voice-bank [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxx>] [--timeout <seconds>]
 
-    DX100 SysEx helper. `current-voice` sends only the documented current voice bulk dump request and does not store or write data to the device.
+    DX100 SysEx helper. Requests send only documented bulk dump requests and do not store or write data to the device.
     """)
 }
 
@@ -339,7 +377,13 @@ do {
     case "list":
         printEndpoints()
     case "current-voice":
-        try requestCurrentVoice(options: try parseRequestOptions(arguments.dropFirst()))
+        try requestDump(kind: .currentVoice, options: try parseRequestOptions(arguments.dropFirst()))
+    case "voice-bank":
+        var options = try parseRequestOptions(arguments.dropFirst())
+        if options.timeoutSeconds == 4 {
+            options.timeoutSeconds = 12
+        }
+        try requestDump(kind: .voiceBank, options: options)
     case "--help", "-h", "help":
         printUsage()
     default:

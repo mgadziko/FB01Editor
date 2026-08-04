@@ -23,6 +23,24 @@ private let ivoryEbonySingleVoiceDump: [UInt8] = [
     }
 }
 
+@Test func dx100BuildsAndRecognizesThirtyTwoVoiceBulkRequest() throws {
+    #expect(try DX100.requestThirtyTwoVoiceBulk(channel: 0) == [0xF0, 0x43, 0x20, 0x04, 0xF7])
+    #expect(try DX100.requestThirtyTwoVoiceBulk(channel: 3) == [0xF0, 0x43, 0x23, 0x04, 0xF7])
+
+    let data = Array(repeating: UInt8(0), count: DX100.thirtyTwoVoiceDataByteCount)
+    let message: [UInt8] = [
+        DX100.start,
+        DX100.yamahaID,
+        0x00,
+        DX100.thirtyTwoVoiceFormat,
+        DX100.thirtyTwoVoiceByteCountMSB,
+        DX100.thirtyTwoVoiceByteCountLSB,
+    ] + data + [DX100.checksum(for: data), DX100.end]
+
+    #expect(DX100.isThirtyTwoVoiceBulkSysEx(message))
+    #expect(!DX100.isThirtyTwoVoiceBulkSysEx(message.dropLast(2) + [0x01, DX100.end]))
+}
+
 @Test func dx100ParsesCapturedIvoryEbonySingleVoiceDump() throws {
     let voice = try DX100VoiceData(singleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
 
