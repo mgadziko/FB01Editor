@@ -192,7 +192,7 @@ struct FB01EditorApplication: App {
             CommandMenu("Voice") {
                 if document.selectedEditorDevice == nil {
                     Text("Select a device first.")
-                } else if document.selectedDeviceUsesFB01DocumentWorkflows {
+                } else if document.selectedDeviceHasConnectedVoiceDocumentCommands {
                     VoiceDocumentDeviceCommands(document: document, workspace: documentWorkspace)
 
                     Divider()
@@ -241,11 +241,20 @@ struct FB01EditorApplication: App {
                         .disabled(document.isBusy)
                     }
                 } else {
-                    Text("DX100/27 voice commands are not connected yet.")
+                    if document.supportsSelectedDeviceCommand(.refreshDeviceCache) {
+                        Button(document.selectedDeviceCommandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
+                            EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
+                        }
+                        .disabled(document.isBusy)
+
+                        Divider()
+                    }
+
+                    Text("\(document.selectedEditorDevice?.displayName ?? "This device") Voice Document commands are not connected yet.")
                 }
             }
 
-            if document.selectedEditorDevice != .dx100 {
+            if document.selectedDeviceShowsConfigurationMenu {
                 CommandMenu("Configuration") {
                     if document.selectedDeviceSupportsConfigurations {
                         ConfigurationDocumentDeviceCommands(document: document, workspace: documentWorkspace)

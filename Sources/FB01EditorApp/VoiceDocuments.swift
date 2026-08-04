@@ -10,6 +10,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var voice: FB01VoiceData
     @Published var savedVoice: FB01VoiceData
     @Published var systemChannel: Int
+    @Published var sourceDevice: EditorDeviceSelection = .fb01
     @Published var fileURL: URL?
     @Published var errorMessage: String?
     @Published var statusMessage: String?
@@ -171,13 +172,62 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func fetchFromDevice(device: DocumentModel, source preselectedSource: VoiceDocumentFetchSource? = nil, recentTitle: String? = nil) {
         guard !isBusy else { return }
+        guard let selectedDevice = device.selectedEditorDevice else {
+            errorMessage = "Fetch failed: select a device first."
+            statusMessage = nil
+            return
+        }
         let sourceIndex = device.selectedSourceIndex
         let destinationIndex = device.selectedDestinationIndex
         let systemChannel = device.systemChannel
 
-        isBusy = true
         let systemChannelName = "System channel \(systemChannel + 1)"
         errorMessage = nil
+        isBusy = true
+
+        if selectedDevice == .dx100 {
+            let fetchTitle = recentTitle ?? "current voice"
+            statusMessage = "Fetching \(fetchTitle) from DX100/27 on \(systemChannelName)..."
+            let fetchProgressPanel = EditorProgressPanel(
+                title: "Fetching Voice",
+                message: "The voice is being fetched. Please wait.\nFetching \(fetchTitle) from the DX100/27..."
+            )
+            fetchProgressPanel.show()
+            Task {
+                do {
+                    let result = try await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.fetchVoiceDocument(
+                            for: .dx100,
+                            source: preselectedSource,
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            documentModel: device,
+                            recentTitle: recentTitle
+                        )
+                    }.value
+                    voice = result.voice
+                    savedVoice = result.voice
+                    resetPerformanceMacros()
+                    self.systemChannel = result.systemChannel
+                    self.sourceDevice = result.sourceDevice
+                    fileURL = nil
+                    noteVoiceReplacement()
+                    preparedKeyboardVoiceSignature = nil
+                    let fetchedName = result.voice.name.isEmpty ? "Untitled" : result.voice.name
+                    statusMessage = "Fetched translated \(fetchedName) from DX100/27 current voice into this document."
+                    device.rememberRecentFetchedVoice(.instrument(0), title: "Current Voice: \(fetchedName)")
+                    errorMessage = nil
+                } catch {
+                    errorMessage = "Fetch failed on \(systemChannelName): \(error)"
+                    statusMessage = nil
+                }
+                fetchProgressPanel.dismiss()
+                isBusy = false
+            }
+            return
+        }
+
         if preselectedSource == nil {
             statusMessage = "Fetching Bank 1 and Bank 2 voice names from FB-01 on \(systemChannelName)..."
         } else {
@@ -233,6 +283,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 savedVoice = cachedResult.voice
                 resetPerformanceMacros()
                 self.systemChannel = cachedResult.systemChannel
+                self.sourceDevice = .fb01
                 fileURL = nil
                 noteVoiceReplacement()
                 let fetchedName = cachedResult.voice.name.isEmpty ? "Untitled" : cachedResult.voice.name
@@ -258,6 +309,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 savedVoice = result.voice
                 resetPerformanceMacros()
                 self.systemChannel = result.systemChannel
+                self.sourceDevice = .fb01
                 fileURL = nil
                 noteVoiceReplacement()
                 let fetchedName = result.voice.name.isEmpty ? "Untitled" : result.voice.name
@@ -303,6 +355,40 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let sourceIndex = device.selectedSourceIndex
         let systemChannel = device.systemChannel
         let destinationName = device.selectedDestinationName
+
+        if device.selectedEditorDevice == .dx100 {
+            isBusy = true
+            statusMessage = "Sending voice to DX100/27 current buffer..."
+            errorMessage = nil
+            let progressPanel = EditorProgressPanel(
+                title: "Send Voice",
+                message: "The voice is being sent. Please wait.\nSending the current editable voice to the DX100/27 current buffer..."
+            )
+            progressPanel.show()
+            Task {
+                do {
+                    try await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.storeVoiceDocument(
+                            voiceToStore,
+                            to: .dx100,
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel
+                        )
+                    }.value
+                    sourceDevice = .dx100
+                    statusMessage = "DX100/27 current voice buffer updated on \(destinationName)."
+                    errorMessage = nil
+                } catch {
+                    statusMessage = nil
+                    errorMessage = "Store failed: \(error)"
+                }
+                progressPanel.dismiss()
+                isBusy = false
+            }
+            return
+        }
+
         isBusy = true
         statusMessage = "Backing up Bank \(options.bank + 1) before storing voice..."
         errorMessage = nil

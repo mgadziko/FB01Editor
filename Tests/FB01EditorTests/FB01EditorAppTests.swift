@@ -232,6 +232,8 @@ import UniformTypeIdentifiers
 
     #expect(!model.supportsSelectedDeviceCommand(.showVoiceBank))
     #expect(!model.selectedDeviceSupportsConfigurations)
+    #expect(model.selectedDeviceShowsConfigurationMenu)
+    #expect(!model.selectedDeviceHasConnectedVoiceDocumentCommands)
 
     model.selectedEditorDevice = .fb01
     #expect(model.supportsSelectedDeviceCommand(.showVoiceBank))
@@ -239,14 +241,22 @@ import UniformTypeIdentifiers
     #expect(model.supportsSelectedDeviceCommand(.storeGeneralMIDIVoices))
     #expect(model.selectedDeviceSupportsConfigurations)
     #expect(model.selectedDeviceUsesFB01DocumentWorkflows)
+    #expect(model.selectedDeviceHasConnectedVoiceDocumentCommands)
+    #expect(model.selectedDeviceShowsConfigurationMenu)
+    #expect(model.selectedDeviceVoiceBankSelectorLayout.rowsPerColumn == 12)
 
     model.selectedEditorDevice = .dx100
     #expect(!model.supportsSelectedDeviceCommand(.showVoiceBank))
     #expect(!model.supportsSelectedDeviceCommand(.copyVoiceToSlot))
     #expect(!model.supportsSelectedDeviceCommand(.showConfigurationBank))
     #expect(!model.supportsSelectedDeviceCommand(.storeGeneralMIDIVoices))
+    #expect(model.supportsSelectedDeviceCommand(.refreshDeviceCache))
     #expect(!model.selectedDeviceSupportsConfigurations)
     #expect(!model.selectedDeviceUsesFB01DocumentWorkflows)
+    #expect(model.selectedDeviceHasConnectedVoiceDocumentCommands)
+    #expect(!model.selectedDeviceShowsConfigurationMenu)
+    #expect(model.selectedDeviceVoiceBankSelectorLayout.rowsPerColumn == 6)
+    #expect(model.selectedDeviceVoiceBankTitle(1) == "Internal RAM")
 }
 
 @Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {

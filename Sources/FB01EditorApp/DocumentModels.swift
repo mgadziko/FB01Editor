@@ -436,6 +436,63 @@ final class DocumentModel: ObservableObject {
         selectedEditorDevice == .fb01
     }
 
+    var selectedDeviceHasConnectedVoiceDocumentCommands: Bool {
+        switch selectedEditorDevice {
+        case .fb01, .dx100:
+            return true
+        case nil:
+            return false
+        }
+    }
+
+    var selectedDeviceVoiceFetchCommandTitle: String {
+        switch selectedEditorDevice {
+        case .dx100:
+            return "Fetch Current Voice from Device..."
+        case .fb01, nil:
+            return "Fetch Voice from Device..."
+        }
+    }
+
+    var selectedDeviceVoiceFetchIntoDocumentTitle: String {
+        switch selectedEditorDevice {
+        case .dx100:
+            return "Fetch Current Voice from Device into Current Document..."
+        case .fb01, nil:
+            return "Fetch Voice from Device into Current Document..."
+        }
+    }
+
+    var selectedDeviceVoiceStoreCommandTitle: String {
+        switch selectedEditorDevice {
+        case .dx100:
+            return "Send Voice to Current Buffer..."
+        case .fb01, nil:
+            return "Store Voice to Device Slot..."
+        }
+    }
+
+    var selectedDeviceShowsConfigurationMenu: Bool {
+        selectedEditorDevice != .dx100
+    }
+
+    var selectedDeviceVoiceBankSelectorLayout: SynthSelectorGridLayout {
+        switch selectedEditorDevice {
+        case .fb01, nil:
+            return FB01ModuleServices.shared.module.voiceBankSelectorLayout
+        case .dx100:
+            return DX100ModuleServices.shared.module.voiceBankSelectorLayout
+        }
+    }
+
+    var selectedDeviceConfigurationBankSelectorLayout: SynthSelectorGridLayout {
+        switch selectedEditorDevice {
+        case .fb01, .dx100, nil:
+            return FB01ModuleServices.shared.module.configurationBankSelectorLayout
+                ?? FB01ModuleServices.shared.module.voiceBankSelectorLayout
+        }
+    }
+
     func supportsSelectedDeviceCommand(_ kind: SynthModuleCommandKind) -> Bool {
         selectedDeviceCommandDescriptor(for: kind) != nil
     }

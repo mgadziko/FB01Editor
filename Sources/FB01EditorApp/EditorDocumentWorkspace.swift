@@ -240,8 +240,8 @@ struct VoiceDocumentDeviceCommands: View {
     @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
 
     var body: some View {
-        if document.selectedDeviceUsesFB01DocumentWorkflows {
-            Button("Fetch Voice from Device...") {
+        if document.selectedDeviceHasConnectedVoiceDocumentCommands {
+            Button(document.selectedDeviceVoiceFetchCommandTitle) {
                 let id = workspace.createVoiceDocument()
                 openWindow(id: "voice-document", value: id)
                 Task { @MainActor in
@@ -264,12 +264,12 @@ struct VoiceDocumentDeviceCommands: View {
                 }
             }
 
-            Button(activeDocumentActions?.fetchFromDeviceTitle ?? "Fetch Voice from Device into Current Document...") {
+            Button(activeDocumentActions?.fetchFromDeviceTitle ?? document.selectedDeviceVoiceFetchIntoDocumentTitle) {
                 activeDocumentActions?.fetchFromDevice(document)
             }
             .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)
 
-            Button(activeDocumentActions?.storeToDeviceTitle ?? "Store Voice to Device Slot...") {
+            Button(activeDocumentActions?.storeToDeviceTitle ?? document.selectedDeviceVoiceStoreCommandTitle) {
                 activeDocumentActions?.storeToDevice(document)
             }
             .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)

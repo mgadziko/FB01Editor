@@ -98,7 +98,7 @@ import Testing
     #expect(!module.capabilities.supportsGeneralMIDIInstall)
     #expect(module.supportedDocumentKinds == [.voice, .voiceBank])
     #expect(module.supportedDocumentDescriptors.map(\.kind) == [.voice, .voiceBank])
-    #expect(module.commandDescriptors.map(\.kind) == [.showVoiceBank, .storeVoiceBank, .copyVoiceToSlot])
+    #expect(module.commandDescriptors.map(\.kind) == [.showVoiceBank, .storeVoiceBank, .copyVoiceToSlot, .refreshDeviceCache])
     #expect(module.parameterDescriptors.contains { $0.id == "voice.lfoDelay" && $0.displayName == "LFO Delay" })
     #expect(module.parameterDescriptors.contains { $0.id == "voice.operator.frequency" && $0.displayName == "OSC Frequency" })
     #expect(module.parameterBindingDescriptors.contains { $0.parameterID == "voice.operator.frequency" && $0.fieldName == "oscillatorFrequency" })

@@ -126,6 +126,11 @@ public struct DX100SynthModule: SynthModule {
             menu: .voice,
             displayName: "Copy Voice to Slot..."
         ),
+        SynthModuleCommandDescriptor(
+            kind: .refreshDeviceCache,
+            menu: .voice,
+            displayName: "Refresh Device Cache"
+        ),
     ]
 
     public let parameterDescriptors: [SynthParameterDescriptor] = [

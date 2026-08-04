@@ -204,7 +204,7 @@ struct VoiceBankSelectorWindow: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        let layout = EditorSynthModule.module.voiceBankSelectorLayout
+        let layout = document.selectedDeviceVoiceBankSelectorLayout
         SelectorWindowLayout(
             title: "Voice Bank \(bank)",
             subtitle: "Select a voice to fetch it into a new Voice Document.",
@@ -267,7 +267,7 @@ struct ConfigurationSelectorWindow: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        let layout = EditorSynthModule.module.configurationBankSelectorLayout ?? EditorSynthModule.module.voiceBankSelectorLayout
+        let layout = document.selectedDeviceConfigurationBankSelectorLayout
         SelectorWindowLayout(
             title: "Configuration Bank",
             subtitle: "Select a configuration to fetch it into a new Configuration Document.",
@@ -2433,9 +2433,9 @@ struct VoiceDocumentWindow: View {
             canImportFromLibrary: { device in device.selectedVoiceDocumentPayload() != nil },
             importFromLibraryTitle: "Import Selected Library Voice Into Current Document",
             fetchFromDevice: { device in document.fetchFromDevice(device: device) },
-            fetchFromDeviceTitle: "Fetch Voice from Device into Current Document...",
+            fetchFromDeviceTitle: device.selectedDeviceVoiceFetchIntoDocumentTitle,
             storeToDevice: { device in document.storeToDevice(device: device) },
-            storeToDeviceTitle: "Store Voice to Device Slot...",
+            storeToDeviceTitle: device.selectedDeviceVoiceStoreCommandTitle,
             isEdited: document.isEdited,
             isBusy: document.isBusy
         ))
