@@ -259,7 +259,7 @@ struct VoiceDocumentDeviceCommands: View {
                         Button(item.title) {
                             fetchRecentVoice(item)
                         }
-                        .disabled(document.isBusy || item.source == nil)
+                        .disabled(document.isBusy || item.source == nil || !item.isCompatible(with: document.selectedEditorDevice))
                     }
                 }
             }

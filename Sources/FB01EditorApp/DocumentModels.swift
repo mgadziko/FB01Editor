@@ -33,7 +33,7 @@ enum CustomControlsControllerProfile: String, CaseIterable, Identifiable {
     }
 }
 
-enum EditorDeviceSelection: String, CaseIterable, Identifiable {
+enum EditorDeviceSelection: String, CaseIterable, Identifiable, Codable {
     case fb01
     case dx100
 
@@ -943,22 +943,39 @@ final class DocumentModel: ObservableObject {
         source: VoiceDocumentFetchSource,
         systemChannel: Int,
         nameLookup: VoiceDocumentFetchNameLookup = .empty
-    ) -> (voice: FB01VoiceData, systemChannel: Int, title: String)? {
-        guard case let .storedSlot(location, voiceNumber) = source else {
+    ) -> (neutralVoice: FourOperatorVoiceData, voice: FB01VoiceData, systemChannel: Int, title: String)? {
+        switch source {
+        case let .storedSlot(location, voiceNumber):
+            guard case let .bank(bank) = location,
+                  let voiceBank = cachedVoiceBanks[bank],
+                  voiceBank.voices.indices.contains(voiceNumber) else {
+                return nil
+            }
+
+            return (
+                voiceBank.voices[voiceNumber].voice.fourOperatorVoice,
+                voiceBank.voices[voiceNumber].voice,
+                systemChannel,
+                nameLookup.sourceTitle(location: location, voiceNumber: voiceNumber + 1)
+            )
+        case let .dx100Bank(bank, voiceNumber):
+            guard let voiceBank = cachedDX100VoiceBanks[bank] else {
+                return nil
+            }
+            guard let dxVoice = try? voiceBank.voice(atPackedVoiceIndex: voiceNumber),
+                  let translated = try? dxVoice.fb01EditableVoice() else {
+                return nil
+            }
+            let name = dxVoice.name.isEmpty ? "Untitled" : dxVoice.name
+            return (
+                dxVoice.fourOperatorVoice,
+                translated,
+                systemChannel,
+                "DX100/27 Bank \(bank) Voice \(voiceNumber + 1): \(name)"
+            )
+        case .currentVoice, .instrument:
             return nil
         }
-
-        guard case let .bank(bank) = location,
-              let voiceBank = cachedVoiceBanks[bank],
-              voiceBank.voices.indices.contains(voiceNumber) else {
-            return nil
-        }
-
-        return (
-            voiceBank.voices[voiceNumber].voice,
-            systemChannel,
-            nameLookup.sourceTitle(location: location, voiceNumber: voiceNumber + 1)
-        )
     }
 
     func cachedConfigurationFetchResult(options: ConfigurationFetchOptions) -> FB01ConfigurationData? {
@@ -966,24 +983,32 @@ final class DocumentModel: ObservableObject {
     }
 
     func ensureVoiceBankSelectorItems(bank: Int) async -> [VoiceBankSelectorItem] {
-        let module = FB01ModuleServices.shared.module
-        guard module.isValidVoiceBank(bank) else {
-            return []
-        }
+        switch selectedEditorDevice {
+        case .dx100:
+            if cachedDX100VoiceBanks[bank] == nil {
+                await fetchDX100SelectorCache(bank: bank)
+            }
+            return dx100VoiceBankSelectorItems(bank: bank)
+        case .fb01, nil:
+            let module = FB01ModuleServices.shared.module
+            guard module.isValidVoiceBank(bank) else {
+                return []
+            }
 
-        if module.isWritableVoiceBank(bank), cachedVoiceBanks[bank] == nil {
-            await fetchSelectorCache(
-                reason: "Fetching Voice Bank \(bank)",
-                voiceBanks: [bank],
-                fetchConfigurations: false
-            )
-        }
+            if module.isWritableVoiceBank(bank), cachedVoiceBanks[bank] == nil {
+                await fetchSelectorCache(
+                    reason: "Fetching Voice Bank \(bank)",
+                    voiceBanks: [bank],
+                    fetchConfigurations: false
+                )
+            }
 
-        if module.isWritableVoiceBank(bank), cachedVoiceBanks[bank] == nil {
-            return []
-        }
+            if module.isWritableVoiceBank(bank), cachedVoiceBanks[bank] == nil {
+                return []
+            }
 
-        return voiceBankSelectorItems(bank: bank)
+            return voiceBankSelectorItems(bank: bank)
+        }
     }
 
     func storeVoiceBankFromSelector(sourceBank: Int, targetBank: Int) {
@@ -1121,7 +1146,29 @@ final class DocumentModel: ObservableObject {
             return VoiceBankSelectorItem(
                 bank: bank,
                 zeroBasedVoiceNumber: index,
-                name: cachedName?.isEmpty == false ? cachedName! : (lookupName ?? "")
+                name: cachedName?.isEmpty == false ? cachedName! : (lookupName ?? ""),
+                source: .storedSlot(location: .bank(bank), voiceNumber: index),
+                fetchTitleOverride: nil
+            )
+        }
+    }
+
+    func dx100VoiceBankSelectorItems(bank: Int) -> [VoiceBankSelectorItem] {
+        guard let voiceBank = cachedDX100VoiceBanks[bank] else {
+            return []
+        }
+
+        return (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
+            guard let voice = try? voiceBank.voice(atPackedVoiceIndex: index) else {
+                return nil
+            }
+            let name = voice.name.isEmpty ? "Voice \(index + 1)" : voice.name
+            return VoiceBankSelectorItem(
+                bank: bank,
+                zeroBasedVoiceNumber: index,
+                name: name,
+                source: .dx100Bank(bank: bank, voiceNumber: index),
+                fetchTitleOverride: "DX100/27 Bank \(bank) Voice \(index + 1): \(name)"
             )
         }
     }
@@ -1233,6 +1280,57 @@ final class DocumentModel: ObservableObject {
         errorMessage = cacheResult.failures.isEmpty
             ? nil
             : "\(reason) did not fetch: \(cacheResult.failures.joined(separator: ", "))."
+        progressPanel.dismiss()
+        isFetchingFromDevice = false
+    }
+
+    private func fetchDX100SelectorCache(bank: Int) async {
+        guard !isBusy else {
+            return
+        }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let sourceName = selectedSourceName
+        let destinationName = selectedDestinationName
+        let systemChannel = systemChannel
+
+        isFetchingFromDevice = true
+        deviceCacheStatus = "Fetching DX100/27 Voice Bank \(bank)..."
+        statusMessage = "Fetching DX100/27 Voice Bank \(bank) from \(sourceName) -> \(destinationName)..."
+        errorMessage = nil
+
+        let progressPanel = EditorProgressPanel(
+            title: "Fetching Voice Bank \(bank)",
+            message: "The DX100/27 voice bank is being fetched. Please wait."
+        )
+        progressPanel.show()
+
+        do {
+            let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
+            let responseMessages = try await Task.detached(priority: .userInitiated) {
+                try FB01MIDI.sendAndReceive(
+                    [request],
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    timeout: 8,
+                    maxMessages: 1,
+                    delayBetweenMessages: 0
+                )
+            }.value
+            guard let response = responseMessages.first else {
+                throw FB01MIDIError.timedOut("DX100/27 voice bank")
+            }
+            let voiceBank = try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
+            cachedDX100VoiceBanks[bank] = voiceBank
+            deviceCacheStatus = "Loaded DX100/27 voice bank"
+            statusMessage = "Fetched DX100/27 Voice Bank \(bank) from \(sourceName) -> \(destinationName)."
+            errorMessage = nil
+        } catch {
+            statusMessage = nil
+            errorMessage = "DX100/27 Voice Bank \(bank) fetch failed: \(error)"
+        }
+
         progressPanel.dismiss()
         isFetchingFromDevice = false
     }
@@ -1466,12 +1564,16 @@ final class DocumentModel: ObservableObject {
     func rememberRecentFetchedVoice(_ source: VoiceDocumentFetchSource, title: String) {
         let item: RecentVoiceFetch
         switch source {
+        case .currentVoice:
+            item = RecentVoiceFetch(device: selectedEditorDevice, kind: .currentVoice, instrument: nil, bank: nil, voiceNumber: nil, title: title)
         case .instrument(let instrument):
-            item = RecentVoiceFetch(kind: .instrument, instrument: instrument, bank: nil, voiceNumber: nil, title: title)
+            item = RecentVoiceFetch(device: selectedEditorDevice, kind: .instrument, instrument: instrument, bank: nil, voiceNumber: nil, title: title)
         case .storedSlot(.bank(let bank), let voiceNumber):
-            item = RecentVoiceFetch(kind: .bank, instrument: nil, bank: bank, voiceNumber: voiceNumber, title: title)
+            item = RecentVoiceFetch(device: selectedEditorDevice, kind: .bank, instrument: nil, bank: bank, voiceNumber: voiceNumber, title: title)
         case .storedSlot(.voiceRAM1, let voiceNumber):
-            item = RecentVoiceFetch(kind: .voiceRAM1, instrument: nil, bank: nil, voiceNumber: voiceNumber, title: title)
+            item = RecentVoiceFetch(device: selectedEditorDevice, kind: .voiceRAM1, instrument: nil, bank: nil, voiceNumber: voiceNumber, title: title)
+        case .dx100Bank(let bank, let voiceNumber):
+            item = RecentVoiceFetch(device: selectedEditorDevice, kind: .dx100Bank, instrument: nil, bank: bank, voiceNumber: voiceNumber, title: title)
         }
         recentFetchedVoices = addingRecentEditorItem(item, to: recentFetchedVoices)
         saveRecentEditorItems(recentFetchedVoices, forKey: DefaultsKey.recentFetchedVoices)

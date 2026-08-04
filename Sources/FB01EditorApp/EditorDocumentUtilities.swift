@@ -51,11 +51,14 @@ struct RecentEditorFile: Codable, Identifiable, Equatable {
 
 struct RecentVoiceFetch: Codable, Identifiable, Equatable {
     enum SourceKind: String, Codable {
+        case currentVoice
         case instrument
         case bank
         case voiceRAM1
+        case dx100Bank
     }
 
+    var device: EditorDeviceSelection?
     var kind: SourceKind
     var instrument: Int?
     var bank: Int?
@@ -63,18 +66,25 @@ struct RecentVoiceFetch: Codable, Identifiable, Equatable {
     var title: String
 
     var id: String {
+        let devicePrefix = device?.rawValue ?? "fb01"
         switch kind {
+        case .currentVoice:
+            return "\(devicePrefix)-current-voice"
         case .instrument:
-            return "instrument-\(instrument ?? 0)"
+            return "\(devicePrefix)-instrument-\(instrument ?? 0)"
         case .bank:
-            return "bank-\(bank ?? 0)-voice-\(voiceNumber ?? 0)"
+            return "\(devicePrefix)-bank-\(bank ?? 0)-voice-\(voiceNumber ?? 0)"
         case .voiceRAM1:
-            return "voiceRAM1-\(voiceNumber ?? 0)"
+            return "\(devicePrefix)-voiceRAM1-\(voiceNumber ?? 0)"
+        case .dx100Bank:
+            return "\(devicePrefix)-dx100-bank-\(bank ?? 0)-voice-\(voiceNumber ?? 0)"
         }
     }
 
     var source: VoiceDocumentFetchSource? {
         switch kind {
+        case .currentVoice:
+            return .currentVoice
         case .instrument:
             guard let instrument else { return nil }
             return .instrument(instrument)
@@ -84,7 +94,17 @@ struct RecentVoiceFetch: Codable, Identifiable, Equatable {
         case .voiceRAM1:
             guard let voiceNumber else { return nil }
             return .storedSlot(location: .voiceRAM1, voiceNumber: voiceNumber)
+        case .dx100Bank:
+            guard let bank, let voiceNumber else { return nil }
+            return .dx100Bank(bank: bank, voiceNumber: voiceNumber)
         }
+    }
+
+    func isCompatible(with selectedDevice: EditorDeviceSelection?) -> Bool {
+        guard let device else {
+            return true
+        }
+        return device == selectedDevice
     }
 }
 
@@ -111,21 +131,27 @@ struct VoiceDocumentStoreOptions: Sendable {
     }
 }
 
-enum VoiceDocumentFetchSource: Sendable {
+enum VoiceDocumentFetchSource: Sendable, Equatable {
+    case currentVoice
     case instrument(Int)
     case storedSlot(location: VoiceDocumentFetchLocation, voiceNumber: Int)
+    case dx100Bank(bank: Int, voiceNumber: Int)
 
     func title(nameLookup: VoiceDocumentFetchNameLookup = .empty) -> String {
         switch self {
+        case .currentVoice:
+            return "current voice"
         case .instrument(let instrument):
             return "instrument \(instrument + 1) voice"
         case let .storedSlot(location, voiceNumber):
             return nameLookup.sourceTitle(location: location, voiceNumber: voiceNumber + 1)
+        case let .dx100Bank(bank, voiceNumber):
+            return "DX100/27 Bank \(bank) Voice \(voiceNumber + 1)"
         }
     }
 }
 
-enum VoiceDocumentFetchLocation: Sendable {
+enum VoiceDocumentFetchLocation: Sendable, Equatable {
     case bank(Int)
     case voiceRAM1
 
@@ -274,9 +300,16 @@ struct VoiceBankSelectorItem: Identifiable, Equatable {
     var bank: Int
     var zeroBasedVoiceNumber: Int
     var name: String
+    var source: VoiceDocumentFetchSource
+    var fetchTitleOverride: String?
 
     var id: String {
-        "bank-\(bank)-voice-\(zeroBasedVoiceNumber)"
+        switch source {
+        case .dx100Bank(let bank, let voiceNumber):
+            return "dx100-bank-\(bank)-voice-\(voiceNumber)"
+        default:
+            return "bank-\(bank)-voice-\(zeroBasedVoiceNumber)"
+        }
     }
 
     var displayNumber: Int {
@@ -288,11 +321,7 @@ struct VoiceBankSelectorItem: Identifiable, Equatable {
     }
 
     var fetchTitle: String {
-        "Bank \(bank) Voice \(displayNumber): \(title)"
-    }
-
-    var source: VoiceDocumentFetchSource {
-        .storedSlot(location: .bank(bank), voiceNumber: zeroBasedVoiceNumber)
+        fetchTitleOverride ?? "Bank \(bank) Voice \(displayNumber): \(title)"
     }
 }
 

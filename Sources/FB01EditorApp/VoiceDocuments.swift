@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 @MainActor
 final class VoiceDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
+    @Published var neutralVoice: FourOperatorVoiceData
+    @Published var savedNeutralVoice: FourOperatorVoiceData
     @Published var voice: FB01VoiceData
     @Published var savedVoice: FB01VoiceData
     @Published var systemChannel: Int
@@ -24,6 +26,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private var keyboardPreparationTask: Task<Void, Never>?
 
     init(voice: FB01VoiceData, systemChannel: Int, fileURL: URL? = nil) {
+        let neutralVoice = voice.fourOperatorVoice
+        self.neutralVoice = neutralVoice
+        self.savedNeutralVoice = neutralVoice
         self.voice = voice
         self.savedVoice = voice
         self.systemChannel = systemChannel
@@ -39,11 +44,16 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     var isEdited: Bool {
-        voice != savedVoice
+        neutralVoice != savedNeutralVoice
     }
 
     func reset() {
-        voice = savedVoice
+        applyDocumentVoices(
+            workingNeutral: savedNeutralVoice,
+            projection: savedVoice,
+            savedNeutral: savedNeutralVoice,
+            savedProjection: savedVoice
+        )
         resetPerformanceMacros()
         noteVoiceReplacement()
         errorMessage = nil
@@ -54,6 +64,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         do {
             let editedVoice = try edit(voice)
             guard editedVoice != voice else { return }
+            neutralVoice = editedVoice.fourOperatorVoice
             voice = editedVoice
             preparedKeyboardVoiceSignature = nil
             preparedKeyboardVoiceDate = nil
@@ -155,8 +166,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         do {
             let (importedVoice, importedSystemChannel) = try Self.readVoice(from: url)
-            voice = importedVoice
-            savedVoice = importedVoice
+            applyDocumentVoices(
+                workingNeutral: importedVoice.fourOperatorVoice,
+                projection: importedVoice,
+                savedNeutral: importedVoice.fourOperatorVoice,
+                savedProjection: importedVoice
+            )
             resetPerformanceMacros()
             systemChannel = importedSystemChannel
             fileURL = url
@@ -186,7 +201,29 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         isBusy = true
 
         if selectedDevice == .dx100 {
-            let fetchTitle = recentTitle ?? "current voice"
+            let source = preselectedSource ?? .currentVoice
+            if let cachedResult = device.cachedVoiceFetchResult(source: source, systemChannel: systemChannel) {
+                applyDocumentVoices(
+                    workingNeutral: cachedResult.neutralVoice,
+                    projection: cachedResult.voice,
+                    savedNeutral: cachedResult.neutralVoice,
+                    savedProjection: cachedResult.voice
+                )
+                resetPerformanceMacros()
+                self.systemChannel = cachedResult.systemChannel
+                self.sourceDevice = .dx100
+                fileURL = nil
+                noteVoiceReplacement()
+                preparedKeyboardVoiceSignature = nil
+                let fetchedName = cachedResult.voice.name.isEmpty ? "Untitled" : cachedResult.voice.name
+                statusMessage = "Fetched translated \(fetchedName) from cached \(cachedResult.title) into this document."
+                device.rememberRecentFetchedVoice(source, title: cachedResult.title)
+                errorMessage = nil
+                isBusy = false
+                return
+            }
+
+            let fetchTitle = recentTitle ?? source.title()
             statusMessage = "Fetching \(fetchTitle) from DX100/27 on \(systemChannelName)..."
             let fetchProgressPanel = EditorProgressPanel(
                 title: "Fetching Voice",
@@ -206,8 +243,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             recentTitle: recentTitle
                         )
                     }.value
-                    voice = result.voice
-                    savedVoice = result.voice
+                    applyDocumentVoices(
+                        workingNeutral: result.neutralVoice,
+                        projection: result.voice,
+                        savedNeutral: result.neutralVoice,
+                        savedProjection: result.voice
+                    )
                     resetPerformanceMacros()
                     self.systemChannel = result.systemChannel
                     self.sourceDevice = result.sourceDevice
@@ -215,8 +256,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     noteVoiceReplacement()
                     preparedKeyboardVoiceSignature = nil
                     let fetchedName = result.voice.name.isEmpty ? "Untitled" : result.voice.name
-                    statusMessage = "Fetched translated \(fetchedName) from DX100/27 current voice into this document."
-                    device.rememberRecentFetchedVoice(.instrument(0), title: "Current Voice: \(fetchedName)")
+                    statusMessage = "Fetched translated \(fetchedName) from \(result.title) into this document."
+                    device.rememberRecentFetchedVoice(source, title: result.title)
                     errorMessage = nil
                 } catch {
                     errorMessage = "Fetch failed on \(systemChannelName): \(error)"
@@ -279,11 +320,15 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             }
 
             if let cachedResult = device.cachedVoiceFetchResult(source: source, systemChannel: systemChannel, nameLookup: nameLookup) {
-                voice = cachedResult.voice
-                savedVoice = cachedResult.voice
+                applyDocumentVoices(
+                    workingNeutral: cachedResult.neutralVoice,
+                    projection: cachedResult.voice,
+                    savedNeutral: cachedResult.neutralVoice,
+                    savedProjection: cachedResult.voice
+                )
                 resetPerformanceMacros()
                 self.systemChannel = cachedResult.systemChannel
-                self.sourceDevice = .fb01
+                self.sourceDevice = selectedDevice
                 fileURL = nil
                 noteVoiceReplacement()
                 let fetchedName = cachedResult.voice.name.isEmpty ? "Untitled" : cachedResult.voice.name
@@ -305,8 +350,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try FB01VoiceDocumentService.fetchVoice(source: source, sourceIndex: sourceIndex, destinationIndex: destinationIndex, systemChannel: systemChannel)
                 }.value
-                voice = result.voice
-                savedVoice = result.voice
+                applyDocumentVoices(
+                    workingNeutral: result.voice.fourOperatorVoice,
+                    projection: result.voice,
+                    savedNeutral: result.voice.fourOperatorVoice,
+                    savedProjection: result.voice
+                )
                 resetPerformanceMacros()
                 self.systemChannel = result.systemChannel
                 self.sourceDevice = .fb01
@@ -333,8 +382,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             statusMessage = nil
             return
         }
-        voice = payload.voice
-        savedVoice = payload.voice
+        applyDocumentVoices(
+            workingNeutral: payload.voice.fourOperatorVoice,
+            projection: payload.voice,
+            savedNeutral: payload.voice.fourOperatorVoice,
+            savedProjection: payload.voice
+        )
         resetPerformanceMacros()
         systemChannel = payload.systemChannel
         fileURL = nil
@@ -351,6 +404,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         let voiceToStore = voice
+        let neutralVoiceToStore = neutralVoice
         let destinationIndex = device.selectedDestinationIndex
         let sourceIndex = device.selectedSourceIndex
         let systemChannel = device.systemChannel
@@ -369,7 +423,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 do {
                     try await Task.detached(priority: .userInitiated) {
                         try EditorVoiceDocumentService.storeVoiceDocument(
-                            voiceToStore,
+                            neutralVoiceToStore,
                             to: .dx100,
                             sourceIndex: sourceIndex,
                             destinationIndex: destinationIndex,
@@ -573,6 +627,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 characterType: voiceCharacterType,
                 to: voice
             )
+            neutralVoice = voice.fourOperatorVoice
             performanceMacroValues[macro] = newValue
             preparedKeyboardVoiceSignature = nil
             preparedKeyboardVoiceDate = nil
@@ -638,11 +693,13 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             let savedPayload = try voiceNameFromFile.map { try voice.settingName($0) } ?? voice
             try EditorModuleDocumentFiles.writeVoice(savedPayload, systemChannel: systemChannel, to: url)
             if savedPayload != voice {
+                neutralVoice = savedPayload.fourOperatorVoice
                 voice = savedPayload
                 noteVoiceReplacement()
                 preparedKeyboardVoiceSignature = nil
                 preparedKeyboardVoiceDate = nil
             }
+            savedNeutralVoice = savedPayload.fourOperatorVoice
             savedVoice = savedPayload
             fileURL = url
             rememberEditorSaveDirectory(for: url)
@@ -738,6 +795,22 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return nil
         }
         return candidates[popup.indexOfSelectedItem]
+    }
+
+    private func applyDocumentVoices(
+        workingNeutral: FourOperatorVoiceData,
+        projection: FB01VoiceData,
+        savedNeutral: FourOperatorVoiceData? = nil,
+        savedProjection: FB01VoiceData? = nil
+    ) {
+        neutralVoice = workingNeutral
+        voice = projection
+        if let savedNeutral {
+            savedNeutralVoice = savedNeutral
+        }
+        if let savedProjection {
+            savedVoice = savedProjection
+        }
     }
 
     private static func chooseFetchSource(
