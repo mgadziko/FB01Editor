@@ -203,6 +203,20 @@ private let ivoryEbonyPackedVoiceRecord: [UInt8] = [
     #expect(try service.editBufferMessages(for: fetched.voice, channel: fetched.channel) == [ivoryEbonySingleVoiceDump])
 }
 
+@Test func dx100VoiceServiceBuildsAndParsesVoiceBankMessages() throws {
+    let service = DX100VoiceService.shared
+    #expect(try service.voiceBankDumpRequest(channel: 0) == [0xF0, 0x43, 0x20, 0x04, 0xF7])
+
+    var bankData = Array(repeating: UInt8(0), count: DX100.thirtyTwoVoiceDataByteCount)
+    bankData.replaceSubrange(0..<DX100VoiceBankData.packedVoiceByteCount, with: ivoryEbonyPackedVoiceRecord)
+    let bank = try DX100VoiceBankData(bytes: bankData, channel: 0)
+    let message = try bank.thirtyTwoVoiceBulkSysEx()
+
+    let parsedBank = try service.voiceBank(fromThirtyTwoVoiceBulkSysEx: message)
+    #expect(parsedBank.voiceNames.first == "IvoryEbony")
+    #expect(try service.voiceBankMessages(for: parsedBank, channel: 0) == [message])
+}
+
 @Test func dx100DocumentServiceTemplatesAndRoundTripsSingleVoiceFiles() throws {
     let service = DX100DocumentService.shared
     let template = try service.templateVoice()

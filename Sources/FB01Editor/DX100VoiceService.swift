@@ -25,7 +25,7 @@ public enum DX100VoiceServiceError: Error, Equatable, CustomStringConvertible {
 
 public struct DX100VoiceService: SynthVoiceServicing {
     public typealias Voice = DX100VoiceData
-    public typealias VoiceBank = Never
+    public typealias VoiceBank = DX100VoiceBankData
 
     public static let shared = DX100VoiceService(module: .shared)
 
@@ -37,6 +37,10 @@ public struct DX100VoiceService: SynthVoiceServicing {
 
     public func singleVoiceDumpRequest(channel: Int = 0) throws -> [UInt8] {
         try DX100.requestSingleVoiceBulk(channel: channel)
+    }
+
+    public func voiceBankDumpRequest(channel: Int = 0) throws -> [UInt8] {
+        try DX100.requestThirtyTwoVoiceBulk(channel: channel)
     }
 
     public func currentVoice(fromSingleVoiceBulkSysEx bytes: [UInt8]) throws -> DX100FetchedVoice {
@@ -60,6 +64,14 @@ public struct DX100VoiceService: SynthVoiceServicing {
 
     public func editBufferMessages(for voice: DX100VoiceData, channel: Int = 0) throws -> [[UInt8]] {
         [try voice.singleVoiceBulkSysEx(channel: channel)]
+    }
+
+    public func voiceBank(fromThirtyTwoVoiceBulkSysEx bytes: [UInt8]) throws -> DX100VoiceBankData {
+        try DX100VoiceBankData(thirtyTwoVoiceBulkSysEx: bytes)
+    }
+
+    public func voiceBankMessages(for bank: DX100VoiceBankData, channel: Int? = nil) throws -> [[UInt8]] {
+        [try bank.thirtyTwoVoiceBulkSysEx(channel: channel)]
     }
 
     public func neutralVoice(fromSingleVoiceBulkSysEx bytes: [UInt8]) throws -> FourOperatorVoiceData {
