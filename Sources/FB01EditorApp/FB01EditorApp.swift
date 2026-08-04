@@ -89,7 +89,6 @@ struct FB01EditorApplication: App {
                     appDelegate.document = document
                     appDelegate.documentWorkspace = documentWorkspace
                     LiveKeyboardPaletteController.shared.restoreIfNeeded(document: document)
-                    document.startLaunchDeviceCacheRefreshIfNeeded()
                 }
         }
         .defaultSize(width: 1080, height: 920)

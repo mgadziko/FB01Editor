@@ -33,6 +33,22 @@ enum CustomControlsControllerProfile: String, CaseIterable, Identifiable {
     }
 }
 
+enum EditorDeviceSelection: String, CaseIterable, Identifiable {
+    case fb01
+    case dx100
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .fb01:
+            return "FB-01"
+        case .dx100:
+            return "DX100/27"
+        }
+    }
+}
+
 @MainActor
 final class DocumentModel: ObservableObject {
     @Published var sources: [LibrarySource] = []
@@ -82,6 +98,8 @@ final class DocumentModel: ObservableObject {
     @Published private var cachedVoiceBanks: [Int: FB01VoiceBankData] = [:]
     @Published private var cachedConfigurations: [Int: FB01ConfigurationData] = [:]
     @Published private var cachedCurrentConfiguration: FB01ConfigurationData?
+    @Published private var cachedDX100VoiceBanks: [Int: DX100VoiceBankData] = [:]
+    @Published var selectedEditorDevice: EditorDeviceSelection?
     @Published var deviceCacheStatus = "Not loaded"
     @Published private(set) var configurationSelectorRevision = 0
 
@@ -354,12 +372,41 @@ final class DocumentModel: ObservableObject {
     }
 
     var deviceCacheSummaryRows: [KeyValueRow] {
+        guard let selectedEditorDevice else {
+            return [
+                KeyValueRow("Device", "None selected"),
+                KeyValueRow("Status", "Waiting for device selection"),
+                KeyValueRow("Coverage", "None"),
+            ]
+        }
+
+        switch selectedEditorDevice {
+        case .fb01:
+            return fb01DeviceCacheSummaryRows
+        case .dx100:
+            return dx100DeviceCacheSummaryRows
+        }
+    }
+
+    private var fb01DeviceCacheSummaryRows: [KeyValueRow] {
         let module = FB01ModuleServices.shared.module
         return [
+            KeyValueRow("Device", EditorDeviceSelection.fb01.displayName),
             KeyValueRow("Status", deviceCacheStatus),
             KeyValueRow("Coverage", deviceCacheCoverageStatus),
             KeyValueRow("Voice Banks", "\(cachedVoiceBanks.count)/\(module.fullDeviceCacheScope.voiceBanks.count)"),
             KeyValueRow("Configurations", "\(cachedConfigurations.count)/\(module.fullDeviceCacheScope.configurationSlots?.upperBound ?? 0)"),
+        ]
+    }
+
+    private var dx100DeviceCacheSummaryRows: [KeyValueRow] {
+        let module = DX100ModuleServices.shared.module
+        return [
+            KeyValueRow("Device", EditorDeviceSelection.dx100.displayName),
+            KeyValueRow("Status", deviceCacheStatus),
+            KeyValueRow("Coverage", cachedDX100VoiceBanks.isEmpty ? "None" : "Partial"),
+            KeyValueRow("Voice Banks", "\(cachedDX100VoiceBanks.count)/\(module.fullDeviceCacheScope.voiceBanks.count)"),
+            KeyValueRow("Configurations", "Not supported"),
         ]
     }
 
@@ -379,11 +426,53 @@ final class DocumentModel: ObservableObject {
             return
         }
         hasStartedLaunchDeviceCacheRefresh = true
+        selectedEditorDevice = .fb01
         refreshDeviceCache(
             reason: "Fetching FB-01 device cache",
             voiceBanksToFetch: voiceBanksToCacheOnLaunch(),
-            fetchConfigurations: preCacheConfigurationsOnLaunch
+            fetchConfigurations: preCacheConfigurationsOnLaunch,
+            showsDeviceNotFoundAlert: true
         )
+    }
+
+    func showDeviceSelectionDialog() {
+        let alert = NSAlert()
+        alert.messageText = "Select Device"
+        alert.informativeText = "Choose the Yamaha FM device connected through the selected MIDI input and output."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "DX100/27")
+        alert.addButton(withTitle: "FB-01")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            break
+        case .alertSecondButtonReturn:
+            selectDevice(.dx100)
+        case .alertThirdButtonReturn:
+            selectDevice(.fb01)
+        default:
+            break
+        }
+    }
+
+    func selectDevice(_ device: EditorDeviceSelection) {
+        guard !isBusy else {
+            return
+        }
+
+        selectedEditorDevice = device
+        switch device {
+        case .fb01:
+            refreshDeviceCache(
+                reason: "Fetching FB-01 device cache",
+                voiceBanksToFetch: FB01ModuleServices.shared.module.fullDeviceCacheScope.voiceBanks,
+                fetchConfigurations: true,
+                showsDeviceNotFoundAlert: true
+            )
+        case .dx100:
+            refreshDX100DeviceCache()
+        }
     }
 
     func refreshDeviceCache(
@@ -391,6 +480,7 @@ final class DocumentModel: ObservableObject {
         voiceBanksToFetch requestedVoiceBanks: [Int] = FB01ModuleServices.shared.module.fullDeviceCacheScope.voiceBanks,
         fetchConfigurations: Bool = true,
         showsProgressPanel: Bool = true,
+        showsDeviceNotFoundAlert: Bool = false,
         completion: (() -> Void)? = nil
     ) {
         guard !isBusy else {
@@ -471,7 +561,77 @@ final class DocumentModel: ObservableObject {
             errorMessage = nil
             progressPanel?.dismiss()
             isFetchingFromDevice = false
+            if showsDeviceNotFoundAlert, cacheResult.loadedCount == 0 {
+                showEditorError(title: "Device Not Found!", message: "")
+            }
             completion?()
+        }
+    }
+
+    func refreshDX100DeviceCache() {
+        guard !isBusy else {
+            return
+        }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let sourceName = selectedSourceName
+        let destinationName = selectedDestinationName
+        let systemChannel = systemChannel
+        isFetchingFromDevice = true
+        deviceCacheStatus = "Fetching DX100/27 device cache..."
+        statusMessage = "Fetching DX100/27 voice bank from \(sourceName) -> \(destinationName)..."
+        errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Fetching DX100/27 Device Cache",
+            message: "The DX100/27 voice bank is being cached. Please wait."
+        )
+        progressPanel.show()
+
+        Task {
+            do {
+                progressPanel.update(
+                    message: "The DX100/27 voice bank is being cached. Please wait.\nFetching 32-voice bulk data...",
+                    completed: 0,
+                    total: 1
+                )
+                let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
+                let responseMessages = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendAndReceive(
+                        [request],
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        timeout: 10,
+                        maxMessages: 1,
+                        delayBetweenMessages: 0
+                    )
+                }.value
+                guard let response = responseMessages.first else {
+                    throw FB01MIDIError.timedOut("DX100/27 voice bank")
+                }
+                let bank = try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
+                cachedDX100VoiceBanks = [1: bank]
+                deviceCacheStatus = "Loaded 1 item"
+                statusMessage = "DX100/27 voice bank loaded from \(sourceName) -> \(destinationName)."
+                errorMessage = nil
+                progressPanel.update(
+                    message: "The DX100/27 voice bank is being cached. Please wait.\nFinishing cache update...",
+                    completed: 1,
+                    total: 1
+                )
+            } catch {
+                cachedDX100VoiceBanks = [:]
+                deviceCacheStatus = "Not loaded"
+                statusMessage = nil
+                errorMessage = "DX100/27 device cache failed: \(error)"
+                progressPanel.dismiss()
+                isFetchingFromDevice = false
+                showEditorError(title: "Device Not Found!", message: "")
+                return
+            }
+
+            progressPanel.dismiss()
+            isFetchingFromDevice = false
         }
     }
 

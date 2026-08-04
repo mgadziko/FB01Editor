@@ -1270,8 +1270,15 @@ struct GlobalStatusView: View {
                 Text("Status Window")
                     .font(.title2.weight(.semibold))
 
+                Button("Select Device") {
+                    document.showDeviceSelectionDialog()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(document.isBusy)
+                .forestHoverHelp("Choose which connected Yamaha FM device Forest Editor should fetch and cache.")
+
                 HStack(alignment: .top, spacing: 14) {
-                    statusCard(title: "\(EditorSynthModule.vocabulary.deviceDisplayName) Connection", rows: [
+                    statusCard(title: "\(document.selectedEditorDevice?.displayName ?? "MIDI Device") Connection", rows: [
                         KeyValueRow("MIDI In", document.selectedSourceName),
                         KeyValueRow("MIDI Out", document.selectedDestinationName),
                         KeyValueRow("System Channel", "\(document.systemChannel + 1)"),

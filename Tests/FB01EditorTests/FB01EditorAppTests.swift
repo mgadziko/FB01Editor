@@ -217,6 +217,15 @@ import UniformTypeIdentifiers
     UserDefaults.standard.removeObject(forKey: "FB01Editor.customControlChangeNumbers")
 }
 
+@MainActor
+@Test func documentModelLaunchesWithoutSelectedDeviceCache() {
+    let model = DocumentModel()
+
+    #expect(model.selectedEditorDevice == nil)
+    #expect(model.deviceCacheSummaryRows.map(\.key) == ["Device", "Status", "Coverage"])
+    #expect(model.deviceCacheSummaryRows.map(\.value) == ["None selected", "Waiting for device selection", "None"])
+}
+
 @Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {
     let messages = try keyboardAuditionPreparationMessages(systemChannel: 0, midiChannel: 4)
 
