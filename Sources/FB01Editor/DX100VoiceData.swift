@@ -39,6 +39,8 @@ public enum DX100 {
     public static let start: UInt8 = 0xF0
     public static let end: UInt8 = 0xF7
     public static let yamahaID: UInt8 = 0x43
+    public static let parameterChangeStatusBase: UInt8 = 0x10
+    public static let parameterChangeGroup: UInt8 = 0x12
     public static let singleVoiceFormat: UInt8 = 0x03
     public static let singleVoiceByteCountMSB: UInt8 = 0x00
     public static let singleVoiceByteCountLSB: UInt8 = 0x5D
@@ -59,6 +61,27 @@ public enum DX100 {
             throw DX100SysExError.invalidChannel(channel)
         }
         return [start, yamahaID, 0x20 | UInt8(channel), thirtyTwoVoiceFormat, end]
+    }
+
+    public static func parameterChange(channel: Int = 0, parameter: Int, data: Int) throws -> [UInt8] {
+        guard (0...15).contains(channel) else {
+            throw DX100SysExError.invalidChannel(channel)
+        }
+        guard (0...127).contains(parameter) else {
+            throw DX100SysExError.invalidByte(UInt8(clamping: parameter))
+        }
+        guard (0...127).contains(data) else {
+            throw DX100SysExError.invalidByte(UInt8(clamping: data))
+        }
+        return [
+            start,
+            yamahaID,
+            parameterChangeStatusBase | UInt8(channel),
+            parameterChangeGroup,
+            UInt8(parameter),
+            UInt8(data),
+            end
+        ]
     }
 
     public static func isThirtyTwoVoiceBulkSysEx(_ bytes: [UInt8]) -> Bool {
@@ -256,13 +279,13 @@ public struct DX100VoiceData: Equatable, Sendable {
                     operatorNumber: op.operatorNumber,
                     isCarrier: FourOperatorVoiceData.carrierOperatorNumbers(forAlgorithm: algorithm).contains(op.operatorNumber),
                     totalLevel: op.outputLevel,
-                    frequencyValue: op.oscillatorFrequency,
+                    oscillatorFrequencyControl: op.oscillatorFrequency,
                     detune: op.detune - 3,
                     keyboardLevelScalingDepth: op.keyboardScalingLevel,
                     keyboardRateScalingDepth: op.keyboardScalingRate,
-                    velocityToTotalLevel: op.keyVelocitySensitivity,
+                    keyVelocityLevelSensitivity: op.keyVelocitySensitivity,
                     velocityToAttack: 0,
-                    amplitudeModulationEnabled: op.amplitudeModulationEnabled,
+                    amplitudeModulationResponseEnabled: op.amplitudeModulationEnabled,
                     attack: op.attackRate,
                     decay1: op.decay1Rate,
                     decay2: op.decay2Rate,

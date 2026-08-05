@@ -40,6 +40,51 @@ public enum DX100VoiceBankKind: Equatable, Sendable {
         }
     }
 
+    public var isFetchableFromConnectedDevice: Bool {
+        switch self {
+        case .internalRAM:
+            true
+        case .bankMemory:
+            false
+        case .preset:
+            false
+        }
+    }
+
+    public func programNumber(forVoiceIndex voiceIndex: Int) -> Int? {
+        guard (0..<24).contains(voiceIndex) else {
+            return nil
+        }
+
+        switch self {
+        case .internalRAM:
+            return voiceIndex
+        case .bankMemory(let bank):
+            guard (1...4).contains(bank) else {
+                return nil
+            }
+            return 24 + ((bank - 1) * 24) + voiceIndex
+        case .preset:
+            return nil
+        }
+    }
+
+    public func bankVoiceNumber(forVoiceIndex voiceIndex: Int) -> Int? {
+        guard (0..<24).contains(voiceIndex) else {
+            return nil
+        }
+
+        switch self {
+        case .bankMemory(let bank):
+            guard (1...4).contains(bank) else {
+                return nil
+            }
+            return ((bank - 1) * 24) + voiceIndex
+        default:
+            return nil
+        }
+    }
+
     private static func bankLetter(_ bank: Int) -> String {
         guard (1...4).contains(bank) else {
             return "\(bank)"
@@ -148,11 +193,11 @@ public struct DX100SynthModule: SynthModule {
         SynthParameterDescriptor(id: "voice.lfoSyncEnabled", displayName: "LFO Sync", valueKind: .toggle, defaultValue: 0, group: "LFO"),
         SynthParameterDescriptor(id: "voice.operator.carrier", displayName: "Carrier", valueKind: .toggle, defaultValue: 0, isEditable: false, group: "Operator"),
         SynthParameterDescriptor(id: "voice.operator.totalLevel", displayName: "Total Level", valueKind: .integer, range: SynthSlotRange(0...99), defaultValue: 0, group: "Operator"),
-        SynthParameterDescriptor(id: "voice.operator.frequency", displayName: "OSC Frequency", valueKind: .integer, range: SynthSlotRange(0...63), defaultValue: 1, group: "Operator"),
+        SynthParameterDescriptor(id: "voice.operator.frequency", displayName: "Frequency Ratio", valueKind: .integer, range: SynthSlotRange(0...63), defaultValue: 1, group: "Operator"),
         SynthParameterDescriptor(id: "voice.operator.detune", displayName: "Detune", valueKind: .signedInteger, range: SynthSlotRange(-3...3), defaultValue: 0, group: "Operator"),
         SynthParameterDescriptor(id: "voice.operator.keyboardLevelDepth", displayName: "Keyboard Level Depth", valueKind: .integer, range: SynthSlotRange(0...99), defaultValue: 0, group: "Operator"),
         SynthParameterDescriptor(id: "voice.operator.keyboardRateScalingDepth", displayName: "Keyboard Rate Scaling Depth", valueKind: .integer, range: SynthSlotRange(0...3), defaultValue: 0, group: "Operator"),
-        SynthParameterDescriptor(id: "voice.operator.velocityToTotalLevel", displayName: "Velocity to Total Level", valueKind: .integer, range: SynthSlotRange(0...7), defaultValue: 0, group: "Operator"),
+        SynthParameterDescriptor(id: "voice.operator.velocityToTotalLevel", displayName: "Key Velocity to Level", valueKind: .integer, range: SynthSlotRange(0...7), defaultValue: 0, group: "Operator"),
         SynthParameterDescriptor(id: "voice.operator.attack", displayName: "Attack", valueKind: .integer, range: SynthSlotRange(0...31), defaultValue: 0, group: "Operator Envelope"),
         SynthParameterDescriptor(id: "voice.operator.decay1", displayName: "Decay 1", valueKind: .integer, range: SynthSlotRange(0...31), defaultValue: 0, group: "Operator Envelope"),
         SynthParameterDescriptor(id: "voice.operator.decay2", displayName: "Decay 2", valueKind: .integer, range: SynthSlotRange(0...31), defaultValue: 0, group: "Operator Envelope"),

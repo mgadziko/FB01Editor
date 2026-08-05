@@ -1,6 +1,9 @@
 import Foundation
 
 public struct FourOperatorVoiceData: Equatable, Sendable {
+    /// A neutral editing model shared by supported Yamaha 4-op modules.
+    /// Values here are chosen for a common editor workflow and are not always
+    /// exact raw-byte semantics for every device.
     public var sourceModelName: String
     public var name: String
     public var algorithm: Int
@@ -65,13 +68,18 @@ public struct FourOperatorVoiceOperatorData: Equatable, Sendable {
     public var operatorNumber: Int
     public var isCarrier: Bool
     public var totalLevel: Int
-    public var frequencyValue: Int
+    /// Device-specific coarse oscillator tuning control.
+    /// On FB-01 this maps to the integer frequency multiplier.
+    /// On DX100/27 this maps to Yamaha's frequency-ratio control value.
+    public var oscillatorFrequencyControl: Int
     public var detune: Int
     public var keyboardLevelScalingDepth: Int
     public var keyboardRateScalingDepth: Int
-    public var velocityToTotalLevel: Int
+    /// Keyboard velocity sensitivity that affects operator level.
+    public var keyVelocityLevelSensitivity: Int
     public var velocityToAttack: Int
-    public var amplitudeModulationEnabled: Bool
+    /// Whether this operator responds to amplitude modulation.
+    public var amplitudeModulationResponseEnabled: Bool
     public var attack: Int
     public var decay1: Int
     public var decay2: Int
@@ -82,13 +90,13 @@ public struct FourOperatorVoiceOperatorData: Equatable, Sendable {
         operatorNumber: Int,
         isCarrier: Bool,
         totalLevel: Int,
-        frequencyValue: Int,
+        oscillatorFrequencyControl: Int,
         detune: Int,
         keyboardLevelScalingDepth: Int,
         keyboardRateScalingDepth: Int,
-        velocityToTotalLevel: Int,
+        keyVelocityLevelSensitivity: Int,
         velocityToAttack: Int,
-        amplitudeModulationEnabled: Bool,
+        amplitudeModulationResponseEnabled: Bool,
         attack: Int,
         decay1: Int,
         decay2: Int,
@@ -98,13 +106,13 @@ public struct FourOperatorVoiceOperatorData: Equatable, Sendable {
         self.operatorNumber = operatorNumber
         self.isCarrier = isCarrier
         self.totalLevel = totalLevel
-        self.frequencyValue = frequencyValue
+        self.oscillatorFrequencyControl = oscillatorFrequencyControl
         self.detune = detune
         self.keyboardLevelScalingDepth = keyboardLevelScalingDepth
         self.keyboardRateScalingDepth = keyboardRateScalingDepth
-        self.velocityToTotalLevel = velocityToTotalLevel
+        self.keyVelocityLevelSensitivity = keyVelocityLevelSensitivity
         self.velocityToAttack = velocityToAttack
-        self.amplitudeModulationEnabled = amplitudeModulationEnabled
+        self.amplitudeModulationResponseEnabled = amplitudeModulationResponseEnabled
         self.attack = attack
         self.decay1 = decay1
         self.decay2 = decay2
@@ -133,13 +141,13 @@ public extension FB01VoiceData {
                     operatorNumber: Self.operatorNumber(forDataIndex: op.index),
                     isCarrier: op.carrier,
                     totalLevel: op.totalLevel,
-                    frequencyValue: op.multiple,
+                    oscillatorFrequencyControl: op.multiple,
                     detune: op.detune1,
                     keyboardLevelScalingDepth: op.keyboardLevelScalingDepth,
                     keyboardRateScalingDepth: op.keyboardRateScalingDepth,
-                    velocityToTotalLevel: op.velocitySensitivityForTotalLevel,
+                    keyVelocityLevelSensitivity: op.velocitySensitivityForTotalLevel,
                     velocityToAttack: op.velocitySensitivityForAttackRate,
-                    amplitudeModulationEnabled: false,
+                    amplitudeModulationResponseEnabled: false,
                     attack: op.attackRate,
                     decay1: op.decay1Rate,
                     decay2: op.decay2Rate,

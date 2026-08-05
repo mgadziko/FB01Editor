@@ -49,25 +49,25 @@ enum ControlHoverText {
         case "Pitch MOD Depth", "PMD":
             return "Sets pitch modulation depth, usually heard as vibrato amount."
         case "Amplitude MOD Sensitivity":
-            return "Sets how strongly the voice responds to amplitude modulation sources."
+            return "Sets how readily the voice accepts loudness modulation from the LFO or other controllers."
         case "Pitch MOD Sensitivity":
-            return "Sets how strongly the voice responds to pitch modulation sources like the mod wheel."
-        case "OSC FRQ Multiplier":
-            return "Changes the operator frequency ratio. Higher values add brighter or more complex harmonics."
+            return "Sets how readily the voice accepts pitch modulation, usually from vibrato sources like the mod wheel."
+        case "Frequency Ratio", "OSC Frequency Ratio", "OSC FRQ Multiplier", "OSC Frequency":
+            return "Sets the operator's pitch ratio. Simple ratios sound pure; wider ratios add brighter, reedier, or more metallic harmonics."
         case "Detune", "Detune 1":
             return "Fine-shifts pitch for beating, chorus, or rougher harmonic color."
         case "Detune 2":
             return "Adds another small pitch offset for thickness or shimmer."
         case "Total Level":
-            return "Sets this operator's strength. Carriers get louder; modulators change brightness and complexity."
-        case "TL Adjust":
-            return "Offsets total level for this operator. Useful for fine balancing."
-        case "Vel to TL":
-            return "Makes playing harder change this operator's level, adding touch-sensitive brightness or volume."
+            return "Sets this operator's output strength. On carriers it changes loudness; on modulators it changes harmonic brightness and complexity."
+        case "TL Adjust", "Level Adjust":
+            return "Adds a fine level offset for balancing this operator against the others."
+        case "Vel to TL", "Velocity to Total Level", "Key Velocity to Level":
+            return "Makes playing harder change this operator's level, adding touch-sensitive loudness or brightness."
         case "Keyboard Level Depth":
-            return "Changes how this operator's level varies across the keyboard."
+            return "Changes how strongly this operator gets louder or softer across the keyboard range."
         case "Keyboard Rate Scaling Depth":
-            return "Changes envelope speed across the keyboard, often making higher notes respond faster."
+            return "Changes how much this operator's envelope speeds up higher on the keyboard."
         case "Attack":
             return "Controls how quickly the sound reaches its initial level after a note starts."
         case "Vel to Attack":
@@ -124,6 +124,21 @@ enum ControlHoverText {
             return "Macro: pushes the selected voice character toward a stronger identity."
         default:
             return "\(normalized(label)): drag up to increase, drag down to decrease."
+        }
+    }
+
+    static func keyboardLevelScalingType(_ value: Int) -> String {
+        switch value {
+        case 0:
+            return "Keyboard level scaling type 0: lower notes emphasize this operator more strongly."
+        case 1:
+            return "Keyboard level scaling type 1: lower notes soften this operator more strongly."
+        case 2:
+            return "Keyboard level scaling type 2: higher notes emphasize this operator more strongly."
+        case 3:
+            return "Keyboard level scaling type 3: higher notes soften this operator more strongly."
+        default:
+            return "Chooses how this operator's level tilts across the keyboard."
         }
     }
 

@@ -79,6 +79,17 @@ struct EditorDocumentCommands: View {
         }
     }
 
+    private var selectedDeviceSupportsConfigurations: Bool {
+        switch document.selectedEditorDevice {
+        case .fb01:
+            return FB01ModuleServices.shared.module.capabilities.supportsConfigurations
+        case .dx100:
+            return DX100ModuleServices.shared.module.capabilities.supportsConfigurations
+        case nil:
+            return true
+        }
+    }
+
     var body: some View {
         Button("New Voice Document") {
             let id = workspace.createVoiceDocument()
@@ -86,11 +97,13 @@ struct EditorDocumentCommands: View {
         }
         .keyboardShortcut("n", modifiers: .command)
 
-        Button("New Configuration Document") {
-            let id = workspace.createConfigurationDocument()
-            openWindow(id: "configuration-document", value: id)
+        if selectedDeviceSupportsConfigurations {
+            Button("New Configuration Document") {
+                let id = workspace.createConfigurationDocument()
+                openWindow(id: "configuration-document", value: id)
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
         }
-        .keyboardShortcut("n", modifiers: [.command, .shift])
 
         Divider()
 
@@ -106,17 +119,19 @@ struct EditorDocumentCommands: View {
         }
         .disabled(!document.canOpenSelectedVoiceAsDocument)
 
-        Button("New Configuration Document from Selected Library Configuration") {
-            if let payload = document.selectedConfigurationDocumentPayload() {
-                let id = workspace.createConfigurationDocument(
-                    configuration: payload.configuration,
-                    systemChannel: payload.systemChannel,
-                    statusMessage: "Created from selected library configuration."
-                )
-                openWindow(id: "configuration-document", value: id)
+        if selectedDeviceSupportsConfigurations {
+            Button("New Configuration Document from Selected Library Configuration") {
+                if let payload = document.selectedConfigurationDocumentPayload() {
+                    let id = workspace.createConfigurationDocument(
+                        configuration: payload.configuration,
+                        systemChannel: payload.systemChannel,
+                        statusMessage: "Created from selected library configuration."
+                    )
+                    openWindow(id: "configuration-document", value: id)
+                }
             }
+            .disabled(!document.canOpenSelectedConfigurationAsDocument)
         }
-        .disabled(!document.canOpenSelectedConfigurationAsDocument)
 
         Divider()
 
@@ -152,35 +167,37 @@ struct EditorDocumentCommands: View {
             }
         }
 
-        Divider()
+        if selectedDeviceSupportsConfigurations {
+            Divider()
 
-        Button("Load Configuration from File...") {
-            if let id = workspace.loadConfigurationDocument() {
-                if let configurationDocument = workspace.configurationDocument(id: id),
-                   let url = configurationDocument.fileURL {
-                    document.rememberRecentLoadedConfigurationFile(url)
-                    Task { @MainActor in
-                        await document.prefetchConfigurationVoiceNames(
-                            for: configurationDocument.configuration,
-                            configurationDocument: configurationDocument,
-                            reason: "Loaded \(url.lastPathComponent)"
-                        )
+            Button("Load Configuration from File...") {
+                if let id = workspace.loadConfigurationDocument() {
+                    if let configurationDocument = workspace.configurationDocument(id: id),
+                       let url = configurationDocument.fileURL {
+                        document.rememberRecentLoadedConfigurationFile(url)
+                        Task { @MainActor in
+                            await document.prefetchConfigurationVoiceNames(
+                                for: configurationDocument.configuration,
+                                configurationDocument: configurationDocument,
+                                reason: "Loaded \(url.lastPathComponent)"
+                            )
+                        }
                     }
+                    openWindow(id: "configuration-document", value: id)
                 }
-                openWindow(id: "configuration-document", value: id)
             }
-        }
-        .keyboardShortcut("o", modifiers: [.command, .option, .shift])
+            .keyboardShortcut("o", modifiers: [.command, .option, .shift])
 
-        Menu("Load Recent Configuration") {
-            if document.recentLoadedConfigurationFiles.isEmpty {
-                Text("No Recent Configurations")
-            } else {
-                ForEach(document.recentLoadedConfigurationFiles) { item in
-                    Button(item.title) {
-                        openRecentConfiguration(item)
+            Menu("Load Recent Configuration") {
+                if document.recentLoadedConfigurationFiles.isEmpty {
+                    Text("No Recent Configurations")
+                } else {
+                    ForEach(document.recentLoadedConfigurationFiles) { item in
+                        Button(item.title) {
+                            openRecentConfiguration(item)
+                        }
+                        .help(item.path)
                     }
-                    .help(item.path)
                 }
             }
         }

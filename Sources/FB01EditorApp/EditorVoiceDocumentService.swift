@@ -21,6 +21,77 @@ struct EditorFetchedVoiceDocument: Sendable {
 }
 
 enum EditorVoiceDocumentService {
+    static func fetchDX100CurrentVoice(
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        timeout: Double = 8
+    ) throws -> DX100FetchedVoice {
+        let request = try DX100ModuleServices.shared.voiceService.singleVoiceDumpRequest(channel: systemChannel)
+        let messages = try FB01MIDI.sendAndReceive(
+            [request],
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            timeout: timeout,
+            maxMessages: 1,
+            delayBetweenMessages: 0.05
+        )
+        return try DX100ModuleServices.shared.voiceService.currentVoice(from: messages)
+    }
+
+    static func fetchDX100DeviceVoice(
+        bank: Int,
+        voiceNumber: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) throws -> DX100FetchedVoice {
+        guard let bankKind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank) else {
+            throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.dx100)
+        }
+
+        let request = try DX100ModuleServices.shared.voiceService.singleVoiceDumpRequest(channel: systemChannel)
+        let selectionAttempts: [[UInt8]]
+        switch bankKind {
+        case .internalRAM:
+            guard let programNumber = bankKind.programNumber(forVoiceIndex: voiceNumber) else {
+                throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.dx100)
+            }
+            selectionAttempts = [
+                try dx100ProgramChangeMessage(channel: systemChannel, programNumber: programNumber),
+            ]
+        case .bankMemory:
+            guard let bankVoiceNumber = bankKind.bankVoiceNumber(forVoiceIndex: voiceNumber) else {
+                throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.dx100)
+            }
+            selectionAttempts = [
+                try DX100.parameterChange(channel: systemChannel, parameter: 126, data: bankVoiceNumber),
+                try dx100ProgramChangeMessage(channel: systemChannel, programNumber: 24 + bankVoiceNumber),
+            ]
+        case .preset:
+            throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.dx100)
+        }
+
+        var lastError: Error?
+        for selection in selectionAttempts {
+            do {
+                let messages = try FB01MIDI.sendAndReceive(
+                    [selection, request],
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    timeout: 8,
+                    maxMessages: 1,
+                    delayBetweenMessages: 0.6
+                )
+                return try DX100ModuleServices.shared.voiceService.currentVoice(from: messages)
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? FB01MIDIError.timedOut("DX100/27 bank voice")
+    }
+
     static func fetchVoiceDocument(
         for device: EditorDeviceSelection,
         source: VoiceDocumentFetchSource?,
@@ -49,16 +120,11 @@ enum EditorVoiceDocumentService {
         case .dx100:
             switch source {
             case nil, .some(.currentVoice), .some(.instrument):
-                let request = try DX100ModuleServices.shared.voiceService.singleVoiceDumpRequest(channel: systemChannel)
-                let messages = try FB01MIDI.sendAndReceive(
-                    [request],
+                let fetched = try fetchDX100CurrentVoice(
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
-                    timeout: 8,
-                    maxMessages: 1,
-                    delayBetweenMessages: 0.05
+                    systemChannel: systemChannel
                 )
-                let fetched = try DX100ModuleServices.shared.voiceService.currentVoice(from: messages)
                 return EditorFetchedVoiceDocument(
                     neutralVoice: fetched.voice.fourOperatorVoice,
                     voice: try fetched.voice.fb01EditableVoice(),
@@ -66,27 +132,22 @@ enum EditorVoiceDocumentService {
                     title: recentTitle ?? fetched.title,
                     sourceDevice: .dx100
                 )
-            case .some(.dx100Bank(_, let voiceNumber)):
-                let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
-                let messages = try FB01MIDI.sendAndReceive(
-                    [request],
+            case .some(.dx100Bank(let bank, let voiceNumber)):
+                let fetched = try fetchDX100DeviceVoice(
+                    bank: bank,
+                    voiceNumber: voiceNumber,
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
-                    timeout: 8,
-                    maxMessages: 1,
-                    delayBetweenMessages: 0.05
+                    systemChannel: systemChannel
                 )
-                guard let bankBytes = messages.first else {
-                    throw FB01MIDIError.timedOut("DX100/27 voice bank")
-                }
-                let bank = try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: bankBytes)
-                let dxVoice = try bank.voice(atPackedVoiceIndex: voiceNumber)
+                let dxVoice = fetched.voice
                 let voiceName = dxVoice.name.isEmpty ? "Untitled" : dxVoice.name
+                let bankTitle = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)"
                 return EditorFetchedVoiceDocument(
                     neutralVoice: dxVoice.fourOperatorVoice,
                     voice: try dxVoice.fb01EditableVoice(),
-                    systemChannel: bank.channel,
-                    title: recentTitle ?? "DX100/27 Bank 1 Voice \(voiceNumber + 1): \(voiceName)",
+                    systemChannel: fetched.channel,
+                    title: recentTitle ?? "DX100/27 \(bankTitle) Voice \(voiceNumber + 1): \(voiceName)",
                     sourceDevice: .dx100
                 )
             case .some(.storedSlot):
@@ -117,5 +178,15 @@ enum EditorVoiceDocumentService {
                 delayBetweenMessages: 0.05
             )
         }
+    }
+
+    private static func dx100ProgramChangeMessage(channel: Int, programNumber: Int) throws -> [UInt8] {
+        guard (0...15).contains(channel) else {
+            throw DX100SysExError.invalidChannel(channel)
+        }
+        guard (0...127).contains(programNumber) else {
+            throw FB01MIDIError.timedOut("DX100/27 program selection")
+        }
+        return [0xC0 | UInt8(channel), UInt8(programNumber)]
     }
 }

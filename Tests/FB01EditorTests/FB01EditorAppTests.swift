@@ -781,6 +781,18 @@ import UniformTypeIdentifiers
 }
 
 @MainActor
+@Test func dxSelectedDeviceVoiceBanksExposeOnlyProvenLiveFetchBanks() {
+    let model = DocumentModel()
+    model.selectedEditorDevice = .dx100
+
+    #expect(model.selectedDeviceVoiceBanks == [1])
+    #expect(model.selectedDeviceWritableVoiceBanks == [1, 2, 3, 4, 5])
+    #expect(model.selectedDeviceVoiceBankTitle(1) == "Internal")
+    #expect(model.selectedDeviceVoiceBankTitle(2) == "Bank A")
+    #expect(model.selectedDeviceVoiceBankTitle(5) == "Bank D")
+}
+
+@MainActor
 @Test func configurationSlotMenuTitleShowsKnownNamesAndUnknowns() throws {
     let model = DocumentModel()
     let source = try storedConfigurationSource(number: 2, name: "SLOT3", origin: .liveFetch)

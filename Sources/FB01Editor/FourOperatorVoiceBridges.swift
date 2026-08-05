@@ -24,10 +24,10 @@ public extension FourOperatorVoiceData {
             var editable = voice.operators[operatorIndex]
             editable = try editable.settingCarrier(carriers.contains(op.operatorNumber))
             editable = try editable.settingTotalLevel(clamped(op.totalLevel, range: 0...127))
-            editable = try editable.settingMultiple(clamped(op.frequencyValue, range: 0...15))
+            editable = try editable.settingMultiple(clamped(op.oscillatorFrequencyControl, range: 0...15))
             editable = try editable.settingDetune1(fb01Detune1Value(from: op.detune))
             editable = try editable.settingDetune2(0)
-            editable = try editable.settingVelocitySensitivityForTotalLevel(clamped(op.velocityToTotalLevel, range: 0...7))
+            editable = try editable.settingVelocitySensitivityForTotalLevel(clamped(op.keyVelocityLevelSensitivity, range: 0...7))
             editable = try editable.settingTotalLevelAdjust(0)
             editable = try editable.settingKeyboardLevelScalingDepth(clamped(op.keyboardLevelScalingDepth, range: 0...15))
             editable = try editable.settingKeyboardLevelScalingTypeBit0(false)
@@ -92,10 +92,10 @@ public extension FourOperatorVoiceData {
             bytes[start + 5] = UInt8(clamped(op.keyboardLevelScalingDepth, range: 0...99))
             bytes[start + 6] = UInt8(clamped(op.keyboardRateScalingDepth, range: 0...3))
             bytes[start + 7] = UInt8(clamped(op.velocityToAttack, range: 0...7))
-            bytes[start + 8] = op.amplitudeModulationEnabled ? 1 : 0
-            bytes[start + 9] = UInt8(clamped(op.velocityToTotalLevel, range: 0...7))
+            bytes[start + 8] = op.amplitudeModulationResponseEnabled ? 1 : 0
+            bytes[start + 9] = UInt8(clamped(op.keyVelocityLevelSensitivity, range: 0...7))
             bytes[start + 10] = UInt8(clamped(op.totalLevel, range: 0...99))
-            bytes[start + 11] = UInt8(clamped(op.frequencyValue, range: 0...63))
+            bytes[start + 11] = UInt8(clamped(op.oscillatorFrequencyControl, range: 0...63))
             bytes[start + 12] = UInt8(clamped(dx100DetuneValue(from: op.detune), range: 0...6))
         }
 

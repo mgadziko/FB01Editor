@@ -1038,10 +1038,10 @@ struct FMPatchOperatorModule: View {
 
             operatorSection(
                 title: "Oscillator",
-                subtitle: "Pitch and frequency source."
+                subtitle: "Pitch source, ratio, and fine tuning."
             ) {
                 LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                    ParameterKnob(label: "OSC FRQ Multiplier", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15, isModified: isModified(\.multiple))
+                    ParameterKnob(label: "Frequency Ratio", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15, isModified: isModified(\.multiple))
                     ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7, isModified: isModified(\.detune1))
                     if supportsDetune2 {
                         ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3, isModified: isModified(\.detune2))
@@ -1057,9 +1057,9 @@ struct FMPatchOperatorModule: View {
                     LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                         ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127, isModified: isModified(\.totalLevel))
                         if supportsTLAdjust {
-                            ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, isModified: isModified(\.totalLevelAdjust))
+                            ParameterKnob(label: "Level Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, isModified: isModified(\.totalLevelAdjust))
                         }
-                        ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7, isModified: isModified(\.velocitySensitivityForTotalLevel))
+                        ParameterKnob(label: "Key Velocity\nto Level", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7, isModified: isModified(\.velocitySensitivityForTotalLevel))
                     }
 
                     HStack(alignment: .top, spacing: 16) {
@@ -1073,7 +1073,7 @@ struct FMPatchOperatorModule: View {
 
             operatorSection(
                 title: "Envelope",
-                subtitle: "Time shape of the operator amplifier."
+                subtitle: "How this operator rises, settles, and fades over time."
             ) {
                 OperatorEnvelopeView(
                     operatorData: operatorData,
@@ -1135,7 +1135,11 @@ struct FMPatchOperatorModule: View {
             Spacer()
                 .frame(height: 29)
 
-            GreenNumberSegmentedPicker(selection: keyLevelScalingTypeBinding, values: Array(0...3))
+            GreenNumberSegmentedPicker(
+                selection: keyLevelScalingTypeBinding,
+                values: Array(0...3),
+                helpTextProvider: { ControlHoverText.keyboardLevelScalingType($0) }
+            )
                 .frame(width: 148)
 
             Text("Keyboard Level\nScaling Type")

@@ -54,6 +54,11 @@ private let ivoryEbonyPackedVoiceRecord: [UInt8] = [
     #expect(!DX100.isThirtyTwoVoiceBulkSysEx(message.dropLast(2) + [0x01, DX100.end]))
 }
 
+@Test func dx100BuildsParameterChangeMessages() throws {
+    #expect(try DX100.parameterChange(channel: 0, parameter: 127, data: 24) == [0xF0, 0x43, 0x10, 0x12, 0x7F, 0x18, 0xF7])
+    #expect(try DX100.parameterChange(channel: 3, parameter: 125, data: 95) == [0xF0, 0x43, 0x13, 0x12, 0x7D, 0x5F, 0xF7])
+}
+
 @Test func dx100VoiceBankParsesPackedVoiceNamesAndRoundTrips() throws {
     var data = Array(repeating: UInt8(0), count: DX100.thirtyTwoVoiceDataByteCount)
     for (index, name) in ["IvoryEbony", "Uprt piano", "Vibrabell"].enumerated() {
@@ -179,7 +184,7 @@ private let ivoryEbonyPackedVoiceRecord: [UInt8] = [
     let op1 = try #require(neutral.operators.first { $0.operatorNumber == 1 })
     #expect(op1.isCarrier)
     #expect(op1.totalLevel == 99)
-    #expect(op1.frequencyValue == 4)
+    #expect(op1.oscillatorFrequencyControl == 4)
     #expect(op1.detune == 0)
     #expect(op1.attack == 20)
     #expect(op1.sustain == 12)
@@ -187,7 +192,7 @@ private let ivoryEbonyPackedVoiceRecord: [UInt8] = [
     let op4 = try #require(neutral.operators.first { $0.operatorNumber == 4 })
     #expect(!op4.isCarrier)
     #expect(op4.totalLevel == 65)
-    #expect(op4.frequencyValue == 4)
+    #expect(op4.oscillatorFrequencyControl == 4)
     #expect(op4.detune == 2)
 }
 

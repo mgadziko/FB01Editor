@@ -241,7 +241,7 @@ struct VoiceBankSelectorWindow: View {
         errorMessage = nil
         items = await document.ensureVoiceBankSelectorItems(bank: bank)
         if items.isEmpty {
-            errorMessage = "\(bankTitle) could not be loaded."
+            errorMessage = document.errorMessage ?? "\(bankTitle) could not be fetched."
         }
         isLoading = false
     }
@@ -302,7 +302,7 @@ struct ConfigurationSelectorWindow: View {
         errorMessage = nil
         items = await document.ensureConfigurationSelectorItems()
         if items.isEmpty {
-            errorMessage = "Configurations could not be loaded."
+            errorMessage = document.errorMessage ?? "Configurations could not be fetched."
         }
         isLoading = false
     }
@@ -4325,6 +4325,7 @@ struct WaveformPicker: View {
 struct GreenNumberSegmentedPicker: View {
     @Binding var selection: Int
     var values: [Int]
+    var helpTextProvider: ((Int) -> String)? = nil
     @Environment(\.colorScheme) private var colorScheme
     private let segmentSize = CGSize(width: 34, height: 32)
 
@@ -4344,7 +4345,7 @@ struct GreenNumberSegmentedPicker: View {
                 .buttonStyle(.plain)
                 .frame(width: segmentSize.width, height: segmentSize.height)
                 .contentShape(Rectangle())
-                .forestHoverHelp("Chooses keyboard level scaling type \(value), changing how operator level responds across the keyboard.")
+                .forestHoverHelp(helpTextProvider?(value) ?? "Chooses one of the available numbered options for this control.")
             }
         }
         .padding(3)
@@ -4907,8 +4908,8 @@ struct OperatorInspector: View {
                 operatorRolePicker
                 HStack(alignment: .top, spacing: 12) {
                     operatorLevelControl("Total Level", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
-                    operatorKnob("Velocity to Total Level", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
-                    operatorKnob("Total Level Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
+                    operatorKnob("Key Velocity to Level", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
+                    operatorKnob("Level Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
                 }
             }
 
@@ -4917,7 +4918,7 @@ struct OperatorInspector: View {
 
                 OperatorControlGroup(title: "Tuning") {
                     HStack(alignment: .top, spacing: 12) {
-                        operatorKnob("OSC FRQ Multiplier", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
+                        operatorKnob("Frequency Ratio", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
                         operatorKnob("Detune 1", value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
                         operatorKnob("Detune 2", value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
                     }
@@ -4951,7 +4952,11 @@ struct OperatorInspector: View {
                     Text("Keyboard Level\nScaling Type")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                    GreenNumberSegmentedPicker(selection: keyboardLevelScalingTypeBinding, values: Array(0...3))
+                    GreenNumberSegmentedPicker(
+                        selection: keyboardLevelScalingTypeBinding,
+                        values: Array(0...3),
+                        helpTextProvider: { ControlHoverText.keyboardLevelScalingType($0) }
+                    )
                         .frame(width: 148)
                 }
             }
