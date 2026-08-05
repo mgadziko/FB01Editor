@@ -208,8 +208,13 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
-        panel.message = "Load a voice bank file and choose one voice to open in a new voice document window."
-        panel.prompt = "Load Voice Bank from File"
+        if preferredDevice == .dx100 {
+            panel.message = "Load a DX100/27 voice bank file from disk, then choose one of its 24 displayed voices to open in a new voice document window."
+            panel.prompt = "Load DX100/27 Voice Bank File"
+        } else {
+            panel.message = "Load a voice bank file and choose one voice to open in a new voice document window."
+            panel.prompt = "Load Voice Bank from File"
+        }
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil
@@ -990,9 +995,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private static func readDX100VoiceDocument(from url: URL, context: VoiceDocumentLoadContext, extensionHint: String) throws -> LoadedVoiceDocument {
         let candidates = try DX100DocumentService.shared.readVoiceCandidates(from: url)
         let isBankFile = context == .bankFile || extensionHint == DX100SynthModule.shared.fileProfile.voiceBankExtension || (extensionHint == DX100SynthModule.shared.fileProfile.genericSysExExtension && candidates.count > 1)
-        let title = isBankFile ? "Choose Voice from DX100/27 Voice Bank File" : "Choose Voice Document"
+        let title = isBankFile ? "Choose Voice from DX100/27 Voice Bank File" : "Choose DX100/27 Voice Document"
         let informativeText = isBankFile
-            ? "This DX100/27 bank file contains 24 displayed voices extracted from a 32-voice bulk dump. Choose one voice to open in this document window."
+            ? "This DX100/27 voice bank file contains the 24 displayed voices extracted from a 32-voice bulk dump. Choose one voice to open in this document window."
             : "This DX100/27 SysEx file contains multiple voices. Choose the one to open in this document window."
         guard let candidate = chooseDX100VoiceCandidate(candidates, title: title, informativeText: informativeText) else {
             throw FB01AppError.noVoiceSource

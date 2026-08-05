@@ -70,6 +70,15 @@ struct EditorDocumentCommands: View {
         canSaveFocusedDocumentOrLibrary
     }
 
+    private var loadVoiceBankFromFileTitle: String {
+        switch document.selectedEditorDevice {
+        case .dx100:
+            return "Load DX100/27 Voice Bank File..."
+        default:
+            return "Load Voice Bank from File..."
+        }
+    }
+
     var body: some View {
         Button("New Voice Document") {
             let id = workspace.createVoiceDocument()
@@ -121,7 +130,7 @@ struct EditorDocumentCommands: View {
         }
         .keyboardShortcut("o", modifiers: [.command, .option])
 
-        Button("Load Voice Bank from File...") {
+        Button(loadVoiceBankFromFileTitle) {
             if let id = workspace.loadVoiceDocumentFromBankFile(preferredDevice: document.selectedEditorDevice) {
                 if let url = workspace.voiceDocument(id: id)?.fileURL {
                     document.rememberRecentLoadedVoiceFile(url)
