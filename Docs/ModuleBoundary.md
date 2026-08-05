@@ -1,8 +1,15 @@
 # Forest Module Boundary
 
-Forest currently ships as an FB-01 editor. The module boundary exists so the app
-shell can stay stable while other Yamaha 4-operator FM devices are studied later.
-Do not add behavior for another synth until matching hardware can verify it.
+Forest Editor now has two active hardware paths:
+
+- FB-01: the most complete voice/configuration editor path
+- DX100/27: an active voice-only path with verified current-voice editing and
+  Internal-bank support
+
+The module boundary exists so the app shell can stay stable while individual
+device behaviors are verified and expanded. Do not treat an unverified device
+path as production-ready just because a sibling Yamaha module does something
+similar.
 
 ## App Shell
 
@@ -42,9 +49,13 @@ neutral names such as `SynthModule`, `SynthDocumentDescriptor`, and
 
 ## Current Adapter
 
-`FB01ModuleAdapter` is the only concrete module adapter. It exposes
-`FB01ModuleServices`, `FB01SynthModule`, and the FB-01 service implementations
-behind module-facing protocols.
+The app currently uses concrete module services for:
+
+- `FB01ModuleServices`
+- `DX100ModuleServices`
+
+Both expose device metadata and voice services behind shared module-facing
+protocols. FB-01 additionally exposes configuration services.
 
 `FB01DocumentService` owns FB-01 blank voice/configuration templates and
 extraction of voice/configuration document candidates from `FB01Artifact`.
@@ -104,9 +115,6 @@ Parameter binding descriptors are intentionally descriptive at this stage: they
 identify which module parameter a UI control edits, but they do not yet replace
 the existing typed FB-01 editing code.
 
-The adapter is not a DX100 module. It is a boundary around the working FB-01
-implementation.
-
 The current FB-01 file profile is:
 
 - `.fbv`: single voice document
@@ -118,9 +126,29 @@ The current FB-01 file profile is:
 `.syx` remains useful as a raw SysEx import/debugging format, but module-owned
 extensions are the preferred Forest document convention.
 
+The current DX100/27 file profile is:
+
+- `.dxv`: single voice document
+- `.dxvb`: voice bank document
+- `.dxx`: generic DX100/27 SysEx
+
+Current verified DX100/27 behavior:
+
+- fetch current edit voice
+- fetch Internal bank
+- load/save single voice files
+- load/save voice bank files
+- send edited voice data back to the current edit buffer for live audition
+
+Current DX100/27 limitations:
+
+- no configuration/function document support
+- no verified device-side Bank A-D or preset-bank bulk recall/dump path yet
+- no verified device-side bank-store workflow yet
+
 ## Future Devices
 
-Before adding a real device module:
+Before adding another real device module:
 
 1. Capture and verify its SysEx identity and dumps from hardware.
 2. Build a small service adapter that satisfies the neutral module protocols.

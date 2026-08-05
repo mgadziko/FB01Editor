@@ -21,8 +21,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
     @Published var neutralVoice: FourOperatorVoiceData
     @Published var savedNeutralVoice: FourOperatorVoiceData
-    @Published var voice: FB01VoiceData
-    @Published var savedVoice: FB01VoiceData
+    @Published private var projectionOverlay: FB01VoiceProjectionOverlay
+    @Published private var savedProjectionOverlay: FB01VoiceProjectionOverlay
     @Published var systemChannel: Int
     @Published var sourceDevice: EditorDeviceSelection = .fb01
     @Published var fileURL: URL?
@@ -38,13 +38,18 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private var keyboardPreparationTask: Task<Void, Never>?
     private var dx100LiveResendTask: Task<Void, Never>?
     private var lastDX100LiveSentSignature: String?
+    private var projectedVoiceCache: FB01VoiceData
+    private var savedProjectedVoiceCache: FB01VoiceData
 
     init(voice: FB01VoiceData, systemChannel: Int, fileURL: URL? = nil) {
         let neutralVoice = voice.fourOperatorVoice
         self.neutralVoice = neutralVoice
         self.savedNeutralVoice = neutralVoice
-        self.voice = voice
-        self.savedVoice = voice
+        let overlay = FB01VoiceProjectionOverlay(voice: voice)
+        self.projectionOverlay = overlay
+        self.savedProjectionOverlay = overlay
+        self.projectedVoiceCache = voice
+        self.savedProjectedVoiceCache = voice
         self.systemChannel = systemChannel
         self.fileURL = fileURL
     }
@@ -52,14 +57,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     convenience init(loadedDocument: LoadedVoiceDocument, fileURL: URL? = nil) {
         self.init(voice: loadedDocument.projection, systemChannel: loadedDocument.systemChannel, fileURL: fileURL)
         sourceDevice = loadedDocument.sourceDevice
-        neutralVoice = loadedDocument.neutralVoice
-        savedNeutralVoice = loadedDocument.neutralVoice
-        voice = loadedDocument.projection
-        savedVoice = loadedDocument.projection
+        replaceDocument(with: loadedDocument)
     }
 
+    var voice: FB01VoiceData { projectedVoiceCache }
+    var savedVoice: FB01VoiceData { savedProjectedVoiceCache }
+
     var displayName: String {
-        let rawName = sourceDevice == .dx100 ? neutralVoice.name : voice.name
+        let rawName = neutralVoice.name
         return rawName.isEmpty ? "Untitled Voice" : rawName
     }
 
@@ -88,20 +93,26 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         statusMessage = "Reverted to last saved version."
     }
 
+    func replaceDocument(with loadedDocument: LoadedVoiceDocument) {
+        sourceDevice = loadedDocument.sourceDevice
+        systemChannel = loadedDocument.systemChannel
+        applyDocumentVoices(
+            workingNeutral: loadedDocument.neutralVoice,
+            projection: loadedDocument.projection,
+            savedNeutral: loadedDocument.neutralVoice,
+            savedProjection: loadedDocument.projection
+        )
+        resetPerformanceMacros()
+        noteVoiceReplacement()
+        errorMessage = nil
+        statusMessage = nil
+    }
+
     func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
         do {
             let editedVoice = try edit(voice)
             guard editedVoice != voice else { return }
-            var editedNeutralVoice = editedVoice.fourOperatorVoice
-            if sourceDevice == .dx100 {
-                editedNeutralVoice.name = neutralVoice.name
-            }
-            neutralVoice = editedNeutralVoice
-            voice = editedVoice
-            preparedKeyboardVoiceSignature = nil
-            preparedKeyboardVoiceDate = nil
-            errorMessage = nil
-            statusMessage = nil
+            applyProjectedEdit(editedVoice)
         } catch {
             errorMessage = "Edit failed: \(error)"
         }
@@ -119,26 +130,17 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         if sourceDevice == .dx100 {
             let limited = String(value.prefix(DX100VoiceData.nameLength))
             guard limited != neutralVoice.name else { return }
-            do {
-                let projectedName = String(limited.prefix(FB01VoiceData.nameLength))
-                let updatedProjection = try voice.settingName(projectedName)
-                var updatedNeutral = neutralVoice
-                updatedNeutral.name = limited
-                neutralVoice = updatedNeutral
-                voice = updatedProjection
-                preparedKeyboardVoiceSignature = nil
-                preparedKeyboardVoiceDate = nil
-                errorMessage = nil
-                statusMessage = nil
-            } catch {
-                errorMessage = "Edit failed: \(error)"
+            updateNeutral { voice in
+                voice.name = limited
             }
             return
         }
 
         let limited = String(value.prefix(FB01VoiceData.nameLength))
-        guard limited != voice.name else { return }
-        updateVoice { try $0.settingName(limited) }
+        guard limited != neutralVoice.name else { return }
+        updateNeutral { voice in
+            voice.name = limited
+        }
     }
 
     func save() {
@@ -296,19 +298,19 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 fileURL = nil
                 noteVoiceReplacement()
                 preparedKeyboardVoiceSignature = nil
-                let fetchedName = cachedResult.voice.name.isEmpty ? "Untitled" : cachedResult.voice.name
-                statusMessage = "Fetched translated \(fetchedName) from cached \(cachedResult.title) into this document."
+                let fetchedName = cachedResult.neutralVoice.name.isEmpty ? "Untitled" : cachedResult.neutralVoice.name
+                statusMessage = "Fetched \(fetchedName) from cached \(cachedResult.title) into this document."
                 device.rememberRecentFetchedVoice(source, title: cachedResult.title)
                 errorMessage = nil
                 isBusy = false
                 return
             }
 
-            let fetchTitle = recentTitle ?? source.title()
-            statusMessage = "Fetching \(fetchTitle) from DX100/27 on \(systemChannelName)..."
+            let fetchTitle = recentTitle ?? "DX100/27 Current Edit Voice"
+            statusMessage = "Fetching \(fetchTitle) on \(systemChannelName)..."
             let fetchProgressPanel = EditorProgressPanel(
                 title: "Fetching Voice",
-                message: "The voice is being fetched. Please wait.\nFetching \(fetchTitle) from the DX100/27..."
+                message: "The voice is being fetched. Please wait.\nFetching \(fetchTitle)..."
             )
             fetchProgressPanel.show()
             Task {
@@ -336,8 +338,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     fileURL = nil
                     noteVoiceReplacement()
                     preparedKeyboardVoiceSignature = nil
-                    let fetchedName = result.voice.name.isEmpty ? "Untitled" : result.voice.name
-                    statusMessage = "Fetched translated \(fetchedName) from \(result.title) into this document."
+                    let fetchedName = result.neutralVoice.name.isEmpty ? "Untitled" : result.neutralVoice.name
+                    statusMessage = "Fetched \(fetchedName) from \(result.title) into this document."
                     device.rememberRecentFetchedVoice(source, title: result.title)
                     errorMessage = nil
                 } catch {
@@ -412,7 +414,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 self.sourceDevice = selectedDevice
                 fileURL = nil
                 noteVoiceReplacement()
-                let fetchedName = cachedResult.voice.name.isEmpty ? "Untitled" : cachedResult.voice.name
+                let fetchedName = cachedResult.neutralVoice.name.isEmpty ? "Untitled" : cachedResult.neutralVoice.name
                 statusMessage = "Fetched \(fetchedName) from cached \(cachedResult.title) into this document."
                 device.rememberRecentFetchedVoice(source, title: cachedResult.title)
                 errorMessage = nil
@@ -478,9 +480,89 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         errorMessage = nil
     }
 
+    func updateNeutral(_ edit: (inout FourOperatorVoiceData) -> Void) {
+        var updated = neutralVoice
+        edit(&updated)
+        guard updated != neutralVoice else { return }
+        applyNeutralEdit(updated)
+    }
+
+    func setNeutralName(_ value: String) {
+        setName(value)
+    }
+
+    func setNeutralAlgorithm(_ displayValue: Int) {
+        let newAlgorithm = min(max(displayValue - 1, 0), 7)
+        let carrierNumbers = FourOperatorVoiceData.carrierOperatorNumbers(forAlgorithm: newAlgorithm)
+        updateNeutral { voice in
+            voice.algorithm = newAlgorithm
+            voice.operators = voice.operators.map { operatorData in
+                var updatedOperator = operatorData
+                updatedOperator.isCarrier = carrierNumbers.contains(operatorData.operatorNumber)
+                return updatedOperator
+            }
+        }
+    }
+
+    func setNeutralFeedback(_ value: Int) {
+        updateNeutral { $0.feedback = value }
+    }
+
+    func setNeutralTranspose(_ value: Int) {
+        updateNeutral { $0.transpose = value }
+    }
+
+    func setNeutralLFOSpeed(_ value: Int) {
+        updateNeutral { $0.lfoSpeed = value }
+    }
+
+    func setNeutralLFOWaveform(_ value: Int) {
+        updateNeutral { $0.lfoWaveform = value }
+    }
+
+    func setNeutralLFOSyncEnabled(_ value: Bool) {
+        updateNeutral { $0.lfoSyncEnabled = value }
+    }
+
+    func setNeutralAmplitudeModulationDepth(_ value: Int) {
+        updateNeutral { $0.amplitudeModulationDepth = value }
+    }
+
+    func setNeutralPitchModulationDepth(_ value: Int) {
+        updateNeutral { $0.pitchModulationDepth = value }
+    }
+
+    func setNeutralAmplitudeModulationSensitivity(_ value: Int) {
+        updateNeutral { $0.amplitudeModulationSensitivity = value }
+    }
+
+    func setNeutralPitchModulationSensitivity(_ value: Int) {
+        updateNeutral { $0.pitchModulationSensitivity = value }
+    }
+
+    func neutralOperator(forDataIndex dataIndex: Int) -> FourOperatorVoiceOperatorData? {
+        let operatorNumber = FB01VoiceData.operatorNumber(forDataIndex: dataIndex)
+        return neutralVoice.operators.first { $0.operatorNumber == operatorNumber }
+    }
+
+    func savedNeutralOperator(forDataIndex dataIndex: Int) -> FourOperatorVoiceOperatorData? {
+        let operatorNumber = FB01VoiceData.operatorNumber(forDataIndex: dataIndex)
+        return savedNeutralVoice.operators.first { $0.operatorNumber == operatorNumber }
+    }
+
+    func updateNeutralOperator(forDataIndex dataIndex: Int, edit: (inout FourOperatorVoiceOperatorData) -> Void) {
+        let operatorNumber = FB01VoiceData.operatorNumber(forDataIndex: dataIndex)
+        updateNeutral { voice in
+            guard let index = voice.operators.firstIndex(where: { $0.operatorNumber == operatorNumber }) else {
+                return
+            }
+            edit(&voice.operators[index])
+        }
+    }
+
     func storeToDevice(device: DocumentModel) {
         guard !isBusy else { return }
-        guard let options = Self.chooseStoreOptions(defaultVoiceName: voice.name) else {
+        guard let options = Self.chooseStoreOptions(defaultVoiceName: neutralVoice.name) else {
             return
         }
 
@@ -762,17 +844,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         guard newValue != oldValue else { return }
 
         do {
-            voice = try macro.apply(
+            let updatedProjection = try macro.apply(
                 previousValue: oldValue,
                 newValue: newValue,
                 characterType: voiceCharacterType,
                 to: voice
             )
-            neutralVoice = voice.fourOperatorVoice
+            applyProjectedEdit(updatedProjection)
             performanceMacroValues[macro] = newValue
-            preparedKeyboardVoiceSignature = nil
-            preparedKeyboardVoiceDate = nil
-            errorMessage = nil
             statusMessage = "\(macro.title) macro changed \(macro.touchedParametersDescription(for: voiceCharacterType))."
         } catch {
             errorMessage = "\(macro.title) macro failed: \(error)"
@@ -858,14 +937,17 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             }
 
             if savedPayload != voice || savedNeutral != neutralVoice {
-                neutralVoice = savedNeutral
-                voice = savedPayload
+                applyDocumentVoices(
+                    workingNeutral: savedNeutral,
+                    projection: savedPayload
+                )
                 noteVoiceReplacement()
                 preparedKeyboardVoiceSignature = nil
                 preparedKeyboardVoiceDate = nil
             }
             savedNeutralVoice = savedNeutral
-            savedVoice = savedPayload
+            savedProjectionOverlay = FB01VoiceProjectionOverlay(voice: savedPayload)
+            savedProjectedVoiceCache = savedPayload
             fileURL = url
             rememberEditorSaveDirectory(for: url)
             statusMessage = "Saved \(url.lastPathComponent)."
@@ -1073,13 +1155,43 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         savedProjection: FB01VoiceData? = nil
     ) {
         neutralVoice = workingNeutral
-        voice = projection
+        projectionOverlay = FB01VoiceProjectionOverlay(voice: projection)
+        projectedVoiceCache = projection
         if let savedNeutral {
             savedNeutralVoice = savedNeutral
         }
         if let savedProjection {
-            savedVoice = savedProjection
+            savedProjectionOverlay = FB01VoiceProjectionOverlay(voice: savedProjection)
+            savedProjectedVoiceCache = savedProjection
         }
+    }
+
+    private func applyNeutralEdit(_ updatedNeutralVoice: FourOperatorVoiceData) {
+        do {
+            let updatedProjection = try projectionOverlay.apply(to: updatedNeutralVoice)
+            neutralVoice = updatedNeutralVoice
+            projectedVoiceCache = updatedProjection
+            preparedKeyboardVoiceSignature = nil
+            preparedKeyboardVoiceDate = nil
+            errorMessage = nil
+            statusMessage = nil
+        } catch {
+            errorMessage = "Edit failed: \(error)"
+        }
+    }
+
+    private func applyProjectedEdit(_ editedVoice: FB01VoiceData) {
+        var editedNeutralVoice = editedVoice.fourOperatorVoice
+        if sourceDevice == .dx100 {
+            editedNeutralVoice.name = neutralVoice.name
+        }
+        neutralVoice = editedNeutralVoice
+        projectionOverlay = FB01VoiceProjectionOverlay(voice: editedVoice)
+        projectedVoiceCache = editedVoice
+        preparedKeyboardVoiceSignature = nil
+        preparedKeyboardVoiceDate = nil
+        errorMessage = nil
+        statusMessage = nil
     }
 
     private static func chooseFetchSource(

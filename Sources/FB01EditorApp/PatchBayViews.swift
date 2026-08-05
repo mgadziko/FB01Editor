@@ -21,9 +21,12 @@ struct FMRoutingPatchBayView: View {
     @Binding var voiceCharacterType: VoiceCharacterType
     var macroValue: (PerformanceMacro) -> Binding<Int>
     var operators: [FB01VoiceOperatorData]
+    var neutralOperators: [FourOperatorVoiceOperatorData] = []
     var operatorEnabled: [Binding<Bool>]
+    var savedNeutralVoice: FourOperatorVoiceData
     var savedVoice: FB01VoiceData
     @Binding var selectedOperatorIndex: Int
+    var updateNeutralOperator: ((Int, (inout FourOperatorVoiceOperatorData) -> Void) -> Void)? = nil
     var updateOperator: (FB01VoiceOperatorData) -> Void
 
     var body: some View {
@@ -60,7 +63,7 @@ struct FMRoutingPatchBayView: View {
                         GridRow {
                             Text("Name")
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(name != savedVoice.name ? Color.orange : Color.secondary)
+                                .foregroundStyle(name != savedNeutralVoice.name ? Color.orange : Color.secondary)
                             TextField("Name", text: $name)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 180)
@@ -72,7 +75,7 @@ struct FMRoutingPatchBayView: View {
                         if supportsUserCode {
                             ParameterKnob(label: "User Code", value: $userCode, range: 0...255, isModified: userCode != savedVoice.userCode)
                         }
-                        ParameterKnob(label: "Transpose", value: $transpose, range: -128...127, isModified: transpose != savedVoice.transpose)
+                        ParameterKnob(label: "Transpose", value: $transpose, range: -128...127, isModified: transpose != savedNeutralVoice.transpose)
                     }
                 }
                 .frame(width: 238, alignment: .topLeading)
@@ -91,7 +94,7 @@ struct FMRoutingPatchBayView: View {
 
     private var algorithmChooser: some View {
         OperatorControlGroup(title: "Algorithm") {
-            CompactAlgorithmSelectorView(selection: $algorithm, isModified: algorithm != savedVoice.algorithm + 1)
+            CompactAlgorithmSelectorView(selection: $algorithm, isModified: algorithm != savedNeutralVoice.algorithm + 1)
         }
         .frame(width: 780, alignment: .center)
     }
@@ -99,21 +102,21 @@ struct FMRoutingPatchBayView: View {
     private var modulationPanel: some View {
         OperatorControlGroup(title: "Global LFO and Modulation") {
             HStack(alignment: .top, spacing: 12) {
-                ParameterKnob(label: "LFO Speed", value: $lfoSpeed, range: 0...255, isModified: lfoSpeed != savedVoice.lfoSpeed)
-                ParameterKnob(label: "Amplitude MOD\nDepth", value: $amplitudeModulationDepth, range: 0...127, isModified: amplitudeModulationDepth != savedVoice.amplitudeModulationDepth)
-                ParameterKnob(label: "Pitch MOD\nDepth", value: $pitchModulationDepth, range: 0...127, isModified: pitchModulationDepth != savedVoice.pitchModulationDepth)
-                ParameterKnob(label: "Amplitude MOD\nSensitivity", value: $amplitudeModulationSensitivity, range: 0...3, isModified: amplitudeModulationSensitivity != savedVoice.amplitudeModulationSensitivity)
-                ParameterKnob(label: "Pitch MOD\nSensitivity", value: $pitchModulationSensitivity, range: 0...7, isModified: pitchModulationSensitivity != savedVoice.pitchModulationSensitivity)
+                ParameterKnob(label: "LFO Speed", value: $lfoSpeed, range: 0...255, isModified: lfoSpeed != savedNeutralVoice.lfoSpeed)
+                ParameterKnob(label: "Amplitude MOD\nDepth", value: $amplitudeModulationDepth, range: 0...127, isModified: amplitudeModulationDepth != savedNeutralVoice.amplitudeModulationDepth)
+                ParameterKnob(label: "Pitch MOD\nDepth", value: $pitchModulationDepth, range: 0...127, isModified: pitchModulationDepth != savedNeutralVoice.pitchModulationDepth)
+                ParameterKnob(label: "Amplitude MOD\nSensitivity", value: $amplitudeModulationSensitivity, range: 0...3, isModified: amplitudeModulationSensitivity != savedNeutralVoice.amplitudeModulationSensitivity)
+                ParameterKnob(label: "Pitch MOD\nSensitivity", value: $pitchModulationSensitivity, range: 0...7, isModified: pitchModulationSensitivity != savedNeutralVoice.pitchModulationSensitivity)
             }
 
             HStack(alignment: .top, spacing: 14) {
-                WaveformPicker(selection: $lfoWaveform, isModified: lfoWaveform != savedVoice.lfoWaveform)
+                WaveformPicker(selection: $lfoWaveform, isModified: lfoWaveform != savedNeutralVoice.lfoWaveform)
                     .frame(width: 342)
 
                 if supportsLoadLFOData {
                     RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58, isModified: loadLFODataEnabled != savedVoice.loadLFODataEnabled)
                 }
-                RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58, isModified: lfoSyncEnabled != savedVoice.lfoSyncEnabled)
+                RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58, isModified: lfoSyncEnabled != savedNeutralVoice.lfoSyncEnabled)
             }
         }
         .frame(minWidth: 520, maxWidth: 680, alignment: .topLeading)
@@ -172,12 +175,15 @@ struct FMRoutingPatchBayView: View {
                 layout: layout,
                 editingDevice: editingDevice,
                 operatorsByNumber: operatorsByNumber,
+                neutralOperatorsByNumber: neutralOperatorsByNumber,
                 operatorEnabledBinding: operatorEnabledBinding,
                 feedback: $feedback,
-                feedbackIsModified: feedback != savedVoice.feedbackLevel,
+                feedbackIsModified: feedback != savedNeutralVoice.feedback,
                 savedOperatorsByNumber: savedOperatorsByNumber,
+                savedNeutralOperatorsByNumber: savedNeutralOperatorsByNumber,
                 savedOperatorEnabled: savedVoice.operatorEnabled,
                 selectedOperatorIndex: $selectedOperatorIndex,
+                updateNeutralOperator: updateNeutralOperator,
                 updateOperator: updateOperator
             )
             .frame(width: layout.size.width, height: layout.size.height)
@@ -192,10 +198,19 @@ struct FMRoutingPatchBayView: View {
         })
     }
 
+    private var neutralOperatorsByNumber: [Int: FourOperatorVoiceOperatorData] {
+        let source = neutralOperators.isEmpty ? operators.map(\.fourOperatorOperator) : neutralOperators
+        return Dictionary(uniqueKeysWithValues: source.map { ($0.operatorNumber, $0) })
+    }
+
     private var savedOperatorsByNumber: [Int: FB01VoiceOperatorData] {
         Dictionary(uniqueKeysWithValues: savedVoice.operators.map { operatorData in
             (FB01VoiceData.operatorNumber(forDataIndex: operatorData.index), operatorData)
         })
+    }
+
+    private var savedNeutralOperatorsByNumber: [Int: FourOperatorVoiceOperatorData] {
+        Dictionary(uniqueKeysWithValues: savedNeutralVoice.operators.map { ($0.operatorNumber, $0) })
     }
 
     private func operatorEnabledBinding(for index: Int) -> Binding<Bool> {
@@ -866,12 +881,15 @@ private struct FMPatchBayCanvas: View {
     var layout: FMPatchBayLayout
     var editingDevice: EditorDeviceSelection
     var operatorsByNumber: [Int: FB01VoiceOperatorData]
+    var neutralOperatorsByNumber: [Int: FourOperatorVoiceOperatorData]
     var operatorEnabledBinding: (Int) -> Binding<Bool>
     @Binding var feedback: Int
     var feedbackIsModified: Bool
     var savedOperatorsByNumber: [Int: FB01VoiceOperatorData]
+    var savedNeutralOperatorsByNumber: [Int: FourOperatorVoiceOperatorData]
     var savedOperatorEnabled: [Bool]
     @Binding var selectedOperatorIndex: Int
+    var updateNeutralOperator: ((Int, (inout FourOperatorVoiceOperatorData) -> Void) -> Void)? = nil
     var updateOperator: (FB01VoiceOperatorData) -> Void
     @Environment(\.colorScheme) private var colorScheme
 
@@ -895,16 +913,20 @@ private struct FMPatchBayCanvas: View {
 
             ForEach(1...4, id: \.self) { number in
                 if let operatorData = operatorsByNumber[number],
+                   let neutralOperatorData = neutralOperatorsByNumber[number],
                    let origin = layout.positions[number] {
                     FMPatchOperatorModule(
                         editingDevice: editingDevice,
                         operatorData: operatorData,
+                        neutralOperatorData: neutralOperatorData,
                         savedOperatorData: savedOperatorsByNumber[number],
+                        savedNeutralOperatorData: savedNeutralOperatorsByNumber[number],
                         routingSubtitle: layout.routingSubtitle(forOperator: number),
                         operatorEnabled: operatorEnabledBinding(operatorData.index),
                         savedOperatorEnabled: savedOperatorEnabled.indices.contains(operatorData.index) ? savedOperatorEnabled[operatorData.index] : true,
                         isSelected: operatorData.index == selectedOperatorIndex,
                         select: { selectedOperatorIndex = operatorData.index },
+                        updateNeutralOperator: updateNeutralOperator,
                         updateOperator: updateOperator
                     )
                     .frame(
@@ -1000,12 +1022,15 @@ private struct FMPatchBayRouteCanvas: View {
 struct FMPatchOperatorModule: View {
     var editingDevice: EditorDeviceSelection
     var operatorData: FB01VoiceOperatorData
+    var neutralOperatorData: FourOperatorVoiceOperatorData
     var savedOperatorData: FB01VoiceOperatorData?
+    var savedNeutralOperatorData: FourOperatorVoiceOperatorData?
     var routingSubtitle: String
     @Binding var operatorEnabled: Bool
     var savedOperatorEnabled: Bool
     var isSelected: Bool
     var select: () -> Void
+    var updateNeutralOperator: ((Int, (inout FourOperatorVoiceOperatorData) -> Void) -> Void)? = nil
     var updateOperator: (FB01VoiceOperatorData) -> Void
 
     private var operatorNumber: Int {
@@ -1026,7 +1051,7 @@ struct FMPatchOperatorModule: View {
                         .font(.headline)
                     Text(routingSubtitle)
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(operatorData.carrier ? Color.green : Color.blue)
+                        .foregroundStyle(neutralOperatorData.isCarrier ? Color.green : Color.blue)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
@@ -1041,8 +1066,8 @@ struct FMPatchOperatorModule: View {
                 subtitle: "Pitch source, ratio, and fine tuning."
             ) {
                 LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                    ParameterKnob(label: "Frequency Ratio", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15, isModified: isModified(\.multiple))
-                    ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7, isModified: isModified(\.detune1))
+                    ParameterKnob(label: "Frequency Ratio", value: sharedOperatorBinding(neutralValue: { $0.oscillatorFrequencyControl }, projectedValue: { $0.multiple }, projectedUpdate: { try $0.settingMultiple($1) }, neutralUpdate: { $0.oscillatorFrequencyControl = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.oscillatorFrequencyControl }, projected: { $0.multiple }))
+                    ParameterKnob(label: "Detune 1", value: sharedOperatorBinding(neutralValue: { $0.detune }, projectedValue: { $0.detune1 }, projectedUpdate: { try $0.settingDetune1($1) }, neutralUpdate: { $0.detune = $1 }), range: 0...7, isModified: sharedIsModified(neutral: { $0.detune }, projected: { $0.detune1 }))
                     if supportsDetune2 {
                         ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3, isModified: isModified(\.detune2))
                     }
@@ -1051,19 +1076,19 @@ struct FMPatchOperatorModule: View {
 
             operatorSection(
                 title: amplifierTitle,
-                subtitle: operatorData.carrier ? "Audible output loudness." : "Modulation strength and timbre intensity."
+                subtitle: neutralOperatorData.isCarrier ? "Audible output loudness." : "Modulation strength and timbre intensity."
             ) {
                 VStack(alignment: .leading, spacing: 10) {
                     LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                        ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127, isModified: isModified(\.totalLevel))
+                        ParameterKnob(label: "Total Level", value: sharedOperatorBinding(neutralValue: { $0.totalLevel }, projectedValue: { $0.totalLevel }, projectedUpdate: { try $0.settingTotalLevel($1) }, neutralUpdate: { $0.totalLevel = $1 }), range: 0...127, isModified: sharedIsModified(neutral: { $0.totalLevel }, projected: { $0.totalLevel }))
                         if supportsTLAdjust {
                             ParameterKnob(label: "Level Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, isModified: isModified(\.totalLevelAdjust))
                         }
-                        ParameterKnob(label: "Key Velocity\nto Level", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7, isModified: isModified(\.velocitySensitivityForTotalLevel))
+                        ParameterKnob(label: "Key Velocity\nto Level", value: sharedOperatorBinding(neutralValue: { $0.keyVelocityLevelSensitivity }, projectedValue: { $0.velocitySensitivityForTotalLevel }, projectedUpdate: { try $0.settingVelocitySensitivityForTotalLevel($1) }, neutralUpdate: { $0.keyVelocityLevelSensitivity = $1 }), range: 0...7, isModified: sharedIsModified(neutral: { $0.keyVelocityLevelSensitivity }, projected: { $0.velocitySensitivityForTotalLevel }))
                     }
 
                     HStack(alignment: .top, spacing: 16) {
-                        ParameterKnob(label: "Keyboard Level\nDepth", value: operatorBinding({ $0.keyboardLevelScalingDepth }, update: { try $0.settingKeyboardLevelScalingDepth($1) }), range: 0...15, isModified: isModified(\.keyboardLevelScalingDepth))
+                        ParameterKnob(label: "Keyboard Level\nDepth", value: sharedOperatorBinding(neutralValue: { $0.keyboardLevelScalingDepth }, projectedValue: { $0.keyboardLevelScalingDepth }, projectedUpdate: { try $0.settingKeyboardLevelScalingDepth($1) }, neutralUpdate: { $0.keyboardLevelScalingDepth = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.keyboardLevelScalingDepth }, projected: { $0.keyboardLevelScalingDepth }))
                         keyLevelScalingTypeControl
                     }
                 }
@@ -1077,6 +1102,8 @@ struct FMPatchOperatorModule: View {
             ) {
                 OperatorEnvelopeView(
                     operatorData: operatorData,
+                    neutralOperatorData: neutralOperatorData,
+                    updateNeutralOperator: updateNeutralOperator,
                     updateOperator: { updatedOperator in
                         guard operatorEnabled else {
                             return
@@ -1088,19 +1115,19 @@ struct FMPatchOperatorModule: View {
                 .allowsHitTesting(operatorEnabled)
 
                 LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                    ParameterKnob(label: "Attack", value: operatorBinding({ $0.attackRate }, update: { try $0.settingAttackRate($1) }), range: 0...31, isModified: isModified(\.attackRate))
-                    ParameterKnob(label: "Vel to Attack", value: operatorBinding({ $0.velocitySensitivityForAttackRate }, update: { try $0.settingVelocitySensitivityForAttackRate($1) }), range: 0...7, isModified: isModified(\.velocitySensitivityForAttackRate))
-                    ParameterKnob(label: "Decay 1", value: operatorBinding({ $0.decay1Rate }, update: { try $0.settingDecay1Rate($1) }), range: 0...15, isModified: isModified(\.decay1Rate))
-                    ParameterKnob(label: "Decay 2", value: operatorBinding({ $0.decay2Rate }, update: { try $0.settingDecay2Rate($1) }), range: 0...31, isModified: isModified(\.decay2Rate))
-                    ParameterKnob(label: "Sustain", value: operatorBinding({ $0.sustainLevel }, update: { try $0.settingSustainLevel($1) }), range: 0...15, isModified: isModified(\.sustainLevel))
-                    ParameterKnob(label: "Release", value: operatorBinding({ $0.releaseRate }, update: { try $0.settingReleaseRate($1) }), range: 0...15, isModified: isModified(\.releaseRate))
+                    ParameterKnob(label: "Attack", value: sharedOperatorBinding(neutralValue: { $0.attack }, projectedValue: { $0.attackRate }, projectedUpdate: { try $0.settingAttackRate($1) }, neutralUpdate: { $0.attack = $1 }), range: 0...31, isModified: sharedIsModified(neutral: { $0.attack }, projected: { $0.attackRate }))
+                    ParameterKnob(label: "Vel to Attack", value: sharedOperatorBinding(neutralValue: { $0.velocityToAttack }, projectedValue: { $0.velocitySensitivityForAttackRate }, projectedUpdate: { try $0.settingVelocitySensitivityForAttackRate($1) }, neutralUpdate: { $0.velocityToAttack = $1 }), range: 0...7, isModified: sharedIsModified(neutral: { $0.velocityToAttack }, projected: { $0.velocitySensitivityForAttackRate }))
+                    ParameterKnob(label: "Decay 1", value: sharedOperatorBinding(neutralValue: { $0.decay1 }, projectedValue: { $0.decay1Rate }, projectedUpdate: { try $0.settingDecay1Rate($1) }, neutralUpdate: { $0.decay1 = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.decay1 }, projected: { $0.decay1Rate }))
+                    ParameterKnob(label: "Decay 2", value: sharedOperatorBinding(neutralValue: { $0.decay2 }, projectedValue: { $0.decay2Rate }, projectedUpdate: { try $0.settingDecay2Rate($1) }, neutralUpdate: { $0.decay2 = $1 }), range: 0...31, isModified: sharedIsModified(neutral: { $0.decay2 }, projected: { $0.decay2Rate }))
+                    ParameterKnob(label: "Sustain", value: sharedOperatorBinding(neutralValue: { $0.sustain }, projectedValue: { $0.sustainLevel }, projectedUpdate: { try $0.settingSustainLevel($1) }, neutralUpdate: { $0.sustain = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.sustain }, projected: { $0.sustainLevel }))
+                    ParameterKnob(label: "Release", value: sharedOperatorBinding(neutralValue: { $0.release }, projectedValue: { $0.releaseRate }, projectedUpdate: { try $0.settingReleaseRate($1) }, neutralUpdate: { $0.release = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.release }, projected: { $0.releaseRate }))
                 }
             }
 
             HStack(alignment: .top, spacing: 20) {
                 Spacer()
                 RockerSwitch(label: "Enabled", isOn: editableOperatorEnabled, width: 82, height: 58, isModified: operatorEnabled != savedOperatorEnabled)
-                ParameterKnob(label: "Keyboard Rate\nScaling Depth", value: operatorBinding({ $0.keyboardRateScalingDepth }, update: { try $0.settingKeyboardRateScalingDepth($1) }), range: 0...7, isModified: isModified(\.keyboardRateScalingDepth))
+                ParameterKnob(label: "Keyboard Rate\nScaling Depth", value: sharedOperatorBinding(neutralValue: { $0.keyboardRateScalingDepth }, projectedValue: { $0.keyboardRateScalingDepth }, projectedUpdate: { try $0.settingKeyboardRateScalingDepth($1) }, neutralUpdate: { $0.keyboardRateScalingDepth = $1 }), range: 0...7, isModified: sharedIsModified(neutral: { $0.keyboardRateScalingDepth }, projected: { $0.keyboardRateScalingDepth }))
                 Spacer()
             }
             .padding(.top, 8)
@@ -1124,7 +1151,7 @@ struct FMPatchOperatorModule: View {
     }
 
     private var amplifierTitle: String {
-        operatorData.carrier ? "Amplifier - Volume Level" : "Amplifier - Modulation Level"
+        neutralOperatorData.isCarrier ? "Amplifier - Volume Level" : "Amplifier - Modulation Level"
     }
 
     private var supportsDetune2: Bool { editingDevice == .fb01 }
@@ -1234,7 +1261,7 @@ struct FMPatchOperatorModule: View {
     }
 
     private var moduleFill: Color {
-        operatorData.carrier
+        neutralOperatorData.isCarrier
             ? Color(red: 0.06, green: 0.20, blue: 0.09).opacity(0.75)
             : Color(red: 0.06, green: 0.11, blue: 0.22).opacity(0.75)
     }
@@ -1243,14 +1270,20 @@ struct FMPatchOperatorModule: View {
         if operatorEnabled {
             return Color.green.opacity(0.90)
         }
-        return operatorData.carrier ? Color.green.opacity(0.24) : Color.blue.opacity(0.24)
+        return neutralOperatorData.isCarrier ? Color.green.opacity(0.24) : Color.blue.opacity(0.24)
     }
 
     private func applyTimbreMacro(_ macro: FMOperatorTimbreMacro) {
-        guard operatorEnabled, let updated = try? macro.applying(to: operatorData) else {
+        guard operatorEnabled else {
             return
         }
-        updateOperator(updated)
+        if let updateNeutralOperator {
+            updateNeutralOperator(operatorData.index) { neutralOperator in
+                macro.apply(to: &neutralOperator)
+            }
+        } else if let updated = try? macro.applying(to: operatorData) {
+            updateOperator(updated)
+        }
     }
 
     private func operatorBinding(
@@ -1270,11 +1303,52 @@ struct FMPatchOperatorModule: View {
         )
     }
 
+    private func sharedOperatorBinding(
+        neutralValue: @escaping (FourOperatorVoiceOperatorData) -> Int,
+        projectedValue: @escaping (FB01VoiceOperatorData) -> Int,
+        projectedUpdate: @escaping (FB01VoiceOperatorData, Int) throws -> FB01VoiceOperatorData,
+        neutralUpdate: @escaping (inout FourOperatorVoiceOperatorData, Int) -> Void
+    ) -> Binding<Int> {
+        Binding(
+            get: {
+                if updateNeutralOperator != nil {
+                    return neutralValue(neutralOperatorData)
+                }
+                return projectedValue(operatorData)
+            },
+            set: { newValue in
+                guard operatorEnabled else {
+                    return
+                }
+                if let updateNeutralOperator {
+                    updateNeutralOperator(operatorData.index) { neutralOperator in
+                        neutralUpdate(&neutralOperator, newValue)
+                    }
+                } else if let updated = try? projectedUpdate(operatorData, newValue) {
+                    updateOperator(updated)
+                }
+            }
+        )
+    }
+
     private func isModified(_ keyPath: KeyPath<FB01VoiceOperatorData, Int>) -> Bool {
         guard let savedOperatorData else {
             return false
         }
         return operatorData[keyPath: keyPath] != savedOperatorData[keyPath: keyPath]
+    }
+
+    private func sharedIsModified(
+        neutral: (FourOperatorVoiceOperatorData) -> Int,
+        projected: (FB01VoiceOperatorData) -> Int
+    ) -> Bool {
+        if let savedNeutralOperatorData {
+            return neutral(neutralOperatorData) != neutral(savedNeutralOperatorData)
+        }
+        guard let savedOperatorData else {
+            return false
+        }
+        return projected(operatorData) != projected(savedOperatorData)
     }
 
     private var keyLevelScalingTypeIsModified: Bool {
@@ -1379,6 +1453,18 @@ enum FMOperatorTimbreMacro: String, CaseIterable, Identifiable {
             .settingDecay2Rate(settings.decay2)
             .settingSustainLevel(settings.sustain)
             .settingReleaseRate(settings.release)
+    }
+
+    func apply(to neutralOperator: inout FourOperatorVoiceOperatorData) {
+        let settings = self.settings
+        neutralOperator.totalLevel = settings.totalLevel
+        neutralOperator.oscillatorFrequencyControl = settings.multiple
+        neutralOperator.detune = settings.detune1
+        neutralOperator.attack = settings.attack
+        neutralOperator.decay1 = settings.decay1
+        neutralOperator.decay2 = settings.decay2
+        neutralOperator.sustain = settings.sustain
+        neutralOperator.release = settings.release
     }
 
     private var settings: Settings {

@@ -151,7 +151,7 @@ public struct DX100SynthModule: SynthModule {
             supportsLoadFromFile: true,
             supportsSaveToFile: true,
             supportsFetchFromDevice: true,
-            supportsStoreToDevice: true
+            supportsStoreToDevice: false
         ),
     ]
 
@@ -160,16 +160,6 @@ public struct DX100SynthModule: SynthModule {
             kind: .showVoiceBank,
             menu: .voice,
             displayName: "Show Voice Bank"
-        ),
-        SynthModuleCommandDescriptor(
-            kind: .storeVoiceBank,
-            menu: .voice,
-            displayName: "Store Bank"
-        ),
-        SynthModuleCommandDescriptor(
-            kind: .copyVoiceToSlot,
-            menu: .voice,
-            displayName: "Copy Voice to Slot..."
         ),
         SynthModuleCommandDescriptor(
             kind: .refreshDeviceCache,

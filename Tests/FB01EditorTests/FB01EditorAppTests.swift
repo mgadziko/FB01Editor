@@ -319,8 +319,12 @@ import UniformTypeIdentifiers
     replacementVoice = try replacementVoice.replacingOperator(replacementVoice.operators[0].settingAttackRate(12))
 
     let voice = VoiceDocumentModel(voice: originalVoice, systemChannel: 0)
-    voice.voice = replacementVoice
-    voice.savedVoice = replacementVoice
+    voice.replaceDocument(with: LoadedVoiceDocument(
+        projection: replacementVoice,
+        neutralVoice: replacementVoice.fourOperatorVoice,
+        systemChannel: 0,
+        sourceDevice: .fb01
+    ))
     #expect(!voice.isEdited)
 
     voice.updateVoice { try $0.settingName("EDIT") }

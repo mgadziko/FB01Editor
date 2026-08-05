@@ -158,3 +158,25 @@ public extension FB01VoiceData {
         )
     }
 }
+
+public extension FB01VoiceOperatorData {
+    var fourOperatorOperator: FourOperatorVoiceOperatorData {
+        FourOperatorVoiceOperatorData(
+            operatorNumber: FB01VoiceData.operatorNumber(forDataIndex: index),
+            isCarrier: carrier,
+            totalLevel: totalLevel,
+            oscillatorFrequencyControl: multiple,
+            detune: detune1,
+            keyboardLevelScalingDepth: keyboardLevelScalingDepth,
+            keyboardRateScalingDepth: keyboardRateScalingDepth,
+            keyVelocityLevelSensitivity: velocitySensitivityForTotalLevel,
+            velocityToAttack: velocitySensitivityForAttackRate,
+            amplitudeModulationResponseEnabled: false,
+            attack: attackRate,
+            decay1: decay1Rate,
+            decay2: decay2Rate,
+            sustain: sustainLevel,
+            release: releaseRate
+        )
+    }
+}

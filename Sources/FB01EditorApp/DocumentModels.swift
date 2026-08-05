@@ -448,7 +448,7 @@ final class DocumentModel: ObservableObject {
     var selectedDeviceVoiceFetchCommandTitle: String {
         switch selectedEditorDevice {
         case .dx100:
-            return "Fetch Current Voice from Device..."
+            return "Fetch Current Edit Voice from Device..."
         case .fb01, nil:
             return "Fetch Voice from Device..."
         }
@@ -457,7 +457,7 @@ final class DocumentModel: ObservableObject {
     var selectedDeviceVoiceFetchIntoDocumentTitle: String {
         switch selectedEditorDevice {
         case .dx100:
-            return "Fetch Current Voice from Device into Current Document..."
+            return "Fetch Current Edit Voice from Device into Current Document..."
         case .fb01, nil:
             return "Fetch Voice from Device into Current Document..."
         }
@@ -466,7 +466,7 @@ final class DocumentModel: ObservableObject {
     var selectedDeviceVoiceStoreCommandTitle: String {
         switch selectedEditorDevice {
         case .dx100:
-            return "Send Voice to Current Buffer..."
+            return "Send Voice to Current Edit Buffer..."
         case .fb01, nil:
             return "Store Voice to Device Slot..."
         }
@@ -503,8 +503,6 @@ final class DocumentModel: ObservableObject {
 
     private func selectedDeviceCommandDescriptor(for kind: SynthModuleCommandKind) -> SynthModuleCommandDescriptor? {
         switch selectedEditorDevice {
-        case .dx100 where [.storeVoiceBank, .copyVoiceToSlot].contains(kind):
-            return nil
         case .fb01:
             return FB01ModuleServices.shared.module.commandDescriptors.first { $0.kind == kind }
         case .dx100:
@@ -1023,7 +1021,16 @@ final class DocumentModel: ObservableObject {
         switch selectedEditorDevice {
         case .dx100:
             guard DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.isFetchableFromConnectedDevice == true else {
-                errorMessage = "DX100/27 \(selectedDeviceVoiceBankTitle(bank)) live fetch is not yet supported.\n\nInternal bank fetch is available. Bank A-D probing is still experimental while we determine the correct recall/dump sequence."
+                errorMessage = """
+                DX100/27 \(selectedDeviceVoiceBankTitle(bank)) device-bank fetch is not connected yet.
+
+                Forest can currently fetch:
+                • the current edit voice
+                • the Internal bank
+                • DX bank files from disk
+
+                Bank A-D and the preset banks still need verified hardware recall/dump behavior before Forest should treat them as normal fetchable device banks.
+                """
                 return []
             }
             if cachedDX100VoiceBanks[bank] == nil {
@@ -1345,9 +1352,11 @@ final class DocumentModel: ObservableObject {
         progressPanel.show()
 
         do {
-            guard let kind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank),
-                  kind.isFetchableFromConnectedDevice else {
+            guard let kind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank) else {
                 throw FB01MIDIError.timedOut("DX100/27 voice bank")
+            }
+            guard kind.isFetchableFromConnectedDevice else {
+                throw DX100VoiceServiceError.unsupportedSysEx
             }
 
             let voices: [DX100VoiceData]
@@ -1399,7 +1408,18 @@ final class DocumentModel: ObservableObject {
             errorMessage = nil
         } catch {
             statusMessage = nil
-            errorMessage = "DX100/27 \(selectedDeviceVoiceBankTitle(bank)) fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
+            if DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.isFetchableFromConnectedDevice == true {
+                errorMessage = "DX100/27 \(selectedDeviceVoiceBankTitle(bank)) fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
+            } else {
+                errorMessage = """
+                DX100/27 \(selectedDeviceVoiceBankTitle(bank)) device-bank fetch is not connected yet.
+
+                Forest can currently fetch:
+                • the current edit voice
+                • the Internal bank
+                • DX bank files from disk
+                """
+            }
         }
 
         progressPanel.dismiss()

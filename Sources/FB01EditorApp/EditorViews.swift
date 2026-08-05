@@ -166,17 +166,19 @@ struct VoiceSelectorCommands: View {
         }
         .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.showVoiceBank))
 
-        Menu(document.selectedDeviceCommandTitle(.storeVoiceBank, fallback: "Store Bank")) {
-            ForEach(document.selectedDeviceWritableVoiceBanks, id: \.self) { targetBank in
-                Button(document.selectedDeviceVoiceBankTitle(targetBank)) {
-                    if let sourceBank = activeVoiceBankSelector {
-                        document.storeVoiceBankFromSelector(sourceBank: sourceBank, targetBank: targetBank)
+        if document.supportsSelectedDeviceCommand(.storeVoiceBank) {
+            Menu(document.selectedDeviceCommandTitle(.storeVoiceBank, fallback: "Store Bank")) {
+                ForEach(document.selectedDeviceWritableVoiceBanks, id: \.self) { targetBank in
+                    Button(document.selectedDeviceVoiceBankTitle(targetBank)) {
+                        if let sourceBank = activeVoiceBankSelector {
+                            document.storeVoiceBankFromSelector(sourceBank: sourceBank, targetBank: targetBank)
+                        }
                     }
+                    .disabled(document.isBusy || activeVoiceBankSelector == nil)
                 }
-                .disabled(document.isBusy || activeVoiceBankSelector == nil)
             }
+            .disabled(document.isBusy || activeVoiceBankSelector == nil)
         }
-        .disabled(document.isBusy || activeVoiceBankSelector == nil || !document.supportsSelectedDeviceCommand(.storeVoiceBank))
     }
 }
 
@@ -241,7 +243,7 @@ struct VoiceBankSelectorWindow: View {
         errorMessage = nil
         items = await document.ensureVoiceBankSelectorItems(bank: bank)
         if items.isEmpty {
-            errorMessage = document.errorMessage ?? "\(bankTitle) could not be fetched."
+            errorMessage = document.errorMessage ?? "\(bankTitle) is not available right now."
         }
         isLoading = false
     }
@@ -1009,7 +1011,6 @@ final class PianoKeyboardNSView: NSView {
         stopActiveNote()
         activeNote = note
         needsDisplay = true
-        displayIfNeeded()
         noteOn(note)
     }
 
@@ -1020,7 +1021,6 @@ final class PianoKeyboardNSView: NSView {
 
         self.activeNote = nil
         needsDisplay = true
-        displayIfNeeded()
         noteOff(activeNote)
     }
 
@@ -1997,7 +1997,7 @@ struct VoiceDocumentLiveKeyboardView: View {
         VStack(alignment: .leading, spacing: 8) {
             LiveKeyboardMIDIControlsView(
                 document: device,
-                title: document.voice.name.isEmpty ? "Live Keyboard" : "Live Keyboard - \(document.voice.name)",
+                title: document.neutralVoice.name.isEmpty ? "Live Keyboard" : "Live Keyboard - \(document.neutralVoice.name)",
                 subtitle: "Document voice"
             )
 
@@ -2046,7 +2046,7 @@ struct VoiceDocumentLiveKeyboardView: View {
 
     private func registerExternalKeyboardHandler() {
         device.setLiveKeyboardContext(
-            title: document.voice.name.isEmpty ? "Live Keyboard" : "Live Keyboard - \(document.voice.name)",
+            title: document.neutralVoice.name.isEmpty ? "Live Keyboard" : "Live Keyboard - \(document.neutralVoice.name)",
             subtitle: "Document voice",
             noteOn: { [weak document, weak device] note in
                 guard let document, let device else { return }
@@ -2162,58 +2162,58 @@ struct VoiceDocumentWindow: View {
                     KeyValueRow("Source Model", document.neutralVoice.sourceModelName),
                     KeyValueRow("Editing Target", document.sourceDevice.displayName),
                     KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
-                    KeyValueRow("Feedback", "\(voice.feedbackLevel)"),
+                    KeyValueRow("Feedback", "\(document.neutralVoice.feedback)"),
                 ])
 
                 if device.voiceEditorParadigm == .consoleSections {
                     VoiceEditorControls(
                         name: Binding(
-                            get: { document.sourceDevice == .dx100 ? document.neutralVoice.name : voice.name },
-                            set: { setName($0) }
+                            get: { document.neutralVoice.name },
+                            set: { document.setNeutralName($0) }
                         ),
                         feedback: Binding(
-                            get: { voice.feedbackLevel },
-                            set: { newValue in document.updateVoice { voice in try voice.settingFeedbackLevel(newValue) } }
+                            get: { document.neutralVoice.feedback },
+                            set: { document.setNeutralFeedback($0) }
                         ),
                         userCode: Binding(
                             get: { voice.userCode },
                             set: { newValue in document.updateVoice { voice in try voice.settingUserCode(newValue) } }
                         ),
                         lfoSpeed: Binding(
-                            get: { voice.lfoSpeed },
-                            set: { newValue in document.updateVoice { voice in try voice.settingLFOSpeed(newValue) } }
+                            get: { document.neutralVoice.lfoSpeed },
+                            set: { document.setNeutralLFOSpeed($0) }
                         ),
                         lfoWaveform: Binding(
-                            get: { voice.lfoWaveform },
-                            set: { newValue in document.updateVoice { voice in try voice.settingLFOWaveform(newValue) } }
+                            get: { document.neutralVoice.lfoWaveform },
+                            set: { document.setNeutralLFOWaveform($0) }
                         ),
                         loadLFODataEnabled: Binding(
                             get: { voice.loadLFODataEnabled },
                             set: { newValue in document.updateVoice { voice in try voice.settingLoadLFODataEnabled(newValue) } }
                         ),
                         lfoSyncEnabled: Binding(
-                            get: { voice.lfoSyncEnabled },
-                            set: { newValue in document.updateVoice { voice in try voice.settingLFOSyncEnabled(newValue) } }
+                            get: { document.neutralVoice.lfoSyncEnabled },
+                            set: { document.setNeutralLFOSyncEnabled($0) }
                         ),
                         amplitudeModulationDepth: Binding(
-                            get: { voice.amplitudeModulationDepth },
-                            set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationDepth(newValue) } }
+                            get: { document.neutralVoice.amplitudeModulationDepth },
+                            set: { document.setNeutralAmplitudeModulationDepth($0) }
                         ),
                         pitchModulationDepth: Binding(
-                            get: { voice.pitchModulationDepth },
-                            set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationDepth(newValue) } }
+                            get: { document.neutralVoice.pitchModulationDepth },
+                            set: { document.setNeutralPitchModulationDepth($0) }
                         ),
                         amplitudeModulationSensitivity: Binding(
-                            get: { voice.amplitudeModulationSensitivity },
-                            set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationSensitivity(newValue) } }
+                            get: { document.neutralVoice.amplitudeModulationSensitivity },
+                            set: { document.setNeutralAmplitudeModulationSensitivity($0) }
                         ),
                         pitchModulationSensitivity: Binding(
-                            get: { voice.pitchModulationSensitivity },
-                            set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationSensitivity(newValue) } }
+                            get: { document.neutralVoice.pitchModulationSensitivity },
+                            set: { document.setNeutralPitchModulationSensitivity($0) }
                         ),
                         transpose: Binding(
-                            get: { voice.transpose },
-                            set: { newValue in document.updateVoice { voice in try voice.settingTranspose(newValue) } }
+                            get: { document.neutralVoice.transpose },
+                            set: { document.setNeutralTranspose($0) }
                         ),
                         leftOutputEnabled: Binding(
                             get: { voice.leftOutputEnabled },
@@ -2226,12 +2226,14 @@ struct VoiceDocumentWindow: View {
                     )
 
                     AlgorithmSelectorView(selection: Binding(
-                        get: { voice.algorithm + 1 },
-                        set: { newValue in document.updateVoice { voice in try voice.settingAlgorithmAndOperatorRoles(newValue - 1) } }
+                        get: { document.neutralVoice.algorithm + 1 },
+                        set: { document.setNeutralAlgorithm($0) }
                     ))
 
                     OperatorEditor(
                         operators: voice.operators,
+                        neutralOperators: document.neutralVoice.operators,
+                        savedNeutralOperators: document.savedNeutralVoice.operators,
                         operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
                             Binding(
                                 get: { voice.operatorEnabled[index] },
@@ -2244,6 +2246,9 @@ struct VoiceDocumentWindow: View {
                             get: { document.selectedOperatorIndex },
                             set: { document.selectedOperatorIndex = $0 }
                         ),
+                        updateNeutralOperator: { dataIndex, edit in
+                            document.updateNeutralOperator(forDataIndex: dataIndex, edit: edit)
+                        },
                         updateOperator: { operatorData in
                             document.updateVoice { try $0.replacingOperator(operatorData) }
                         }
@@ -2252,56 +2257,56 @@ struct VoiceDocumentWindow: View {
                     FMRoutingPatchBayView(
                         editingDevice: document.sourceDevice,
                         name: Binding(
-                            get: { document.sourceDevice == .dx100 ? document.neutralVoice.name : voice.name },
-                            set: { setName($0) }
+                            get: { document.neutralVoice.name },
+                            set: { document.setNeutralName($0) }
                         ),
                         algorithm: Binding(
-                            get: { voice.algorithm + 1 },
-                            set: { newValue in document.updateVoice { voice in try voice.settingAlgorithmAndOperatorRoles(newValue - 1) } }
+                            get: { document.neutralVoice.algorithm + 1 },
+                            set: { document.setNeutralAlgorithm($0) }
                         ),
                         feedback: Binding(
-                            get: { voice.feedbackLevel },
-                            set: { newValue in document.updateVoice { voice in try voice.settingFeedbackLevel(newValue) } }
+                            get: { document.neutralVoice.feedback },
+                            set: { document.setNeutralFeedback($0) }
                         ),
                         userCode: Binding(
                             get: { voice.userCode },
                             set: { newValue in document.updateVoice { voice in try voice.settingUserCode(newValue) } }
                         ),
                         lfoSpeed: Binding(
-                            get: { voice.lfoSpeed },
-                            set: { newValue in document.updateVoice { voice in try voice.settingLFOSpeed(newValue) } }
+                            get: { document.neutralVoice.lfoSpeed },
+                            set: { document.setNeutralLFOSpeed($0) }
                         ),
                         lfoWaveform: Binding(
-                            get: { voice.lfoWaveform },
-                            set: { newValue in document.updateVoice { voice in try voice.settingLFOWaveform(newValue) } }
+                            get: { document.neutralVoice.lfoWaveform },
+                            set: { document.setNeutralLFOWaveform($0) }
                         ),
                         loadLFODataEnabled: Binding(
                             get: { voice.loadLFODataEnabled },
                             set: { newValue in document.updateVoice { voice in try voice.settingLoadLFODataEnabled(newValue) } }
                         ),
                         lfoSyncEnabled: Binding(
-                            get: { voice.lfoSyncEnabled },
-                            set: { newValue in document.updateVoice { voice in try voice.settingLFOSyncEnabled(newValue) } }
+                            get: { document.neutralVoice.lfoSyncEnabled },
+                            set: { document.setNeutralLFOSyncEnabled($0) }
                         ),
                         amplitudeModulationDepth: Binding(
-                            get: { voice.amplitudeModulationDepth },
-                            set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationDepth(newValue) } }
+                            get: { document.neutralVoice.amplitudeModulationDepth },
+                            set: { document.setNeutralAmplitudeModulationDepth($0) }
                         ),
                         pitchModulationDepth: Binding(
-                            get: { voice.pitchModulationDepth },
-                            set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationDepth(newValue) } }
+                            get: { document.neutralVoice.pitchModulationDepth },
+                            set: { document.setNeutralPitchModulationDepth($0) }
                         ),
                         amplitudeModulationSensitivity: Binding(
-                            get: { voice.amplitudeModulationSensitivity },
-                            set: { newValue in document.updateVoice { voice in try voice.settingAmplitudeModulationSensitivity(newValue) } }
+                            get: { document.neutralVoice.amplitudeModulationSensitivity },
+                            set: { document.setNeutralAmplitudeModulationSensitivity($0) }
                         ),
                         pitchModulationSensitivity: Binding(
-                            get: { voice.pitchModulationSensitivity },
-                            set: { newValue in document.updateVoice { voice in try voice.settingPitchModulationSensitivity(newValue) } }
+                            get: { document.neutralVoice.pitchModulationSensitivity },
+                            set: { document.setNeutralPitchModulationSensitivity($0) }
                         ),
                         transpose: Binding(
-                            get: { voice.transpose },
-                            set: { newValue in document.updateVoice { voice in try voice.settingTranspose(newValue) } }
+                            get: { document.neutralVoice.transpose },
+                            set: { document.setNeutralTranspose($0) }
                         ),
                         leftOutputEnabled: Binding(
                             get: { voice.leftOutputEnabled },
@@ -2322,6 +2327,7 @@ struct VoiceDocumentWindow: View {
                             )
                         },
                         operators: voice.operators,
+                        neutralOperators: document.neutralVoice.operators,
                         operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
                             Binding(
                                 get: { voice.operatorEnabled[index] },
@@ -2330,11 +2336,15 @@ struct VoiceDocumentWindow: View {
                                 }
                             )
                         },
+                        savedNeutralVoice: document.savedNeutralVoice,
                         savedVoice: document.savedVoice,
                         selectedOperatorIndex: Binding(
                             get: { document.selectedOperatorIndex },
                             set: { document.selectedOperatorIndex = $0 }
                         ),
+                        updateNeutralOperator: { dataIndex, edit in
+                            document.updateNeutralOperator(forDataIndex: dataIndex, edit: edit)
+                        },
                         updateOperator: { operatorData in
                             document.updateVoice { try $0.replacingOperator(operatorData) }
                         }
@@ -3892,6 +3902,8 @@ struct VoiceDetailView: View {
 
                 OperatorEditor(
                     operators: editableVoice.operators,
+                    neutralOperators: editableVoice.fourOperatorVoice.operators,
+                    savedNeutralOperators: summary.voice.fourOperatorVoice.operators,
                     operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
                         Binding(
                             get: { editableVoice.operatorEnabled[index] },
@@ -3899,6 +3911,7 @@ struct VoiceDetailView: View {
                         )
                     },
                     selectedOperatorIndex: $selectedOperatorIndex,
+                    updateNeutralOperator: nil,
                     updateOperator: updateOperator
                 )
             } else {
@@ -3972,14 +3985,17 @@ struct VoiceDetailView: View {
                         )
                     },
                     operators: editableVoice.operators,
+                    neutralOperators: editableVoice.fourOperatorVoice.operators,
                     operatorEnabled: (0..<FB01VoiceData.operatorCount).map { index in
                         Binding(
                             get: { editableVoice.operatorEnabled[index] },
                             set: { setOperatorEnabled(index: index, enabled: $0) }
                         )
                     },
+                    savedNeutralVoice: summary.voice.fourOperatorVoice,
                     savedVoice: summary.voice,
                     selectedOperatorIndex: $selectedOperatorIndex,
+                    updateNeutralOperator: nil,
                     updateOperator: updateOperator
                 )
             }
@@ -4778,12 +4794,27 @@ struct AlgorithmDiagramView: View {
 
 struct OperatorEditor: View {
     var operators: [FB01VoiceOperatorData]
+    var neutralOperators: [FourOperatorVoiceOperatorData] = []
+    var savedNeutralOperators: [FourOperatorVoiceOperatorData] = []
     var operatorEnabled: [Binding<Bool>]
     @Binding var selectedOperatorIndex: Int
+    var updateNeutralOperator: ((Int, (inout FourOperatorVoiceOperatorData) -> Void) -> Void)? = nil
     var updateOperator: (FB01VoiceOperatorData) -> Void
 
     private var selectedOperator: FB01VoiceOperatorData? {
         operators.first { $0.index == selectedOperatorIndex } ?? operators.first
+    }
+
+    private var selectedNeutralOperator: FourOperatorVoiceOperatorData? {
+        guard let selectedOperator else { return nil }
+        let operatorNumber = FB01VoiceData.operatorNumber(forDataIndex: selectedOperator.index)
+        return neutralOperators.first { $0.operatorNumber == operatorNumber } ?? selectedOperator.fourOperatorOperator
+    }
+
+    private var selectedSavedNeutralOperator: FourOperatorVoiceOperatorData? {
+        guard let selectedOperator else { return nil }
+        let operatorNumber = FB01VoiceData.operatorNumber(forDataIndex: selectedOperator.index)
+        return savedNeutralOperators.first { $0.operatorNumber == operatorNumber }
     }
 
     var body: some View {
@@ -4807,7 +4838,10 @@ struct OperatorEditor: View {
                     if let selectedOperator {
                         OperatorInspector(
                             operatorData: selectedOperator,
+                            neutralOperatorData: selectedNeutralOperator ?? selectedOperator.fourOperatorOperator,
+                            savedNeutralOperatorData: selectedSavedNeutralOperator,
                             operatorEnabled: operatorEnabledBinding(for: selectedOperator.index),
+                            updateNeutralOperator: updateNeutralOperator,
                             updateOperator: updateOperator
                         )
                     }
@@ -4896,7 +4930,10 @@ struct OperatorSelectorButton: View {
 
 struct OperatorInspector: View {
     var operatorData: FB01VoiceOperatorData
+    var neutralOperatorData: FourOperatorVoiceOperatorData
+    var savedNeutralOperatorData: FourOperatorVoiceOperatorData?
     @Binding var operatorEnabled: Bool
+    var updateNeutralOperator: ((Int, (inout FourOperatorVoiceOperatorData) -> Void) -> Void)? = nil
     var updateOperator: (FB01VoiceOperatorData) -> Void
 
     var body: some View {
@@ -4907,8 +4944,22 @@ struct OperatorInspector: View {
             OperatorControlGroup(title: "Level") {
                 operatorRolePicker
                 HStack(alignment: .top, spacing: 12) {
-                    operatorLevelControl("Total Level", value: operatorData.totalLevel, range: 0...127) { try operatorData.settingTotalLevel($0) }
-                    operatorKnob("Key Velocity to Level", value: operatorData.velocitySensitivityForTotalLevel, range: 0...7) { try operatorData.settingVelocitySensitivityForTotalLevel($0) }
+                    sharedOperatorKnob(
+                        "Total Level",
+                        neutralValue: { $0.totalLevel },
+                        projectedValue: { $0.totalLevel },
+                        range: 0...127,
+                        projectedUpdate: { try $0.settingTotalLevel($1) },
+                        neutralUpdate: { $0.totalLevel = $1 }
+                    )
+                    sharedOperatorKnob(
+                        "Key Velocity to Level",
+                        neutralValue: { $0.keyVelocityLevelSensitivity },
+                        projectedValue: { $0.velocitySensitivityForTotalLevel },
+                        range: 0...7,
+                        projectedUpdate: { try $0.settingVelocitySensitivityForTotalLevel($1) },
+                        neutralUpdate: { $0.keyVelocityLevelSensitivity = $1 }
+                    )
                     operatorKnob("Level Adjust", value: operatorData.totalLevelAdjust, range: 0...15) { try operatorData.settingTotalLevelAdjust($0) }
                 }
             }
@@ -4918,8 +4969,22 @@ struct OperatorInspector: View {
 
                 OperatorControlGroup(title: "Tuning") {
                     HStack(alignment: .top, spacing: 12) {
-                        operatorKnob("Frequency Ratio", value: operatorData.multiple, range: 0...15) { try operatorData.settingMultiple($0) }
-                        operatorKnob("Detune 1", value: operatorData.detune1, range: 0...7) { try operatorData.settingDetune1($0) }
+                        sharedOperatorKnob(
+                            "Frequency Ratio",
+                            neutralValue: { $0.oscillatorFrequencyControl },
+                            projectedValue: { $0.multiple },
+                            range: 0...15,
+                            projectedUpdate: { try $0.settingMultiple($1) },
+                            neutralUpdate: { $0.oscillatorFrequencyControl = $1 }
+                        )
+                        sharedOperatorKnob(
+                            "Detune 1",
+                            neutralValue: { $0.detune },
+                            projectedValue: { $0.detune1 },
+                            range: 0...7,
+                            projectedUpdate: { try $0.settingDetune1($1) },
+                            neutralUpdate: { $0.detune = $1 }
+                        )
                         operatorKnob("Detune 2", value: operatorData.detune2, range: 0...3) { try operatorData.settingDetune2($0) }
                     }
                 }
@@ -4928,25 +4993,27 @@ struct OperatorInspector: View {
             OperatorControlGroup(title: "Envelope") {
                 OperatorEnvelopeView(
                     operatorData: operatorData,
+                    neutralOperatorData: neutralOperatorData,
+                    updateNeutralOperator: updateNeutralOperator,
                     updateOperator: updateOperator
                 )
                     .frame(height: 96)
                 LazyVGrid(columns: [
                     GridItem(.adaptive(minimum: 82), spacing: 12),
                 ], alignment: .leading, spacing: 10) {
-                    operatorKnob("Attack Rate", value: operatorData.attackRate, range: 0...31) { try operatorData.settingAttackRate($0) }
-                    operatorKnob("Velocity to Attack", value: operatorData.velocitySensitivityForAttackRate, range: 0...7) { try operatorData.settingVelocitySensitivityForAttackRate($0) }
-                    operatorKnob("Decay 1 Rate", value: operatorData.decay1Rate, range: 0...15) { try operatorData.settingDecay1Rate($0) }
-                    operatorKnob("Decay 2 Rate", value: operatorData.decay2Rate, range: 0...31) { try operatorData.settingDecay2Rate($0) }
-                    operatorKnob("Sustain Level", value: operatorData.sustainLevel, range: 0...15) { try operatorData.settingSustainLevel($0) }
-                    operatorKnob("Release Rate", value: operatorData.releaseRate, range: 0...15) { try operatorData.settingReleaseRate($0) }
+                    sharedOperatorKnob("Attack Rate", neutralValue: { $0.attack }, projectedValue: { $0.attackRate }, range: 0...31, projectedUpdate: { try $0.settingAttackRate($1) }, neutralUpdate: { $0.attack = $1 })
+                    sharedOperatorKnob("Velocity to Attack", neutralValue: { $0.velocityToAttack }, projectedValue: { $0.velocitySensitivityForAttackRate }, range: 0...7, projectedUpdate: { try $0.settingVelocitySensitivityForAttackRate($1) }, neutralUpdate: { $0.velocityToAttack = $1 })
+                    sharedOperatorKnob("Decay 1 Rate", neutralValue: { $0.decay1 }, projectedValue: { $0.decay1Rate }, range: 0...15, projectedUpdate: { try $0.settingDecay1Rate($1) }, neutralUpdate: { $0.decay1 = $1 })
+                    sharedOperatorKnob("Decay 2 Rate", neutralValue: { $0.decay2 }, projectedValue: { $0.decay2Rate }, range: 0...31, projectedUpdate: { try $0.settingDecay2Rate($1) }, neutralUpdate: { $0.decay2 = $1 })
+                    sharedOperatorKnob("Sustain Level", neutralValue: { $0.sustain }, projectedValue: { $0.sustainLevel }, range: 0...15, projectedUpdate: { try $0.settingSustainLevel($1) }, neutralUpdate: { $0.sustain = $1 })
+                    sharedOperatorKnob("Release Rate", neutralValue: { $0.release }, projectedValue: { $0.releaseRate }, range: 0...15, projectedUpdate: { try $0.settingReleaseRate($1) }, neutralUpdate: { $0.release = $1 })
                 }
             }
 
             OperatorControlGroup(title: "Keyboard Scaling") {
                 HStack(alignment: .top, spacing: 12) {
-                    operatorKnob("Keyboard Level\nDepth", value: operatorData.keyboardLevelScalingDepth, range: 0...15) { try operatorData.settingKeyboardLevelScalingDepth($0) }
-                    operatorKnob("Keyboard Rate\nScaling Depth", value: operatorData.keyboardRateScalingDepth, range: 0...7) { try operatorData.settingKeyboardRateScalingDepth($0) }
+                    sharedOperatorKnob("Keyboard Level\nDepth", neutralValue: { $0.keyboardLevelScalingDepth }, projectedValue: { $0.keyboardLevelScalingDepth }, range: 0...15, projectedUpdate: { try $0.settingKeyboardLevelScalingDepth($1) }, neutralUpdate: { $0.keyboardLevelScalingDepth = $1 })
+                    sharedOperatorKnob("Keyboard Rate\nScaling Depth", neutralValue: { $0.keyboardRateScalingDepth }, projectedValue: { $0.keyboardRateScalingDepth }, range: 0...7, projectedUpdate: { try $0.settingKeyboardRateScalingDepth($1) }, neutralUpdate: { $0.keyboardRateScalingDepth = $1 })
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text("Keyboard Level\nScaling Type")
@@ -4967,21 +5034,52 @@ struct OperatorInspector: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Role")
                 .foregroundStyle(.secondary)
-            Text(operatorData.carrier ? "Carrier" : "Modulator")
+            Text(neutralOperatorData.isCarrier ? "Carrier" : "Modulator")
                 .font(.body.weight(.semibold))
-                .foregroundStyle(operatorData.carrier ? Color.accentColor : .primary)
+                .foregroundStyle(neutralOperatorData.isCarrier ? Color.accentColor : .primary)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(operatorData.carrier ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.10))
+                        .fill(neutralOperatorData.isCarrier ? Color.accentColor.opacity(0.14) : Color.secondary.opacity(0.10))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(operatorData.carrier ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.20), lineWidth: 1)
+                        .stroke(neutralOperatorData.isCarrier ? Color.accentColor.opacity(0.55) : Color.secondary.opacity(0.20), lineWidth: 1)
                 )
         }
+    }
+
+    private func sharedOperatorKnob(
+        _ label: String,
+        neutralValue: @escaping (FourOperatorVoiceOperatorData) -> Int,
+        projectedValue: @escaping (FB01VoiceOperatorData) -> Int,
+        range: ClosedRange<Int>,
+        projectedUpdate: @escaping (FB01VoiceOperatorData, Int) throws -> FB01VoiceOperatorData,
+        neutralUpdate: @escaping (inout FourOperatorVoiceOperatorData, Int) -> Void
+    ) -> some View {
+        ParameterKnob(
+            label: label,
+            value: Binding(
+                get: {
+                    if updateNeutralOperator != nil {
+                        return neutralValue(neutralOperatorData)
+                    }
+                    return projectedValue(operatorData)
+                },
+                set: { newValue in
+                    if let updateNeutralOperator {
+                        updateNeutralOperator(operatorData.index) { neutralOperator in
+                            neutralUpdate(&neutralOperator, newValue)
+                        }
+                    } else if let updated = try? projectedUpdate(operatorData, newValue) {
+                        updateOperator(updated)
+                    }
+                }
+            ),
+            range: range
+        )
     }
 
     private var keyboardLevelScalingTypeBinding: Binding<Int> {
@@ -5044,12 +5142,22 @@ struct OperatorInspector: View {
 
 struct OperatorEnvelopeView: View {
     var operatorData: FB01VoiceOperatorData
+    var neutralOperatorData: FourOperatorVoiceOperatorData? = nil
+    var updateNeutralOperator: ((Int, (inout FourOperatorVoiceOperatorData) -> Void) -> Void)? = nil
     var updateOperator: (FB01VoiceOperatorData) -> Void
     @State private var activeHandle: EnvelopeHandle?
     @State private var draftOperatorData: FB01VoiceOperatorData?
+    @State private var draftNeutralOperatorData: FourOperatorVoiceOperatorData?
 
     private var displayedOperatorData: FB01VoiceOperatorData {
-        draftOperatorData ?? operatorData
+        if updateNeutralOperator != nil {
+            return projectedOperatorData(from: displayedNeutralOperatorData)
+        }
+        return draftOperatorData ?? operatorData
+    }
+
+    private var displayedNeutralOperatorData: FourOperatorVoiceOperatorData {
+        draftNeutralOperatorData ?? neutralOperatorData ?? operatorData.fourOperatorOperator
     }
 
     var body: some View {
@@ -5101,10 +5209,15 @@ struct OperatorEnvelopeView: View {
                         applyDrag(location: value.location, handle: handle, geometry: geometry)
                     }
                     .onEnded { _ in
-                        if let draftOperatorData {
+                        if let draftNeutralOperatorData, let updateNeutralOperator {
+                            updateNeutralOperator(operatorData.index) { neutralOperator in
+                                neutralOperator = draftNeutralOperatorData
+                            }
+                        } else if let draftOperatorData {
                             updateOperator(draftOperatorData)
                         }
                         draftOperatorData = nil
+                        draftNeutralOperatorData = nil
                         activeHandle = nil
                     }
             )
@@ -5151,29 +5264,49 @@ struct OperatorEnvelopeView: View {
         let clampedY = min(max(location.y, rect.minY), rect.maxY)
         let relativeY = (clampedY - rect.minY) / max(rect.height, 1)
 
-        do {
-            let updated: FB01VoiceOperatorData
-            let source = displayedOperatorData
-            switch handle {
-            case .attack:
-                let segment = (clampedX - rect.minX) / max(rect.width, 1)
-                updated = try source.settingAttackRate(rate(fromSegmentFraction: segment, maxRate: 31))
-            case .decay1:
-                let segment = (clampedX - geometry.attack.x) / max(rect.width, 1)
-                updated = try source.settingDecay1Rate(rate(fromSegmentFraction: segment, maxRate: 15))
-            case .sustain:
-                let segment = (clampedX - geometry.decay1.x) / max(rect.width, 1)
-                updated = try source
-                    .settingDecay2Rate(rate(fromSegmentFraction: segment, maxRate: 31))
-                    .settingSustainLevel(level(from: relativeY))
-            case .release:
-                let segment = (rect.maxX - clampedX) / max(rect.width, 1)
-                updated = try source.settingReleaseRate(rate(fromSegmentFraction: segment, maxRate: 15))
-            }
-            draftOperatorData = updated
-        } catch {
-            return
+        let sourceNeutral = displayedNeutralOperatorData
+        switch handle {
+        case .attack:
+            let segment = (clampedX - rect.minX) / max(rect.width, 1)
+            var updated = sourceNeutral
+            updated.attack = rate(fromSegmentFraction: segment, maxRate: 31)
+            assignDraft(updated)
+        case .decay1:
+            let segment = (clampedX - geometry.attack.x) / max(rect.width, 1)
+            var updated = sourceNeutral
+            updated.decay1 = rate(fromSegmentFraction: segment, maxRate: 15)
+            assignDraft(updated)
+        case .sustain:
+            let segment = (clampedX - geometry.decay1.x) / max(rect.width, 1)
+            var updated = sourceNeutral
+            updated.decay2 = rate(fromSegmentFraction: segment, maxRate: 31)
+            updated.sustain = level(from: relativeY)
+            assignDraft(updated)
+        case .release:
+            let segment = (rect.maxX - clampedX) / max(rect.width, 1)
+            var updated = sourceNeutral
+            updated.release = rate(fromSegmentFraction: segment, maxRate: 15)
+            assignDraft(updated)
         }
+    }
+
+    private func assignDraft(_ neutral: FourOperatorVoiceOperatorData) {
+        if updateNeutralOperator != nil {
+            draftNeutralOperatorData = neutral
+            draftOperatorData = nil
+        } else {
+            draftOperatorData = projectedOperatorData(from: neutral)
+            draftNeutralOperatorData = nil
+        }
+    }
+
+    private func projectedOperatorData(from neutral: FourOperatorVoiceOperatorData) -> FB01VoiceOperatorData {
+        return (try? operatorData
+            .settingAttackRate(neutral.attack)
+            .settingDecay1Rate(neutral.decay1)
+            .settingDecay2Rate(neutral.decay2)
+            .settingSustainLevel(neutral.sustain)
+            .settingReleaseRate(neutral.release)) ?? operatorData
     }
 
     private func rate(fromSegmentFraction value: CGFloat, maxRate: Int) -> Int {
