@@ -503,7 +503,7 @@ final class DocumentModel: ObservableObject {
 
     private func selectedDeviceCommandDescriptor(for kind: SynthModuleCommandKind) -> SynthModuleCommandDescriptor? {
         switch selectedEditorDevice {
-        case .dx100 where [.showVoiceBank, .storeVoiceBank, .copyVoiceToSlot].contains(kind):
+        case .dx100 where [.storeVoiceBank, .copyVoiceToSlot].contains(kind):
             return nil
         case .fb01:
             return FB01ModuleServices.shared.module.commandDescriptors.first { $0.kind == kind }
@@ -5172,8 +5172,10 @@ extension UTType {
         switch device {
         case .dx100:
             dx100ReadableVoiceFileTypes
-        case .fb01, nil:
+        case .fb01:
             fb01ReadableVoiceFileTypes
+        case nil:
+            Array(Set(fb01ReadableVoiceFileTypes + dx100ReadableVoiceFileTypes))
         }
     }
 

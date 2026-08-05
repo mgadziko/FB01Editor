@@ -169,7 +169,7 @@ validation:
 ```sh
 swift run dx100-dump list
 swift run dx100-dump current-voice --source 0 --destination 0 --output current.dxv
-swift run dx100-dump voice-bank --source 0 --destination 0 --output current-bank.dxx
+swift run dx100-dump voice-bank --source 0 --destination 0 --output current-bank.dxvb
 ```
 
 ## Build And Run

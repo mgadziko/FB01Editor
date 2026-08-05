@@ -112,7 +112,7 @@ struct EditorDocumentCommands: View {
         Divider()
 
         Button("Load Voice from File...") {
-            if let id = workspace.loadVoiceDocument() {
+            if let id = workspace.loadVoiceDocument(preferredDevice: document.selectedEditorDevice) {
                 if let url = workspace.voiceDocument(id: id)?.fileURL {
                     document.rememberRecentLoadedVoiceFile(url)
                 }
@@ -120,6 +120,15 @@ struct EditorDocumentCommands: View {
             }
         }
         .keyboardShortcut("o", modifiers: [.command, .option])
+
+        Button("Load Voice Bank from File...") {
+            if let id = workspace.loadVoiceDocumentFromBankFile(preferredDevice: document.selectedEditorDevice) {
+                if let url = workspace.voiceDocument(id: id)?.fileURL {
+                    document.rememberRecentLoadedVoiceFile(url)
+                }
+                openWindow(id: "voice-document", value: id)
+            }
+        }
 
         Menu("Load Recent Voice") {
             if document.recentLoadedVoiceFiles.isEmpty {
@@ -363,8 +372,16 @@ final class EditorDocumentWorkspace: ObservableObject {
         return document.id
     }
 
-    func loadVoiceDocument() -> UUID? {
-        guard let loaded = VoiceDocumentModel.loadFromDisk() else {
+    func loadVoiceDocument(preferredDevice: EditorDeviceSelection? = nil) -> UUID? {
+        guard let loaded = VoiceDocumentModel.loadFromDisk(preferredDevice: preferredDevice) else {
+            return nil
+        }
+        insertVoiceDocument(loaded)
+        return loaded.id
+    }
+
+    func loadVoiceDocumentFromBankFile(preferredDevice: EditorDeviceSelection? = nil) -> UUID? {
+        guard let loaded = VoiceDocumentModel.loadFromBankFile(preferredDevice: preferredDevice) else {
             return nil
         }
         insertVoiceDocument(loaded)

@@ -4,6 +4,18 @@ import FB01Editor
 import Foundation
 import UniformTypeIdentifiers
 
+struct LoadedVoiceDocument: Sendable {
+    var projection: FB01VoiceData
+    var neutralVoice: FourOperatorVoiceData
+    var systemChannel: Int
+    var sourceDevice: EditorDeviceSelection
+}
+
+enum VoiceDocumentLoadContext {
+    case singleOrGeneric
+    case bankFile
+}
+
 @MainActor
 final class VoiceDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
@@ -35,6 +47,15 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         self.savedVoice = voice
         self.systemChannel = systemChannel
         self.fileURL = fileURL
+    }
+
+    convenience init(loadedDocument: LoadedVoiceDocument, fileURL: URL? = nil) {
+        self.init(voice: loadedDocument.projection, systemChannel: loadedDocument.systemChannel, fileURL: fileURL)
+        sourceDevice = loadedDocument.sourceDevice
+        neutralVoice = loadedDocument.neutralVoice
+        savedNeutralVoice = loadedDocument.neutralVoice
+        voice = loadedDocument.projection
+        savedVoice = loadedDocument.projection
     }
 
     var displayName: String {
@@ -147,9 +168,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         ))
     }
 
-    static func loadFromDisk() -> VoiceDocumentModel? {
+    static func loadFromDisk(preferredDevice: EditorDeviceSelection? = nil) -> VoiceDocumentModel? {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = UTType.readableVoiceFileTypes(for: nil)
+        panel.allowedContentTypes = UTType.readableVoiceFileTypes(for: preferredDevice)
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
@@ -161,9 +182,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         do {
-            let (voice, systemChannel) = try readVoice(from: url)
+            let loaded = try readVoiceDocument(from: url, context: .singleOrGeneric)
             rememberEditorLoadDirectory(for: url)
-            return VoiceDocumentModel(voice: voice, systemChannel: systemChannel, fileURL: url)
+            return VoiceDocumentModel(loadedDocument: loaded, fileURL: url)
         } catch {
             showEditorError(title: "Load Voice Failed", message: "\(error)")
             return nil
@@ -172,11 +193,34 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     static func loadFromDisk(url: URL) -> VoiceDocumentModel? {
         do {
-            let (voice, systemChannel) = try readVoice(from: url)
+            let loaded = try readVoiceDocument(from: url, context: .singleOrGeneric)
             rememberEditorLoadDirectory(for: url)
-            return VoiceDocumentModel(voice: voice, systemChannel: systemChannel, fileURL: url)
+            return VoiceDocumentModel(loadedDocument: loaded, fileURL: url)
         } catch {
             showEditorError(title: "Load Voice Failed", message: "\(error)")
+            return nil
+        }
+    }
+
+    static func loadFromBankFile(preferredDevice: EditorDeviceSelection? = nil) -> VoiceDocumentModel? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = UTType.voiceBankFileTypes(for: preferredDevice)
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = preferredEditorLoadDirectoryURL()
+        panel.message = "Load a voice bank file and choose one voice to open in a new voice document window."
+        panel.prompt = "Load Voice Bank from File"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return nil
+        }
+
+        do {
+            let loaded = try readVoiceDocument(from: url, context: .bankFile)
+            rememberEditorLoadDirectory(for: url)
+            return VoiceDocumentModel(loadedDocument: loaded, fileURL: url)
+        } catch {
+            showEditorError(title: "Load Voice Bank Failed", message: "\(error)")
             return nil
         }
     }
@@ -196,15 +240,16 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         do {
-            let (importedVoice, importedSystemChannel) = try Self.readVoice(from: url)
+            let imported = try Self.readVoiceDocument(from: url, context: .singleOrGeneric)
             applyDocumentVoices(
-                workingNeutral: importedVoice.fourOperatorVoice,
-                projection: importedVoice,
-                savedNeutral: importedVoice.fourOperatorVoice,
-                savedProjection: importedVoice
+                workingNeutral: imported.neutralVoice,
+                projection: imported.projection,
+                savedNeutral: imported.neutralVoice,
+                savedProjection: imported.projection
             )
             resetPerformanceMacros()
-            systemChannel = importedSystemChannel
+            systemChannel = imported.systemChannel
+            sourceDevice = imported.sourceDevice
             fileURL = url
             noteVoiceReplacement()
             rememberEditorLoadDirectory(for: url)
@@ -897,12 +942,67 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         return Date().timeIntervalSince(preparedKeyboardVoiceDate) > keyboardPreparationStaleAfter
     }
 
-    private static func readVoice(from url: URL) throws -> (voice: FB01VoiceData, systemChannel: Int) {
+    static func readVoiceDocument(from url: URL, context: VoiceDocumentLoadContext = .singleOrGeneric) throws -> LoadedVoiceDocument {
+        let extensionHint = url.pathExtension.lowercased()
+        let dxExtensions = Set(DX100SynthModule.shared.fileProfile.importExtensions.map { $0.lowercased() })
+        let fbExtensions = Set(FB01SynthModule.shared.fileProfile.importExtensions.map { $0.lowercased() })
+
+        if dxExtensions.contains(extensionHint), extensionHint != "syx" {
+            do {
+                return try readDX100VoiceDocument(from: url, context: context, extensionHint: extensionHint)
+            } catch {
+                throw FB01AppError.message("This file appears to be a DX100/27 voice file, but it could not be read: \(error)")
+            }
+        }
+
+        if fbExtensions.contains(extensionHint), extensionHint != "syx" {
+            do {
+                return try readFB01VoiceDocument(from: url)
+            } catch {
+                throw FB01AppError.message("This file appears to be an FB-01 voice file, but it could not be read: \(error)")
+            }
+        }
+
+        if let loaded = try? readDX100VoiceDocument(from: url, context: context, extensionHint: extensionHint) {
+            return loaded
+        }
+
+        if let loaded = try? readFB01VoiceDocument(from: url) {
+            return loaded
+        }
+
+        throw FB01AppError.message("The file does not contain a readable FB-01 or DX100/27 voice.")
+    }
+
+    private static func readFB01VoiceDocument(from url: URL) throws -> LoadedVoiceDocument {
         let candidates = try EditorModuleDocumentFiles.voiceCandidates(from: url)
         guard let candidate = chooseVoiceCandidate(candidates, title: "Choose Voice Document") else {
             throw FB01AppError.noVoiceSource
         }
-        return (candidate.voice, candidate.systemChannel)
+        return LoadedVoiceDocument(
+            projection: candidate.voice,
+            neutralVoice: candidate.voice.fourOperatorVoice,
+            systemChannel: candidate.systemChannel,
+            sourceDevice: .fb01
+        )
+    }
+
+    private static func readDX100VoiceDocument(from url: URL, context: VoiceDocumentLoadContext, extensionHint: String) throws -> LoadedVoiceDocument {
+        let candidates = try DX100DocumentService.shared.readVoiceCandidates(from: url)
+        let isBankFile = context == .bankFile || extensionHint == DX100SynthModule.shared.fileProfile.voiceBankExtension || (extensionHint == DX100SynthModule.shared.fileProfile.genericSysExExtension && candidates.count > 1)
+        let title = isBankFile ? "Choose Voice from DX100/27 Voice Bank File" : "Choose Voice Document"
+        let informativeText = isBankFile
+            ? "This DX100/27 bank file contains 24 displayed voices extracted from a 32-voice bulk dump. Choose one voice to open in this document window."
+            : "This DX100/27 SysEx file contains multiple voices. Choose the one to open in this document window."
+        guard let candidate = chooseDX100VoiceCandidate(candidates, title: title, informativeText: informativeText) else {
+            throw FB01AppError.noVoiceSource
+        }
+        return LoadedVoiceDocument(
+            projection: try candidate.voice.fb01EditableVoice(),
+            neutralVoice: candidate.voice.fourOperatorVoice,
+            systemChannel: candidate.channel,
+            sourceDevice: .dx100
+        )
     }
 
     nonisolated private static func extractVoice(from artifact: FB01Artifact) throws -> (voice: FB01VoiceData, systemChannel: Int) {
@@ -921,6 +1021,30 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = "This SysEx file contains multiple voices. Choose the one to open in this document window."
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Cancel")
+
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for candidate in candidates {
+            popup.addItem(withTitle: candidate.title)
+            popup.lastItem?.representedObject = candidate.title
+        }
+        alert.accessoryView = labelledEditorPopup(label: "Voice:", popup: popup)
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+        return candidates[popup.indexOfSelectedItem]
+    }
+
+    private static func chooseDX100VoiceCandidate(_ candidates: [DX100VoiceDocumentCandidate], title: String, informativeText: String) -> DX100VoiceDocumentCandidate? {
+        guard candidates.count > 1 else {
+            return candidates.first
+        }
+
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = informativeText
         alert.addButton(withTitle: "Open")
         alert.addButton(withTitle: "Cancel")
 

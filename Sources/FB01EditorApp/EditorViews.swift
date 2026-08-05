@@ -206,8 +206,9 @@ struct VoiceBankSelectorWindow: View {
 
     var body: some View {
         let layout = document.selectedDeviceVoiceBankSelectorLayout
+        let bankTitle = document.selectedDeviceVoiceBankTitle(bank)
         SelectorWindowLayout(
-            title: "Voice Bank \(bank)",
+            title: bankTitle,
             subtitle: "Select a voice to fetch it into a new Voice Document.",
             isLoading: isLoading,
             errorMessage: errorMessage,
@@ -227,7 +228,7 @@ struct VoiceBankSelectorWindow: View {
         }
         .background(WindowIdentifierSetter(
             identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank),
-            title: "Voice Bank \(bank)"
+            title: bankTitle
         ))
         .focusedSceneValue(\.activeVoiceBankSelector, bank)
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
@@ -235,11 +236,12 @@ struct VoiceBankSelectorWindow: View {
 
     @MainActor
     private func loadItems() async {
+        let bankTitle = document.selectedDeviceVoiceBankTitle(bank)
         isLoading = true
         errorMessage = nil
         items = await document.ensureVoiceBankSelectorItems(bank: bank)
         if items.isEmpty {
-            errorMessage = "Voice Bank \(bank) could not be loaded."
+            errorMessage = "\(bankTitle) could not be loaded."
         }
         isLoading = false
     }

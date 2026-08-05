@@ -240,6 +240,28 @@ private let ivoryEbonyPackedVoiceRecord: [UInt8] = [
     #expect(candidates[0].title == "Current Voice: IvoryEbony")
 }
 
+@Test func dx100DocumentServiceRoundTripsVoiceBankFiles() throws {
+    var bankData = Array(repeating: UInt8(0), count: DX100.thirtyTwoVoiceDataByteCount)
+    bankData.replaceSubrange(0..<DX100VoiceBankData.packedVoiceByteCount, with: ivoryEbonyPackedVoiceRecord)
+    let bank = try DX100VoiceBankData(bytes: bankData, channel: 2)
+
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("DX100BankDocumentServiceTests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer {
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    let bankURL = directory.appendingPathComponent("current-bank.dxvb")
+    try DX100DocumentService.shared.writeVoiceBank(bank, to: bankURL)
+
+    let candidates = try DX100DocumentService.shared.readVoiceCandidates(from: bankURL)
+    #expect(candidates.count == 24)
+    #expect(candidates[0].channel == 2)
+    #expect(candidates[0].voice.name == "IvoryEbony")
+    #expect(candidates[0].title == "Voice 1: IvoryEbony")
+}
+
 @Test func dx100DocumentServiceReadsMultipleSingleVoiceMessagesFromSysEx() throws {
     let candidates = try DX100DocumentService.shared.voiceCandidates(
         fromSysExBytes: ivoryEbonySingleVoiceDump + ivoryEbonySingleVoiceDump

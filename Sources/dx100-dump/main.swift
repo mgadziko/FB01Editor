@@ -365,7 +365,7 @@ func printUsage() {
     print("""
     dx100-dump list
     dx100-dump current-voice [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxv>] [--timeout <seconds>]
-    dx100-dump voice-bank [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxx>] [--timeout <seconds>]
+    dx100-dump voice-bank [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxvb>] [--timeout <seconds>]
 
     DX100 SysEx helper. Requests send only documented bulk dump requests and do not store or write data to the device.
     """)

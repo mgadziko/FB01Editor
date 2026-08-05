@@ -76,4 +76,9 @@ public struct DX100DocumentService: Sendable {
         let data = Data(try voice.singleVoiceBulkSysEx(channel: channel))
         try data.write(to: url)
     }
+
+    public func writeVoiceBank(_ bank: DX100VoiceBankData, channel: Int? = nil, to url: URL) throws {
+        let data = Data(try bank.thirtyTwoVoiceBulkSysEx(channel: channel))
+        try data.write(to: url)
+    }
 }

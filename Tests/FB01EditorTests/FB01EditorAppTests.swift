@@ -251,7 +251,7 @@ import UniformTypeIdentifiers
     #expect(model.selectedDeviceVoiceBankSelectorLayout.rowsPerColumn == 12)
 
     model.selectedEditorDevice = .dx100
-    #expect(!model.supportsSelectedDeviceCommand(.showVoiceBank))
+    #expect(model.supportsSelectedDeviceCommand(.showVoiceBank))
     #expect(!model.supportsSelectedDeviceCommand(.copyVoiceToSlot))
     #expect(!model.supportsSelectedDeviceCommand(.showConfigurationBank))
     #expect(!model.supportsSelectedDeviceCommand(.storeGeneralMIDIVoices))
@@ -261,13 +261,41 @@ import UniformTypeIdentifiers
     #expect(model.selectedDeviceHasConnectedVoiceDocumentCommands)
     #expect(!model.selectedDeviceShowsConfigurationMenu)
     #expect(model.selectedDeviceVoiceBankSelectorLayout.rowsPerColumn == 6)
-    #expect(model.selectedDeviceVoiceBankTitle(1) == "Internal RAM")
+    #expect(model.selectedDeviceVoiceBankTitle(1) == "Internal")
+    #expect(model.selectedDeviceVoiceBankTitle(2) == "Bank A")
+    #expect(model.selectedDeviceVoiceBankTitle(6) == "Preset Normal 1")
+    #expect(model.selectedDeviceVoiceBankTitle(10) == "Preset Shift 1")
 }
 
 @Test func deviceSpecificVoiceFileTypesExposeDXExtensions() {
     #expect(UTType.voiceFileTypes(for: .fb01).first?.preferredFilenameExtension == "fbv")
     #expect(UTType.voiceFileTypes(for: .dx100).first?.preferredFilenameExtension == "dxv")
     #expect(UTType.readableVoiceFileTypes(for: .dx100).map(\.preferredFilenameExtension).contains("dxvb"))
+    #expect(UTType.readableVoiceFileTypes(for: nil).map(\.preferredFilenameExtension).contains("dxv"))
+}
+
+@MainActor
+@Test func dxVoiceFilesLoadIntoDXVoiceDocuments() throws {
+    var dxVoice = try DX100DocumentService.shared.templateVoice()
+    dxVoice = try dxVoice.settingName("Solid Bass")
+
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+    let url = tempDirectory.appendingPathComponent("Solid Bass.dxv")
+    try DX100DocumentService.shared.writeVoice(dxVoice, channel: 3, to: url)
+
+    let loaded = try VoiceDocumentModel.readVoiceDocument(from: url)
+    let document = try #require(VoiceDocumentModel.loadFromDisk(url: url))
+
+    #expect(loaded.sourceDevice == .dx100)
+    #expect(loaded.systemChannel == 3)
+    #expect(loaded.neutralVoice.name == "Solid Bass")
+    #expect(document.sourceDevice == .dx100)
+    #expect(document.displayName == "Solid Bass")
+    #expect(document.fileURL == url)
 }
 
 @Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {

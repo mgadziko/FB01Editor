@@ -32,11 +32,11 @@ public enum DX100VoiceBankKind: Equatable, Sendable {
     public var displayName: String {
         switch self {
         case .internalRAM:
-            "Internal RAM"
+            "Internal"
         case .bankMemory(let bank):
             "Bank \(Self.bankLetter(bank))"
         case let .preset(normalMode, group):
-            "\(normalMode ? "Preset" : "Preset Shift") \(group)"
+            "\(normalMode ? "Preset Normal" : "Preset Shift") \(group)"
         }
     }
 
