@@ -4,6 +4,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 private let voiceDocumentEditPreparationDelayNanoseconds: UInt64 = 250_000_000
+private let dx100LiveResendDelayNanoseconds: UInt64 = 180_000_000
 
 struct ContentView: View {
     @ObservedObject var document: DocumentModel
@@ -2140,7 +2141,7 @@ struct VoiceDocumentWindow: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(voice.name.isEmpty ? "Untitled Voice" : voice.name)
+                        Text(document.displayName)
                             .font(.title2.weight(.semibold))
                         Text(document.fileURL?.path ?? "New voice document")
                             .font(.caption)
@@ -2156,6 +2157,8 @@ struct VoiceDocumentWindow: View {
                 DocumentMIDIContextView(device: device, documentSystemChannel: document.systemChannel)
 
                 SummaryPanel(rows: [
+                    KeyValueRow("Source Model", document.neutralVoice.sourceModelName),
+                    KeyValueRow("Editing Target", document.sourceDevice.displayName),
                     KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
                     KeyValueRow("Feedback", "\(voice.feedbackLevel)"),
                 ])
@@ -2163,7 +2166,7 @@ struct VoiceDocumentWindow: View {
                 if device.voiceEditorParadigm == .consoleSections {
                     VoiceEditorControls(
                         name: Binding(
-                            get: { voice.name },
+                            get: { document.sourceDevice == .dx100 ? document.neutralVoice.name : voice.name },
                             set: { setName($0) }
                         ),
                         feedback: Binding(
@@ -2245,8 +2248,9 @@ struct VoiceDocumentWindow: View {
                     )
                 } else {
                     FMRoutingPatchBayView(
+                        editingDevice: document.sourceDevice,
                         name: Binding(
-                            get: { voice.name },
+                            get: { document.sourceDevice == .dx100 ? document.neutralVoice.name : voice.name },
                             set: { setName($0) }
                         ),
                         algorithm: Binding(
@@ -2408,17 +2412,20 @@ struct VoiceDocumentWindow: View {
         }
         .onDisappear {
             document.cancelKeyboardVoicePreparation()
+            document.cancelDX100LiveResend()
             device.setExternalKeyboardDocumentHandler(nil)
         }
         .onChange(of: document.voice) {
             registerLiveKeyboardContext()
             document.scheduleKeyboardVoicePreparation(device: device, delayNanoseconds: voiceDocumentEditPreparationDelayNanoseconds)
+            document.scheduleDX100LiveResend(device: device, delayNanoseconds: dx100LiveResendDelayNanoseconds)
         }
         .onChange(of: device.keyboardChannel) {
             document.scheduleKeyboardVoicePreparation(device: device)
         }
         .onChange(of: device.selectedDestinationIndex) {
             document.scheduleKeyboardVoicePreparation(device: device)
+            document.scheduleDX100LiveResend(device: device, delayNanoseconds: 0)
         }
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
             kind: .voice,
@@ -2447,7 +2454,7 @@ struct VoiceDocumentWindow: View {
 
     private func registerLiveKeyboardContext() {
         device.setLiveKeyboardContext(
-            title: voice.name.isEmpty ? "Live Keyboard" : "Live Keyboard - \(voice.name)",
+            title: "Live Keyboard - \(document.displayName)",
             subtitle: "Document voice",
             noteOn: { [weak document, weak device] note in
                 guard let document, let device else { return }
@@ -3894,6 +3901,7 @@ struct VoiceDetailView: View {
                 )
             } else {
                 FMRoutingPatchBayView(
+                    editingDevice: .fb01,
                     name: Binding(
                         get: { nameText },
                         set: { setName($0) }

@@ -1429,6 +1429,13 @@ final class DocumentModel: ObservableObject {
         keyboardChannel = min(max(channel, 0), 15)
         invalidateKeyboardPreparation()
         UserDefaults.standard.set(keyboardChannel, forKey: DefaultsKey.keyboardChannel)
+        if selectedEditorDevice == .dx100,
+           externalKeyboardEnabled,
+           selectedKeyboardSourceIndex == selectedSourceIndex {
+            externalKeyboardStatus = "Live Keyboard channel \(keyboardChannel + 1). DX100 local keys still play directly on the synth."
+        } else {
+            externalKeyboardStatus = "Live Keyboard channel \(keyboardChannel + 1)."
+        }
     }
 
     func setKeyboardVelocity(_ velocity: Int) {
@@ -1718,6 +1725,17 @@ final class DocumentModel: ObservableObject {
         return try command.bytes
     }
 
+    func liveKeyboardVolumeMessages(value: Int, midiChannel: Int? = nil) throws -> [[UInt8]] {
+        let bounded = UInt8(min(max(value, 0), 127))
+        switch selectedEditorDevice {
+        case .dx100:
+            let channel = UInt8(min(max(midiChannel ?? keyboardChannel, 0), 15))
+            return [[0xB0 | channel, 7, bounded]]
+        case .fb01, nil:
+            return [try systemMasterOutputMessageBytes(level: Int(bounded))]
+        }
+    }
+
     func liveKeyboardPortamentoMessageBytes(value: Int, systemChannel: Int? = nil) throws -> [UInt8] {
         let bounded = UInt8(min(max(value, 0), 127))
         let command = FB01SysExMessage.command(.instrumentParameterChange(
@@ -1727,6 +1745,21 @@ final class DocumentModel: ObservableObject {
             value: .oneByte(bounded)
         ))
         return try command.bytes
+    }
+
+    func liveKeyboardPortamentoMessages(value: Int, systemChannel: Int? = nil, midiChannel: Int? = nil) throws -> [[UInt8]] {
+        let bounded = UInt8(min(max(value, 0), 127))
+        switch selectedEditorDevice {
+        case .dx100:
+            let channel = UInt8(min(max(midiChannel ?? keyboardChannel, 0), 15))
+            let portamentoEnabled: UInt8 = bounded == 0 ? 0 : 127
+            return [
+                [0xB0 | channel, 65, portamentoEnabled],
+                [0xB0 | channel, 5, bounded],
+            ]
+        case .fb01, nil:
+            return [try liveKeyboardPortamentoMessageBytes(value: Int(bounded), systemChannel: systemChannel)]
+        }
     }
 
     func openSysEx() {
@@ -3953,6 +3986,16 @@ final class DocumentModel: ObservableObject {
             forwardingStatus = "Input forwarding to \(destinationName)"
         }
 
+        if shouldSuppressExternalKeyboardEchoBackToDevice(for: message) {
+            if isNoteOn, message.count > 1 {
+                externalKeyboardStatus = "DX100/27 local keyboard direct; not echoed back."
+            } else if isVolumeControl, message.count > 2 {
+                externalKeyboardStatus = "DX100/27 local control \(message[1]) = \(message[2]); not echoed back."
+            }
+            updateExternalKeyboardPressedNotes(from: message)
+            return
+        }
+
         Task(priority: .high) { [weak self] in
             do {
                 try await LiveMIDIPlaybackController.shared.sendImmediate(rewritten, destinationIndex: destinationIndex)
@@ -4022,6 +4065,14 @@ final class DocumentModel: ObservableObject {
             forwardingStatus = "Input forwarding to \(destinationName)"
         }
 
+        if shouldSuppressExternalKeyboardEchoBackToDevice(for: message) {
+            if event == 0x90, message.count > 2, message[2] > 0 {
+                externalKeyboardStatus = "DX100/27 local keyboard direct; not echoed back."
+            }
+            updateExternalKeyboardPressedNotes(from: message)
+            return true
+        }
+
         Task(priority: .high) { [weak self] in
             do {
                 try await LiveMIDIPlaybackController.shared.sendImmediate(rewritten, destinationIndex: destinationIndex)
@@ -4087,6 +4138,22 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func shouldSuppressExternalKeyboardEchoBackToDevice(for message: [UInt8]) -> Bool {
+        guard selectedEditorDevice == .dx100,
+              selectedKeyboardSourceIndex == selectedSourceIndex,
+              let status = message.first
+        else {
+            return false
+        }
+
+        switch status & 0xF0 {
+        case 0x80, 0x90, 0xA0, 0xB0, 0xD0, 0xE0:
+            return true
+        default:
+            return false
+        }
+    }
+
     private func applyExternalKeyboardVolume(_ value: Int) {
         let bounded = min(max(value, 0), 127)
         externalKeyboardVolume = bounded
@@ -4098,11 +4165,19 @@ final class DocumentModel: ObservableObject {
             do {
                 try await Task.sleep(nanoseconds: 80_000_000)
                 try Task.checkCancellation()
-                let message = try await MainActor.run {
-                    try self?.systemMasterOutputMessageBytes(level: bounded)
+                let messages = try await MainActor.run {
+                    try self?.liveKeyboardVolumeMessages(value: bounded)
                 }
-                guard let message else { return }
-                try await LiveMIDIPlaybackController.shared.sendImmediate(message, destinationIndex: destinationIndex)
+                guard let messages else { return }
+                try await LiveMIDIPlaybackController.shared.sendPreparedMessages(
+                    messages,
+                    destinationIndex: destinationIndex,
+                    settleDelay: 0
+                )
+                await MainActor.run {
+                    self?.externalKeyboardStatus = "Volume \(bounded)"
+                    self?.errorMessage = nil
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -4127,11 +4202,15 @@ final class DocumentModel: ObservableObject {
             do {
                 try await Task.sleep(nanoseconds: 80_000_000)
                 try Task.checkCancellation()
-                let message = try await MainActor.run {
-                    try self?.liveKeyboardPortamentoMessageBytes(value: bounded)
+                let messages = try await MainActor.run {
+                    try self?.liveKeyboardPortamentoMessages(value: bounded)
                 }
-                guard let message else { return }
-                try await LiveMIDIPlaybackController.shared.sendImmediate(message, destinationIndex: destinationIndex)
+                guard let messages else { return }
+                try await LiveMIDIPlaybackController.shared.sendPreparedMessages(
+                    messages,
+                    destinationIndex: destinationIndex,
+                    settleDelay: 0
+                )
                 await MainActor.run {
                     self?.externalKeyboardStatus = "Portamento \(bounded)"
                     self?.errorMessage = nil
@@ -4158,7 +4237,11 @@ final class DocumentModel: ObservableObject {
             preparedKeyboardVoiceDate = Date()
             markAuditionBufferPrepared(signature: signature)
             return try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel)
-                + [try liveKeyboardPortamentoMessageBytes(value: externalKeyboardPortamento, systemChannel: systemChannel)]
+                + liveKeyboardPortamentoMessages(
+                    value: externalKeyboardPortamento,
+                    systemChannel: systemChannel,
+                    midiChannel: midiChannel
+                )
         }
 
         let signature = "\(context.systemChannel)-\(midiChannel)-\(context.sourceID.uuidString)-\(context.number)-\(context.voice.bytes)-portamento-\(externalKeyboardPortamento)"
@@ -4172,7 +4255,11 @@ final class DocumentModel: ObservableObject {
         markAuditionBufferPrepared(signature: signature)
         return [try artifact.sysexBytes]
             + (try keyboardAuditionPreparationMessages(systemChannel: context.systemChannel, midiChannel: midiChannel))
-            + [try liveKeyboardPortamentoMessageBytes(value: externalKeyboardPortamento, systemChannel: context.systemChannel)]
+            + (try liveKeyboardPortamentoMessages(
+                value: externalKeyboardPortamento,
+                systemChannel: context.systemChannel,
+                midiChannel: midiChannel
+            ))
     }
 
     private var isKeyboardPreparationStale: Bool {
@@ -4205,9 +4292,13 @@ final class DocumentModel: ObservableObject {
                 try Task.checkCancellation()
                 let artifact = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: 0)
                 let auditionMessages = try keyboardAuditionPreparationMessages(systemChannel: systemChannel, midiChannel: midiChannel)
-                    + [try await MainActor.run {
-                        try self?.liveKeyboardPortamentoMessageBytes(value: self?.externalKeyboardPortamento ?? 0, systemChannel: systemChannel)
-                    }].compactMap { $0 }
+                    + (try await MainActor.run {
+                        try self?.liveKeyboardPortamentoMessages(
+                            value: self?.externalKeyboardPortamento ?? 0,
+                            systemChannel: systemChannel,
+                            midiChannel: midiChannel
+                        )
+                    } ?? [])
                 try await LiveMIDIPlaybackController.shared.sendPreparedMessages(
                     [try artifact.sysexBytes] + auditionMessages,
                     destinationIndex: destinationIndex,
@@ -4992,6 +5083,9 @@ extension UTType {
     static var fb01SingleConfiguration: UTType { UTType(filenameExtension: synthFileProfile.singleConfigurationExtension)! }
     static var fb01VoiceBank: UTType { UTType(filenameExtension: synthFileProfile.voiceBankExtension)! }
     static var fb01ConfigurationBank: UTType { UTType(filenameExtension: synthFileProfile.configurationBankExtension)! }
+    static let dx100SingleVoice = UTType(filenameExtension: DX100SynthModule.shared.fileProfile.singleVoiceExtension)!
+    static let dx100VoiceBank = UTType(filenameExtension: DX100SynthModule.shared.fileProfile.voiceBankExtension)!
+    static let dx100GenericSysEx = UTType(filenameExtension: DX100SynthModule.shared.fileProfile.genericSysExExtension)!
 
     static var fb01VoiceFileTypes: [UTType] {
         [.fb01SingleVoice, .fb01GenericSysEx]
@@ -5019,6 +5113,18 @@ extension UTType {
             .sysex,
             .data,
         ]
+    }
+
+    static var dx100VoiceFileTypes: [UTType] {
+        [.dx100SingleVoice, .dx100GenericSysEx]
+    }
+
+    static var dx100ReadableVoiceFileTypes: [UTType] {
+        [.dx100SingleVoice, .dx100VoiceBank, .dx100GenericSysEx, .sysex, .data]
+    }
+
+    static var dx100VoiceBankFileTypes: [UTType] {
+        [.dx100VoiceBank, .dx100GenericSysEx]
     }
 
     static var currentModuleVoiceFileTypes: [UTType] {
@@ -5051,6 +5157,33 @@ extension UTType {
 
     static var currentModuleGenericSysExFileTypes: [UTType] {
         [.fb01GenericSysEx, .sysex, .data]
+    }
+
+    static func voiceFileTypes(for device: EditorDeviceSelection?) -> [UTType] {
+        switch device {
+        case .dx100:
+            dx100VoiceFileTypes
+        case .fb01, nil:
+            fb01VoiceFileTypes
+        }
+    }
+
+    static func readableVoiceFileTypes(for device: EditorDeviceSelection?) -> [UTType] {
+        switch device {
+        case .dx100:
+            dx100ReadableVoiceFileTypes
+        case .fb01, nil:
+            fb01ReadableVoiceFileTypes
+        }
+    }
+
+    static func voiceBankFileTypes(for device: EditorDeviceSelection?) -> [UTType] {
+        switch device {
+        case .dx100:
+            dx100VoiceBankFileTypes
+        case .fb01, nil:
+            currentModuleVoiceBankFileTypes
+        }
     }
 }
 

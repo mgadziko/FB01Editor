@@ -2,6 +2,7 @@ import FB01Editor
 import SwiftUI
 
 struct FMRoutingPatchBayView: View {
+    var editingDevice: EditorDeviceSelection
     @Binding var name: String
     @Binding var algorithm: Int
     @Binding var feedback: Int
@@ -68,17 +69,21 @@ struct FMRoutingPatchBayView: View {
                     }
 
                     HStack(alignment: .top, spacing: 14) {
-                        ParameterKnob(label: "User Code", value: $userCode, range: 0...255, isModified: userCode != savedVoice.userCode)
+                        if supportsUserCode {
+                            ParameterKnob(label: "User Code", value: $userCode, range: 0...255, isModified: userCode != savedVoice.userCode)
+                        }
                         ParameterKnob(label: "Transpose", value: $transpose, range: -128...127, isModified: transpose != savedVoice.transpose)
                     }
                 }
                 .frame(width: 238, alignment: .topLeading)
 
-                HStack(alignment: .top, spacing: 12) {
-                    RockerSwitch(label: "Left Output", isOn: $leftOutputEnabled, width: 70, height: 62, isModified: leftOutputEnabled != savedVoice.leftOutputEnabled)
-                    RockerSwitch(label: "Right Output", isOn: $rightOutputEnabled, width: 74, height: 62, isModified: rightOutputEnabled != savedVoice.rightOutputEnabled)
+                if supportsStereoOutputs {
+                    HStack(alignment: .top, spacing: 12) {
+                        RockerSwitch(label: "Left Output", isOn: $leftOutputEnabled, width: 70, height: 62, isModified: leftOutputEnabled != savedVoice.leftOutputEnabled)
+                        RockerSwitch(label: "Right Output", isOn: $rightOutputEnabled, width: 74, height: 62, isModified: rightOutputEnabled != savedVoice.rightOutputEnabled)
+                    }
+                    .padding(.top, 49)
                 }
-                .padding(.top, 49)
             }
         }
         .frame(minWidth: 430, maxWidth: 520, alignment: .topLeading)
@@ -105,7 +110,9 @@ struct FMRoutingPatchBayView: View {
                 WaveformPicker(selection: $lfoWaveform, isModified: lfoWaveform != savedVoice.lfoWaveform)
                     .frame(width: 342)
 
-                RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58, isModified: loadLFODataEnabled != savedVoice.loadLFODataEnabled)
+                if supportsLoadLFOData {
+                    RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58, isModified: loadLFODataEnabled != savedVoice.loadLFODataEnabled)
+                }
                 RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58, isModified: lfoSyncEnabled != savedVoice.lfoSyncEnabled)
             }
         }
@@ -128,7 +135,7 @@ struct FMRoutingPatchBayView: View {
                     .frame(width: 180)
                     .forestHoverHelp("Chooses the musical character used to shape Performance Macro behavior.")
 
-                    Text("These musical macros change the current editable voice in memory only. They are not stored FB-01 fields.")
+                    Text("These musical macros change the current editable voice in memory only. They are not stored device fields.")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -163,6 +170,7 @@ struct FMRoutingPatchBayView: View {
         return ScrollView(.horizontal) {
             FMPatchBayCanvas(
                 layout: layout,
+                editingDevice: editingDevice,
                 operatorsByNumber: operatorsByNumber,
                 operatorEnabledBinding: operatorEnabledBinding,
                 feedback: $feedback,
@@ -196,6 +204,10 @@ struct FMRoutingPatchBayView: View {
         }
         return operatorEnabled[index]
     }
+
+    private var supportsUserCode: Bool { editingDevice == .fb01 }
+    private var supportsStereoOutputs: Bool { editingDevice == .fb01 }
+    private var supportsLoadLFOData: Bool { editingDevice == .fb01 }
 }
 
 enum VoiceCharacterType: String, CaseIterable, Identifiable {
@@ -852,6 +864,7 @@ private struct FMPatchBayLayout {
 
 private struct FMPatchBayCanvas: View {
     var layout: FMPatchBayLayout
+    var editingDevice: EditorDeviceSelection
     var operatorsByNumber: [Int: FB01VoiceOperatorData]
     var operatorEnabledBinding: (Int) -> Binding<Bool>
     @Binding var feedback: Int
@@ -884,6 +897,7 @@ private struct FMPatchBayCanvas: View {
                 if let operatorData = operatorsByNumber[number],
                    let origin = layout.positions[number] {
                     FMPatchOperatorModule(
+                        editingDevice: editingDevice,
                         operatorData: operatorData,
                         savedOperatorData: savedOperatorsByNumber[number],
                         routingSubtitle: layout.routingSubtitle(forOperator: number),
@@ -984,6 +998,7 @@ private struct FMPatchBayRouteCanvas: View {
 }
 
 struct FMPatchOperatorModule: View {
+    var editingDevice: EditorDeviceSelection
     var operatorData: FB01VoiceOperatorData
     var savedOperatorData: FB01VoiceOperatorData?
     var routingSubtitle: String
@@ -1028,7 +1043,9 @@ struct FMPatchOperatorModule: View {
                 LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                     ParameterKnob(label: "OSC FRQ Multiplier", value: operatorBinding({ $0.multiple }, update: { try $0.settingMultiple($1) }), range: 0...15, isModified: isModified(\.multiple))
                     ParameterKnob(label: "Detune 1", value: operatorBinding({ $0.detune1 }, update: { try $0.settingDetune1($1) }), range: 0...7, isModified: isModified(\.detune1))
-                    ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3, isModified: isModified(\.detune2))
+                    if supportsDetune2 {
+                        ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3, isModified: isModified(\.detune2))
+                    }
                 }
             }
 
@@ -1039,7 +1056,9 @@ struct FMPatchOperatorModule: View {
                 VStack(alignment: .leading, spacing: 10) {
                     LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                         ParameterKnob(label: "Total Level", value: operatorBinding({ $0.totalLevel }, update: { try $0.settingTotalLevel($1) }), range: 0...127, isModified: isModified(\.totalLevel))
-                        ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, isModified: isModified(\.totalLevelAdjust))
+                        if supportsTLAdjust {
+                            ParameterKnob(label: "TL Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, isModified: isModified(\.totalLevelAdjust))
+                        }
                         ParameterKnob(label: "Vel to TL", value: operatorBinding({ $0.velocitySensitivityForTotalLevel }, update: { try $0.settingVelocitySensitivityForTotalLevel($1) }), range: 0...7, isModified: isModified(\.velocitySensitivityForTotalLevel))
                     }
 
@@ -1107,6 +1126,9 @@ struct FMPatchOperatorModule: View {
     private var amplifierTitle: String {
         operatorData.carrier ? "Amplifier - Volume Level" : "Amplifier - Modulation Level"
     }
+
+    private var supportsDetune2: Bool { editingDevice == .fb01 }
+    private var supportsTLAdjust: Bool { editingDevice == .fb01 }
 
     private var keyLevelScalingTypeControl: some View {
         VStack(alignment: .center, spacing: 6) {

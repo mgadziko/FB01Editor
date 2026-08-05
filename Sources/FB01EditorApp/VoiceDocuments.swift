@@ -24,6 +24,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
+    private var dx100LiveResendTask: Task<Void, Never>?
+    private var lastDX100LiveSentSignature: String?
 
     init(voice: FB01VoiceData, systemChannel: Int, fileURL: URL? = nil) {
         let neutralVoice = voice.fourOperatorVoice
@@ -35,8 +37,13 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         self.fileURL = fileURL
     }
 
+    var displayName: String {
+        let rawName = sourceDevice == .dx100 ? neutralVoice.name : voice.name
+        return rawName.isEmpty ? "Untitled Voice" : rawName
+    }
+
     var title: String {
-        let name = voice.name.isEmpty ? "Untitled Voice" : voice.name
+        let name = displayName
         if isBusy {
             return "\(name) (Working)"
         }
@@ -64,7 +71,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         do {
             let editedVoice = try edit(voice)
             guard editedVoice != voice else { return }
-            neutralVoice = editedVoice.fourOperatorVoice
+            var editedNeutralVoice = editedVoice.fourOperatorVoice
+            if sourceDevice == .dx100 {
+                editedNeutralVoice.name = neutralVoice.name
+            }
+            neutralVoice = editedNeutralVoice
             voice = editedVoice
             preparedKeyboardVoiceSignature = nil
             preparedKeyboardVoiceDate = nil
@@ -84,6 +95,26 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     func setName(_ value: String) {
+        if sourceDevice == .dx100 {
+            let limited = String(value.prefix(DX100VoiceData.nameLength))
+            guard limited != neutralVoice.name else { return }
+            do {
+                let projectedName = String(limited.prefix(FB01VoiceData.nameLength))
+                let updatedProjection = try voice.settingName(projectedName)
+                var updatedNeutral = neutralVoice
+                updatedNeutral.name = limited
+                neutralVoice = updatedNeutral
+                voice = updatedProjection
+                preparedKeyboardVoiceSignature = nil
+                preparedKeyboardVoiceDate = nil
+                errorMessage = nil
+                statusMessage = nil
+            } catch {
+                errorMessage = "Edit failed: \(error)"
+            }
+            return
+        }
+
         let limited = String(value.prefix(FB01VoiceData.nameLength))
         guard limited != voice.name else { return }
         updateVoice { try $0.settingName(limited) }
@@ -99,9 +130,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func saveAs() {
         let panel = NSSavePanel()
-        panel.allowedContentTypes = UTType.currentModuleVoiceFileTypes
+        panel.allowedContentTypes = UTType.voiceFileTypes(for: sourceDevice)
         panel.directoryURL = preferredEditorSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeEditorFileName(voice.name, fallback: "voice")).\(EditorSynthModule.fileProfile.singleVoiceExtension)"
+        panel.nameFieldStringValue = "\(safeEditorFileName(displayName, fallback: "voice")).\(defaultVoiceFileExtension)"
         panel.message = "Save this voice document to a voice file."
         panel.prompt = "Save Voice to File"
 
@@ -111,14 +142,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         save(to: url, voiceNameFromFile: editorDocumentName(
             fromFileURL: url,
-            maxLength: FB01VoiceData.nameLength,
+            maxLength: sourceDevice == .dx100 ? DX100VoiceData.nameLength : FB01VoiceData.nameLength,
             fallback: "voice"
         ))
     }
 
     static func loadFromDisk() -> VoiceDocumentModel? {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = UTType.currentModuleReadableVoiceFileTypes
+        panel.allowedContentTypes = UTType.readableVoiceFileTypes(for: nil)
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
@@ -153,7 +184,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = UTType.currentModuleReadableVoiceFileTypes
+        panel.allowedContentTypes = UTType.readableVoiceFileTypes(for: sourceDevice)
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
@@ -611,6 +642,66 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         keyboardPreparationTask = nil
     }
 
+    func scheduleDX100LiveResend(device: DocumentModel, delayNanoseconds: UInt64) {
+        dx100LiveResendTask?.cancel()
+
+        guard sourceDevice == .dx100,
+              device.selectedEditorDevice == .dx100,
+              !isBusy,
+              !device.isBusy,
+              isEdited
+        else {
+            return
+        }
+
+        let neutralVoiceToSend = neutralVoice
+        let sourceIndex = device.selectedSourceIndex
+        let destinationIndex = device.selectedDestinationIndex
+        let systemChannel = self.systemChannel
+        let destinationName = device.selectedDestinationName
+        let signature = "\(systemChannel)-\(neutralVoiceToSend)"
+
+        guard signature != lastDX100LiveSentSignature else {
+            return
+        }
+
+        dx100LiveResendTask = Task(priority: .userInitiated) { [weak self] in
+            do {
+                if delayNanoseconds > 0 {
+                    try await Task.sleep(nanoseconds: delayNanoseconds)
+                }
+                try Task.checkCancellation()
+                try await Task.detached(priority: .userInitiated) {
+                    try EditorVoiceDocumentService.storeVoiceDocument(
+                        neutralVoiceToSend,
+                        to: .dx100,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel
+                    )
+                }.value
+                try Task.checkCancellation()
+                await MainActor.run {
+                    self?.lastDX100LiveSentSignature = signature
+                    self?.statusMessage = "Live DX100/27 edit sent to \(destinationName)."
+                    self?.errorMessage = nil
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run {
+                    self?.errorMessage = "DX100 live edit failed: \(error)"
+                    self?.statusMessage = nil
+                }
+            }
+        }
+    }
+
+    func cancelDX100LiveResend() {
+        dx100LiveResendTask?.cancel()
+        dx100LiveResendTask = nil
+    }
+
     func value(for macro: PerformanceMacro) -> Int {
         performanceMacroValues[macro] ?? PerformanceMacro.neutralValue
     }
@@ -675,6 +766,13 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             forwardingStatus = "Keyboard input forwarding to \(destinationName)."
         }
 
+        if device.shouldSuppressExternalKeyboardEchoBackToDevice(for: message) {
+            if isNoteOn {
+                device.externalKeyboardStatus = "DX100/27 local keyboard direct; not echoed back."
+            }
+            return true
+        }
+
         Task(priority: .high) { [weak self, weak device] in
             do {
                 try await LiveMIDIPlaybackController.shared.sendImmediate(rewritten, destinationIndex: destinationIndex)
@@ -690,16 +788,33 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     private func save(to url: URL, voiceNameFromFile: String? = nil) {
         do {
-            let savedPayload = try voiceNameFromFile.map { try voice.settingName($0) } ?? voice
-            try EditorModuleDocumentFiles.writeVoice(savedPayload, systemChannel: systemChannel, to: url)
-            if savedPayload != voice {
-                neutralVoice = savedPayload.fourOperatorVoice
+            let savedPayload: FB01VoiceData
+            let savedNeutral: FourOperatorVoiceData
+
+            if sourceDevice == .dx100 {
+                var dxNeutralVoice = neutralVoice
+                if let voiceNameFromFile {
+                    dxNeutralVoice.name = voiceNameFromFile
+                }
+                let dxVoice = try dxNeutralVoice.dx100Voice()
+                try DX100DocumentService.shared.writeVoice(dxVoice, channel: systemChannel, to: url)
+                let projectedName = String(dxNeutralVoice.name.prefix(FB01VoiceData.nameLength))
+                savedPayload = try voice.settingName(projectedName)
+                savedNeutral = dxNeutralVoice
+            } else {
+                savedPayload = try voiceNameFromFile.map { try voice.settingName($0) } ?? voice
+                try EditorModuleDocumentFiles.writeVoice(savedPayload, systemChannel: systemChannel, to: url)
+                savedNeutral = savedPayload.fourOperatorVoice
+            }
+
+            if savedPayload != voice || savedNeutral != neutralVoice {
+                neutralVoice = savedNeutral
                 voice = savedPayload
                 noteVoiceReplacement()
                 preparedKeyboardVoiceSignature = nil
                 preparedKeyboardVoiceDate = nil
             }
-            savedNeutralVoice = savedPayload.fourOperatorVoice
+            savedNeutralVoice = savedNeutral
             savedVoice = savedPayload
             fileURL = url
             rememberEditorSaveDirectory(for: url)
@@ -724,15 +839,39 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     private func buildKeyboardPreparationMessages(midiChannel: Int, device: DocumentModel) throws -> [[UInt8]] {
-        try FB01VoiceDocumentService.auditionPreparationMessages(
+        if sourceDevice == .dx100 {
+            return try DX100ModuleServices.shared.voiceService.editBufferMessages(
+                for: neutralVoice.dx100Voice(),
+                channel: systemChannel
+            ) + device.liveKeyboardPortamentoMessages(
+                value: device.externalKeyboardPortamento,
+                systemChannel: systemChannel,
+                midiChannel: midiChannel
+            )
+        }
+
+        return try FB01VoiceDocumentService.auditionPreparationMessages(
             voice: voice,
             systemChannel: systemChannel,
             midiChannel: midiChannel
-        ) + [try device.liveKeyboardPortamentoMessageBytes(value: device.externalKeyboardPortamento, systemChannel: systemChannel)]
+        ) + device.liveKeyboardPortamentoMessages(
+            value: device.externalKeyboardPortamento,
+            systemChannel: systemChannel,
+            midiChannel: midiChannel
+        )
     }
 
     private func keyboardPreparationSignature(midiChannel: Int, portamento: Int) -> String {
         "\(systemChannel)-\(midiChannel)-\(voice.bytes)-portamento-\(portamento)"
+    }
+
+    private var defaultVoiceFileExtension: String {
+        switch sourceDevice {
+        case .dx100:
+            return DX100SynthModule.shared.fileProfile.singleVoiceExtension
+        case .fb01:
+            return FB01SynthModule.shared.fileProfile.singleVoiceExtension
+        }
     }
 
     private func needsKeyboardPreparation(signature: String) -> Bool {
@@ -748,6 +887,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         layoutRevision &+= 1
         preparedKeyboardVoiceSignature = nil
         preparedKeyboardVoiceDate = nil
+        lastDX100LiveSentSignature = nil
     }
 
     private var isKeyboardPreparationStale: Bool {

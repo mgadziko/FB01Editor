@@ -450,10 +450,11 @@ private var defaultEditorBackupDirectoryURL: URL {
 func safeEditorFileName(_ name: String, fallback: String) -> String {
     let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
     let base = trimmed.isEmpty ? fallback : trimmed
-    let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+    let disallowed = CharacterSet(charactersIn: "/:\\")
+    let controlCharacters = CharacterSet.controlCharacters
     let sanitized = base
         .unicodeScalars
-        .map { allowed.contains($0) ? Character($0) : "-" }
+        .map { disallowed.contains($0) || controlCharacters.contains($0) ? "-" : Character($0) }
         .reduce("") { $0 + String($1) }
     return sanitized.isEmpty ? fallback : sanitized
 }

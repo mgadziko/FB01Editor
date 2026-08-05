@@ -148,6 +148,11 @@ import UniformTypeIdentifiers
     #expect(editorDocumentName(fromFileURL: longURL, maxLength: FB01VoiceData.nameLength, fallback: "voice") == "LongVoi")
 }
 
+@Test func safeEditorFileNamePreservesSpaces() {
+    #expect(safeEditorFileName("Solid Bass", fallback: "voice") == "Solid Bass")
+    #expect(safeEditorFileName("Bad/Name:Test", fallback: "voice") == "Bad-Name-Test")
+}
+
 @MainActor
 @Test func voiceDocumentPerformanceMacrosAreMouseEditableOnly() throws {
     let voiceData = try FB01VoiceData(bytes: Array(repeating: 0x00, count: FB01VoiceData.byteCount))
@@ -257,6 +262,12 @@ import UniformTypeIdentifiers
     #expect(!model.selectedDeviceShowsConfigurationMenu)
     #expect(model.selectedDeviceVoiceBankSelectorLayout.rowsPerColumn == 6)
     #expect(model.selectedDeviceVoiceBankTitle(1) == "Internal RAM")
+}
+
+@Test func deviceSpecificVoiceFileTypesExposeDXExtensions() {
+    #expect(UTType.voiceFileTypes(for: .fb01).first?.preferredFilenameExtension == "fbv")
+    #expect(UTType.voiceFileTypes(for: .dx100).first?.preferredFilenameExtension == "dxv")
+    #expect(UTType.readableVoiceFileTypes(for: .dx100).map(\.preferredFilenameExtension).contains("dxvb"))
 }
 
 @Test func keyboardAuditionPreparationCreatesCleanSingleVoiceSetup() throws {
@@ -697,6 +708,48 @@ import UniformTypeIdentifiers
     #expect(try model.systemMemoryProtectMessageBytes(enabled: false) == [0xF0, 0x43, 0x75, 0x04, 0x10, 0x21, 0x00, 0xF7])
     #expect(try model.systemMemoryProtectMessageBytes(enabled: true) == [0xF0, 0x43, 0x75, 0x04, 0x10, 0x21, 0x01, 0xF7])
     #expect(try model.systemMasterOutputMessageBytes(level: 200) == [0xF0, 0x43, 0x75, 0x04, 0x10, 0x24, 0x7F, 0xF7])
+}
+
+@MainActor
+@Test func liveKeyboardVolumeMessagesUseDeviceSpecificProtocols() throws {
+    let model = DocumentModel()
+    model.keyboardChannel = 3
+    model.setSystemChannel(0)
+
+    model.selectedEditorDevice = .fb01
+    let fb01Messages = try model.liveKeyboardVolumeMessages(value: 200)
+    #expect(fb01Messages.count == 1)
+    #expect(try FB01SysExMessage(bytes: fb01Messages[0]) == .command(.setMasterOutputLevel(systemChannel: 0, level: 0x7F)))
+
+    model.selectedEditorDevice = .dx100
+    #expect(try model.liveKeyboardVolumeMessages(value: 99) == [
+        [0xB3, 0x07, 0x63]
+    ])
+    #expect(try model.liveKeyboardVolumeMessages(value: 64, midiChannel: 9) == [
+        [0xB9, 0x07, 0x40]
+    ])
+}
+
+@MainActor
+@Test func liveKeyboardPortamentoMessagesUseDeviceSpecificProtocols() throws {
+    let model = DocumentModel()
+    model.keyboardChannel = 2
+    model.setSystemChannel(5)
+
+    model.selectedEditorDevice = .fb01
+    #expect(try model.liveKeyboardPortamentoMessages(value: 45) == [
+        [0xF0, 0x43, 0x75, 0x05, 0x18, 0x0B, 0x2D, 0xF7]
+    ])
+
+    model.selectedEditorDevice = .dx100
+    #expect(try model.liveKeyboardPortamentoMessages(value: 0) == [
+        [0xB2, 0x41, 0x00],
+        [0xB2, 0x05, 0x00]
+    ])
+    #expect(try model.liveKeyboardPortamentoMessages(value: 73, midiChannel: 11) == [
+        [0xBB, 0x41, 0x7F],
+        [0xBB, 0x05, 0x49]
+    ])
 }
 
 @MainActor
