@@ -369,6 +369,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     return
                 }
 
+                guard let bankKind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank),
+                      bankKind.requiresManualBulkCapture else {
+                    errorMessage = "Manual fetch is available only for DX100/27 Bank A-D voices."
+                    statusMessage = nil
+                    isBusy = false
+                    return
+                }
+
                 let bankTitle = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)"
                 let fetchTitle = recentTitle ?? "DX100/27 \(bankTitle) Voice \(voiceNumber + 1)"
                 statusMessage = "Preparing manual fetch for \(fetchTitle) on \(systemChannelName)..."

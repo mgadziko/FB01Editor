@@ -1043,6 +1043,25 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func canUseCachedVoiceFetch(_ item: RecentVoiceFetch) -> Bool {
+        guard item.isCompatible(with: selectedEditorDevice),
+              let source = item.source else {
+            return false
+        }
+        return cachedVoiceFetchResult(source: source, systemChannel: systemChannel) != nil
+    }
+
+    func canUseDX100ManualVoiceFetch(_ item: RecentVoiceFetch) -> Bool {
+        guard item.isCompatible(with: selectedEditorDevice),
+              selectedEditorDevice == .dx100,
+              case let .dx100Bank(bank, _) = item.source,
+              let bankKind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)
+        else {
+            return false
+        }
+        return bankKind.requiresManualBulkCapture
+    }
+
     func cachedConfigurationFetchResult(options: ConfigurationFetchOptions) -> FB01ConfigurationData? {
         options.isCurrent ? cachedCurrentConfiguration : cachedConfigurations[options.slot + 1]
     }
@@ -1391,6 +1410,15 @@ final class DocumentModel: ObservableObject {
 
             let voices: [DX100VoiceData]
             if kind == .internalRAM {
+                _ = try await Task.detached(priority: .userInitiated) {
+                    try EditorVoiceDocumentService.fetchDX100CurrentVoice(
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        timeout: 4
+                    )
+                }.value
+
                 let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
                 let responseMessages = try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.sendAndReceive(

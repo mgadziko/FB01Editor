@@ -314,23 +314,22 @@ struct VoiceDocumentDeviceCommands: View {
             .disabled(document.isBusy)
 
             Menu("Fetch Cached Voice") {
-                if document.recentFetchedVoices.isEmpty {
+                let cachedItems = document.recentFetchedVoices.filter { document.canUseCachedVoiceFetch($0) }
+                if cachedItems.isEmpty {
                     Text("No Cached Voice Fetches")
                 } else {
-                    ForEach(document.recentFetchedVoices) { item in
+                    ForEach(cachedItems) { item in
                         Button(item.title) {
                             fetchRecentVoice(item, mode: .cacheOnly)
                         }
-                        .disabled(document.isBusy || item.source == nil || !item.isCompatible(with: document.selectedEditorDevice))
+                        .disabled(document.isBusy)
                     }
                 }
             }
 
             if document.selectedEditorDevice == .dx100 {
                 Menu("Fetch Voice Manually") {
-                    let manualItems = document.recentFetchedVoices.filter {
-                        $0.isCompatible(with: document.selectedEditorDevice) && $0.kind == .dx100Bank && $0.source != nil
-                    }
+                    let manualItems = document.recentFetchedVoices.filter { document.canUseDX100ManualVoiceFetch($0) }
                     if manualItems.isEmpty {
                         Text("No Manual DX Voice Fetches")
                     } else {
@@ -364,8 +363,15 @@ struct VoiceDocumentDeviceCommands: View {
         }
 
         if mode == .cacheOnly,
-           document.cachedVoiceFetchResult(source: source, systemChannel: document.systemChannel) == nil {
+           !document.canUseCachedVoiceFetch(item) {
             document.errorMessage = "Cached fetch unavailable for \(item.title). Show the bank first or fetch the voice manually."
+            document.statusMessage = nil
+            return
+        }
+
+        if mode == .manualAssist,
+           !document.canUseDX100ManualVoiceFetch(item) {
+            document.errorMessage = "Manual DX fetch is available only for Bank A-D voices that Forest can step through one voice at a time."
             document.statusMessage = nil
             return
         }
