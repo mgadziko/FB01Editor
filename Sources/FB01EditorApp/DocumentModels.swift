@@ -4451,6 +4451,42 @@ final class DocumentModel: ObservableObject {
         sendKeyboardNote(note, isOn: isOn)
     }
 
+    func sendAllNotesOff() {
+        guard !isBusy else {
+            statusMessage = "All Notes Off paused while the current device operation finishes."
+            return
+        }
+
+        let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
+        let channel = UInt8(min(max(keyboardChannel, 0), 15))
+        let allNotesOffMessage: [UInt8] = [
+            0xB0 | channel,
+            123,
+            0,
+        ]
+
+        liveKeyboardDisplay.pressedNotes.removeAll()
+        externalKeyboardPressedNotes.removeAll()
+
+        Task(priority: .high) { [weak self] in
+            do {
+                try await LiveMIDIPlaybackController.shared.sendImmediate(allNotesOffMessage, destinationIndex: destinationIndex)
+                await MainActor.run {
+                    self?.liveKeyboardDisplay.status = "All Notes Off sent on channel \(Int(channel) + 1)"
+                    self?.externalKeyboardStatus = "All Notes Off sent to \(destinationName)"
+                    self?.statusMessage = "All Notes Off sent on channel \(Int(channel) + 1) to \(destinationName)."
+                    self?.errorMessage = nil
+                }
+            } catch {
+                await MainActor.run {
+                    self?.errorMessage = "All Notes Off failed: \(error)"
+                    self?.statusMessage = nil
+                }
+            }
+        }
+    }
+
     private func updateExternalKeyboardPressedNotes(from message: [UInt8]) {
         guard message.count > 2, let status = message.first else {
             return

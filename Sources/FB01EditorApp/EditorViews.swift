@@ -764,6 +764,14 @@ struct LiveKeyboardPaletteControlsView: View {
                         .disabled(document.midiSources.isEmpty || !document.externalKeyboardEnabled)
                         .padding(.top, 18)
                         .forestHoverHelp("Chooses the external MIDI source that can play the current Forest audition voice.")
+
+                        Button("All Notes Off") {
+                            document.sendAllNotesOff()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(document.isBusy || document.midiDestinations.isEmpty)
+                        .padding(.top, 18)
+                        .forestHoverHelp("Sends MIDI All Notes Off on the current live-keyboard channel and clears any held-note state in Forest.")
                     }
                 }
             }
@@ -854,6 +862,13 @@ struct LiveKeyboardMIDIControlsView: View {
                 .frame(minWidth: 180, alignment: .leading)
                 .disabled(document.midiSources.isEmpty || !document.externalKeyboardEnabled)
                 .forestHoverHelp("Chooses the external MIDI source that can play the current Forest audition voice.")
+
+                Button("All Notes Off") {
+                    document.sendAllNotesOff()
+                }
+                .buttonStyle(.bordered)
+                .disabled(document.isBusy || document.midiDestinations.isEmpty)
+                .forestHoverHelp("Sends MIDI All Notes Off on the current live-keyboard channel and clears any held-note state in Forest.")
             }
             .font(.caption)
 
