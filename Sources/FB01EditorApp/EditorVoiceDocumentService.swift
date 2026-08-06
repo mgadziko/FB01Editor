@@ -21,6 +21,45 @@ struct EditorFetchedVoiceDocument: Sendable {
 }
 
 enum EditorVoiceDocumentService {
+    static func prepareDX100AssistedDeviceVoiceRecall(
+        bank: Int,
+        voiceNumber: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        selectionDelay: TimeInterval = 0.35,
+        releaseDelay: TimeInterval = 0.1
+    ) throws {
+        let playSwitch = 27
+        let bankSwitchMap = [1: 28, 2: 29, 3: 30, 4: 31]
+        guard let bankSwitch = bankSwitchMap[bank] else {
+            throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.dx100)
+        }
+
+        try sendDX100SwitchPress(
+            switchNumber: playSwitch,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            releaseDelay: releaseDelay
+        )
+        Thread.sleep(forTimeInterval: selectionDelay)
+
+        try sendDX100SwitchPress(
+            switchNumber: bankSwitch,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            releaseDelay: releaseDelay
+        )
+        Thread.sleep(forTimeInterval: selectionDelay)
+
+        try sendDX100SwitchPress(
+            switchNumber: voiceNumber,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            releaseDelay: releaseDelay
+        )
+        Thread.sleep(forTimeInterval: selectionDelay)
+    }
+
     static func fetchDX100CurrentVoice(
         sourceIndex: Int,
         destinationIndex: Int,
@@ -188,5 +227,18 @@ enum EditorVoiceDocumentService {
             throw FB01MIDIError.timedOut("DX100/27 program selection")
         }
         return [0xC0 | UInt8(channel), UInt8(programNumber)]
+    }
+
+    private static func sendDX100SwitchPress(
+        switchNumber: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        releaseDelay: TimeInterval
+    ) throws {
+        let pressBytes = try DX100.switchModeMessage(channel: systemChannel, switchNumber: switchNumber, value: 127)
+        let releaseBytes = try DX100.switchModeMessage(channel: systemChannel, switchNumber: switchNumber, value: 0)
+        try FB01MIDI.sendImmediate(pressBytes, destinationIndex: destinationIndex)
+        Thread.sleep(forTimeInterval: releaseDelay)
+        try FB01MIDI.sendImmediate(releaseBytes, destinationIndex: destinationIndex)
     }
 }

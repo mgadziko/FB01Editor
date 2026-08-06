@@ -10,7 +10,7 @@ enum DX100DumpError: Error, CustomStringConvertible {
     case sourceNotFound(String)
     case destinationNotFound(String)
     case unknownArgument(String)
-    case timeout
+    case timeout(String)
     case invalidBank(String)
     case invalidVoiceNumber(String)
     case invalidMethod(String)
@@ -32,8 +32,8 @@ enum DX100DumpError: Error, CustomStringConvertible {
             "No MIDI destination matches \(query). Run `dx100-dump list` to inspect available destinations."
         case .unknownArgument(let argument):
             "Unknown argument: \(argument)"
-        case .timeout:
-            "Timed out with no DX100 single-voice bulk dump."
+        case .timeout(let details):
+            "Timed out waiting for \(details)."
         case .invalidBank(let value):
             "Invalid bank value: \(value). Use A-D or 1-4."
         case .invalidVoiceNumber(let value):
@@ -59,6 +59,7 @@ struct RequestOptions {
     var outputURL: URL?
     var channel = 0
     var timeoutSeconds: TimeInterval = 4
+    var noRequest = false
 }
 
 enum DX100BankProbeMethod: String {
@@ -299,6 +300,9 @@ func parseRequestOptions(_ arguments: ArraySlice<String>) throws -> RequestOptio
             guard valueIndex < arguments.endIndex else { throw DX100DumpError.missingValue(argument) }
             options.timeoutSeconds = TimeInterval(arguments[valueIndex]) ?? options.timeoutSeconds
             index = arguments.index(after: valueIndex)
+        case "--no-request", "--manual":
+            options.noRequest = true
+            index = arguments.index(after: index)
         default:
             throw DX100DumpError.unknownArgument(argument)
         }
@@ -541,7 +545,6 @@ func sendSwitchPress(
 func requestDump(kind: DX100DumpRequestKind, options: RequestOptions) throws {
     let source = try selectedSource(matching: options.sourceQuery)
     let destination = try selectedDestination(matching: options.destinationQuery)
-    let requestBytes = try kind.bytes(channel: options.channel)
     let state = SysExCaptureState()
 
     var client = MIDIClientRef()
@@ -564,8 +567,13 @@ func requestDump(kind: DX100DumpRequestKind, options: RequestOptions) throws {
     try check(MIDIPortConnectSource(inputPort, source.endpoint, nil), "MIDIPortConnectSource")
 
     print("Listening to [\(source.index)] \(source.displayName)")
-    print("Requesting DX100 \(kind.displayName) from [\(destination.index)] \(destination.displayName)")
-    try send(bytes: requestBytes, to: destination, outputPort: outputPort)
+    if options.noRequest {
+        print("Waiting for manual DX100 \(kind.displayName) dump from [\(destination.index)] \(destination.displayName)")
+    } else {
+        let requestBytes = try kind.bytes(channel: options.channel)
+        print("Requesting DX100 \(kind.displayName) from [\(destination.index)] \(destination.displayName)")
+        try send(bytes: requestBytes, to: destination, outputPort: outputPort)
+    }
 
     let start = Date()
     var inspectedCount = 0
@@ -613,7 +621,13 @@ func requestDump(kind: DX100DumpRequestKind, options: RequestOptions) throws {
         inspectedCount = messages.count
     }
 
-    throw DX100DumpError.timeout
+    let timeoutDetails: String
+    if options.noRequest {
+        timeoutDetails = "a manual DX100 \(kind.displayName) dump on \(source.displayName)"
+    } else {
+        timeoutDetails = "a DX100 \(kind.displayName) dump response on \(source.displayName)"
+    }
+    throw DX100DumpError.timeout(timeoutDetails)
 }
 
 func requestBankVoice(options: BankVoiceProbeOptions) throws {
@@ -692,7 +706,7 @@ func requestBankVoice(options: BankVoiceProbeOptions) throws {
         inspectedCount = messages.count
     }
 
-    throw DX100DumpError.timeout
+    throw DX100DumpError.timeout("a DX100 current-voice dump after bank selection")
 }
 
 func dx100SwitchModeMessage(channel: Int, switchNumber: Int, value: Int) throws -> [UInt8] {
@@ -788,7 +802,7 @@ func requestPanelBankVoice(options: BankVoiceProbeOptions) throws {
         }
         inspectedCount = messages.count
     }
-    throw DX100DumpError.timeout
+    throw DX100DumpError.timeout("a DX100 current-voice dump after panel bank selection")
 }
 
 func requestRawSwitch(options: SwitchProbeOptions) throws {
@@ -842,7 +856,7 @@ func requestRawSwitch(options: SwitchProbeOptions) throws {
         }
         inspectedCount = messages.count
     }
-    throw DX100DumpError.timeout
+    throw DX100DumpError.timeout("a DX100 current-voice dump after raw switch \(options.switchNumber)")
 }
 
 func requestParameterSequence(options: ParameterSequenceProbeOptions) throws {
@@ -923,14 +937,19 @@ func requestParameterSequence(options: ParameterSequenceProbeOptions) throws {
         inspectedCount = messages.count
     }
 
-    throw DX100DumpError.timeout
+    switch options.requestKind {
+    case .currentVoice:
+        throw DX100DumpError.timeout("a DX100 current-voice dump after parameter sequence")
+    case .voiceBank:
+        throw DX100DumpError.timeout("a DX100 32-voice bulk dump after parameter sequence")
+    }
 }
 
 func printUsage() {
     print("""
     dx100-dump list
-    dx100-dump current-voice [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxv>] [--timeout <seconds>]
-    dx100-dump voice-bank [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxvb>] [--timeout <seconds>]
+    dx100-dump current-voice [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxv>] [--timeout <seconds>] [--no-request|--manual]
+    dx100-dump voice-bank [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxvb>] [--timeout <seconds>] [--no-request|--manual]
     dx100-dump bank-voice --bank <A-D|1-4> --voice <1-24> [--method <program|param126|param127>] [--selection-delay <seconds>] [--recall-edit] [--no-request] [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxv>] [--timeout <seconds>]
     dx100-dump panel-bank-voice --bank <A-D|1-4> --voice <1-24> [--play-first] [--selection-delay <seconds>] [--no-request] [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--output <file.dxv>] [--timeout <seconds>]
     dx100-dump raw-switch --switch <0-31> [--value <0-127>] [--selection-delay <seconds>] [--no-request] [--channel <0-15>] [--source <index-or-name>] [--destination <index-or-name>] [--timeout <seconds>]

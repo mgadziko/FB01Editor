@@ -84,6 +84,19 @@ public enum DX100 {
         ]
     }
 
+    public static func switchModeMessage(channel: Int = 0, switchNumber: Int, value: Int) throws -> [UInt8] {
+        guard (0...15).contains(channel) else {
+            throw DX100SysExError.invalidChannel(channel)
+        }
+        guard (0...35).contains(switchNumber) else {
+            throw DX100SysExError.invalidByte(UInt8(clamping: switchNumber))
+        }
+        guard (0...127).contains(value) else {
+            throw DX100SysExError.invalidByte(UInt8(clamping: value))
+        }
+        return [start, yamahaID, 0x10 | UInt8(channel), 0x08, UInt8(switchNumber), UInt8(value), end]
+    }
+
     public static func isThirtyTwoVoiceBulkSysEx(_ bytes: [UInt8]) -> Bool {
         guard bytes.count == thirtyTwoVoiceDataByteCount + 8,
               bytes[0] == start,

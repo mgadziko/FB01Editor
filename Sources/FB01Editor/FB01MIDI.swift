@@ -390,6 +390,43 @@ public enum FB01MIDI {
         throw FB01MIDIError.timedOut("MIDI response")
     }
 
+    public static func receiveSysEx(
+        sourceIndex: Int,
+        timeout: TimeInterval = 15,
+        maxMessages: Int = 1
+    ) throws -> [[UInt8]] {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+
+        let source = try sourceEndpoint(at: sourceIndex)
+        let state = FB01SysExCaptureState()
+        let client = try clientStore.client()
+
+        var inputPort = MIDIPortRef()
+        try check(MIDIInputPortCreateWithBlock(client, "FB01EditorMIDIPassiveReceiveInput" as CFString, &inputPort) { packetList, _ in
+            state.append(packetList: packetList)
+        }, "MIDIInputPortCreateWithBlock")
+        defer { MIDIPortDispose(inputPort) }
+
+        try check(MIDIPortConnectSource(inputPort, source, nil), "MIDIPortConnectSource")
+
+        let start = Date()
+        while Date().timeIntervalSince(start) < timeout {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
+            let received = state.snapshot()
+            if received.count >= maxMessages {
+                return Array(received.prefix(maxMessages))
+            }
+        }
+
+        let received = state.snapshot()
+        if !received.isEmpty {
+            return Array(received.prefix(maxMessages))
+        }
+
+        throw FB01MIDIError.timedOut("MIDI response")
+    }
+
     private static func requestBatch(
         _ kinds: [FB01MIDIRequestKind],
         sourceIndex: Int,

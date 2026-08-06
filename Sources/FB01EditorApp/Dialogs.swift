@@ -313,6 +313,21 @@ func showEditorError(title: String, message: String) {
 }
 
 @MainActor
+func confirmDX100AssistedVoiceRecall(bankTitle: String, voiceNumber: Int) -> Bool {
+    let alert = NSAlert()
+    alert.messageText = "Confirm DX100/27 Voice \(voiceNumber)"
+    alert.informativeText = """
+    Forest selected \(bankTitle) Voice \(voiceNumber) on the DX100/27.
+
+    Press front-panel Voice \(voiceNumber) on the synth once, then click Continue.
+    """
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "Continue")
+    alert.addButton(withTitle: "Cancel")
+    return alert.runModal() == .alertFirstButtonReturn
+}
+
+@MainActor
 final class EditorProgressPanel {
     private let panel: NSPanel
     private let messageLabel: NSTextField

@@ -267,6 +267,24 @@ private let ivoryEbonyPackedVoiceRecord: [UInt8] = [
     #expect(candidates[0].title == "Voice 1: IvoryEbony")
 }
 
+@Test func dx100DocumentServiceBuildsVoiceBankFilesFromDisplayedVoices() throws {
+    let service = DX100DocumentService.shared
+    let voice1 = try DX100VoiceData(singleVoiceBulkSysEx: ivoryEbonySingleVoiceDump)
+    let voice2 = try voice1.settingName("Solid Bass")
+
+    var displayedVoices = Array(repeating: try service.templateVoice(), count: DX100VoiceBankData.dx100DisplayedVoiceCount)
+    displayedVoices[0] = voice1
+    displayedVoices[1] = voice2
+
+    let bank = try service.voiceBank(fromDisplayedVoices: displayedVoices, channel: 4)
+    let candidates = try service.voiceCandidates(fromSysExBytes: bank.thirtyTwoVoiceBulkSysEx())
+
+    #expect(candidates.count == 24)
+    #expect(candidates[0].voice.name == "IvoryEbony")
+    #expect(candidates[1].voice.name == "Solid Bass")
+    #expect(candidates.allSatisfy { $0.channel == 4 })
+}
+
 @Test func dx100DocumentServiceReadsMultipleSingleVoiceMessagesFromSysEx() throws {
     let candidates = try DX100DocumentService.shared.voiceCandidates(
         fromSysExBytes: ivoryEbonySingleVoiceDump + ivoryEbonySingleVoiceDump

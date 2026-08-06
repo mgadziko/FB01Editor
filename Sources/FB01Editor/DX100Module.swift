@@ -45,8 +45,17 @@ public enum DX100VoiceBankKind: Equatable, Sendable {
         case .internalRAM:
             true
         case .bankMemory:
-            false
+            true
         case .preset:
+            false
+        }
+    }
+
+    public var requiresManualBulkCapture: Bool {
+        switch self {
+        case .bankMemory:
+            true
+        case .internalRAM, .preset:
             false
         }
     }

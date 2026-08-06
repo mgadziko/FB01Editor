@@ -166,6 +166,15 @@ struct VoiceSelectorCommands: View {
         }
         .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.showVoiceBank))
 
+        if document.selectedEditorDevice == .dx100 {
+            Button("Save Bank to File...") {
+                if let sourceBank = activeVoiceBankSelector {
+                    document.saveDX100VoiceBankFromSelector(bank: sourceBank)
+                }
+            }
+            .disabled(document.isBusy || activeVoiceBankSelector == nil)
+        }
+
         if document.supportsSelectedDeviceCommand(.storeVoiceBank) {
             Menu(document.selectedDeviceCommandTitle(.storeVoiceBank, fallback: "Store Bank")) {
                 ForEach(document.selectedDeviceWritableVoiceBanks, id: \.self) { targetBank in

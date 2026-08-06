@@ -225,7 +225,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         do {
             let loaded = try readVoiceDocument(from: url, context: .bankFile)
             rememberEditorLoadDirectory(for: url)
-            return VoiceDocumentModel(loadedDocument: loaded, fileURL: url)
+            return VoiceDocumentModel(loadedDocument: loaded, fileURL: nil)
         } catch {
             showEditorError(title: "Load Voice Bank Failed", message: "\(error)")
             return nil

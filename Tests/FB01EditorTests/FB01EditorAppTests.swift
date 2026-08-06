@@ -789,7 +789,7 @@ import UniformTypeIdentifiers
     let model = DocumentModel()
     model.selectedEditorDevice = .dx100
 
-    #expect(model.selectedDeviceVoiceBanks == [1])
+    #expect(model.selectedDeviceVoiceBanks == [1, 2, 3, 4, 5])
     #expect(model.selectedDeviceWritableVoiceBanks == [1, 2, 3, 4, 5])
     #expect(model.selectedDeviceVoiceBankTitle(1) == "Internal")
     #expect(model.selectedDeviceVoiceBankTitle(2) == "Bank A")
