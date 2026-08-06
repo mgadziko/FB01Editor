@@ -20,6 +20,14 @@ struct LoadedDX100VoiceBankFile: Sendable {
     }
 }
 
+struct LoadedFB01VoiceBankFile: Sendable {
+    var fileURL: URL
+    var title: String
+    var systemChannel: Int
+    var bankData: FB01VoiceBankData
+    var isVoiceRAM: Bool
+}
+
 enum VoiceDocumentLoadContext {
     case singleOrGeneric
     case bankFile
@@ -29,6 +37,186 @@ enum VoiceFetchExecutionMode {
     case automatic
     case cacheOnly
     case manualAssist
+}
+
+struct DX100BankFileVoiceOrigin: Equatable {
+    var selectorID: UUID
+    var slotIndex: Int
+    var bankTitle: String
+}
+
+struct FB01BankFileVoiceOrigin: Equatable {
+    var selectorID: UUID
+    var slotIndex: Int
+    var bankTitle: String
+}
+
+private final class DX100BankFileStoreAccessory: NSView {
+    private let selectors: [EditorDocumentWorkspace.DX100VoiceBankFileSelector]
+    private let preferredOrigin: DX100BankFileVoiceOrigin?
+    private let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let slotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+
+    init(selectors: [EditorDocumentWorkspace.DX100VoiceBankFileSelector], preferredOrigin: DX100BankFileVoiceOrigin?) {
+        self.selectors = selectors
+        self.preferredOrigin = preferredOrigin
+        super.init(frame: NSRect(x: 0, y: 0, width: 520, height: 112))
+
+        let stack = NSStackView()
+        stack.frame = bounds
+        stack.autoresizingMask = [.width, .height]
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        selectors.forEach { selector in
+            bankPopup.addItem(withTitle: selector.title)
+        }
+
+        if let preferredOrigin,
+           let preferredSelectorIndex = selectors.firstIndex(where: { $0.id == preferredOrigin.selectorID }) {
+            bankPopup.selectItem(at: preferredSelectorIndex)
+        } else {
+            bankPopup.selectItem(at: 0)
+        }
+
+        bankPopup.target = self
+        bankPopup.action = #selector(bankChanged)
+        reloadSlots()
+
+        stack.addArrangedSubview(labelledEditorPopup(label: "Bank window:", popup: bankPopup))
+        stack.addArrangedSubview(labelledEditorPopup(label: "Slot:", popup: slotPopup))
+
+        let note = NSTextField(wrappingLabelWithString: "If this voice came from the selected bank window, the original slot is preselected.")
+        note.textColor = .secondaryLabelColor
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        note.maximumNumberOfLines = 3
+        note.preferredMaxLayoutWidth = 500
+        note.frame = NSRect(x: 0, y: 0, width: 500, height: 40)
+        stack.addArrangedSubview(note)
+
+        addSubview(stack)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func bankChanged() {
+        reloadSlots()
+    }
+
+    var selection: (selector: EditorDocumentWorkspace.DX100VoiceBankFileSelector, item: EditorDocumentWorkspace.DX100VoiceBankFileSelector.Item)? {
+        guard selectors.indices.contains(bankPopup.indexOfSelectedItem) else { return nil }
+        let selector = selectors[bankPopup.indexOfSelectedItem]
+        guard selector.items.indices.contains(slotPopup.indexOfSelectedItem) else { return nil }
+        let item = selector.items[slotPopup.indexOfSelectedItem]
+        return (selector, item)
+    }
+
+    private func reloadSlots() {
+        guard selectors.indices.contains(bankPopup.indexOfSelectedItem) else { return }
+        let selector = selectors[bankPopup.indexOfSelectedItem]
+        let priorIndex = slotPopup.indexOfSelectedItem
+        slotPopup.removeAllItems()
+        for item in selector.items {
+            slotPopup.addItem(withTitle: "\(item.displayNumber)  \(item.title)")
+        }
+
+        if selector.id == preferredOrigin?.selectorID,
+           let preferredSlotIndex = selector.items.firstIndex(where: { $0.slotIndex == preferredOrigin?.slotIndex }) {
+            slotPopup.selectItem(at: preferredSlotIndex)
+        } else if priorIndex >= 0, priorIndex < selector.items.count {
+            slotPopup.selectItem(at: priorIndex)
+        } else {
+            slotPopup.selectItem(at: 0)
+        }
+    }
+}
+
+private final class FB01BankFileStoreAccessory: NSView {
+    private let selectors: [EditorDocumentWorkspace.FB01VoiceBankFileSelector]
+    private let preferredOrigin: FB01BankFileVoiceOrigin?
+    private let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let slotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+
+    init(selectors: [EditorDocumentWorkspace.FB01VoiceBankFileSelector], preferredOrigin: FB01BankFileVoiceOrigin?) {
+        self.selectors = selectors
+        self.preferredOrigin = preferredOrigin
+        super.init(frame: NSRect(x: 0, y: 0, width: 520, height: 112))
+
+        let stack = NSStackView()
+        stack.frame = bounds
+        stack.autoresizingMask = [.width, .height]
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        selectors.forEach { selector in
+            bankPopup.addItem(withTitle: selector.title)
+        }
+
+        if let preferredOrigin,
+           let preferredSelectorIndex = selectors.firstIndex(where: { $0.id == preferredOrigin.selectorID }) {
+            bankPopup.selectItem(at: preferredSelectorIndex)
+        } else {
+            bankPopup.selectItem(at: 0)
+        }
+
+        bankPopup.target = self
+        bankPopup.action = #selector(bankChanged)
+        reloadSlots()
+
+        stack.addArrangedSubview(labelledEditorPopup(label: "Bank window:", popup: bankPopup))
+        stack.addArrangedSubview(labelledEditorPopup(label: "Slot:", popup: slotPopup))
+
+        let note = NSTextField(wrappingLabelWithString: "If this voice came from the selected bank window, the original slot is preselected.")
+        note.textColor = .secondaryLabelColor
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        note.maximumNumberOfLines = 3
+        note.preferredMaxLayoutWidth = 500
+        note.frame = NSRect(x: 0, y: 0, width: 500, height: 40)
+        stack.addArrangedSubview(note)
+
+        addSubview(stack)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func bankChanged() {
+        reloadSlots()
+    }
+
+    var selection: (selector: EditorDocumentWorkspace.FB01VoiceBankFileSelector, item: EditorDocumentWorkspace.FB01VoiceBankFileSelector.Item)? {
+        guard selectors.indices.contains(bankPopup.indexOfSelectedItem) else { return nil }
+        let selector = selectors[bankPopup.indexOfSelectedItem]
+        guard selector.items.indices.contains(slotPopup.indexOfSelectedItem) else { return nil }
+        let item = selector.items[slotPopup.indexOfSelectedItem]
+        return (selector, item)
+    }
+
+    private func reloadSlots() {
+        guard selectors.indices.contains(bankPopup.indexOfSelectedItem) else { return }
+        let selector = selectors[bankPopup.indexOfSelectedItem]
+        let priorIndex = slotPopup.indexOfSelectedItem
+        slotPopup.removeAllItems()
+        for item in selector.items {
+            slotPopup.addItem(withTitle: "\(item.displayNumber)  \(item.title)")
+        }
+
+        if selector.id == preferredOrigin?.selectorID,
+           let preferredSlotIndex = selector.items.firstIndex(where: { $0.slotIndex == preferredOrigin?.slotIndex }) {
+            slotPopup.selectItem(at: preferredSlotIndex)
+        } else if priorIndex >= 0, priorIndex < selector.items.count {
+            slotPopup.selectItem(at: priorIndex)
+        } else {
+            slotPopup.selectItem(at: 0)
+        }
+    }
 }
 
 @MainActor
@@ -48,6 +236,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var voiceCharacterType: VoiceCharacterType = .other
     @Published var performanceMacroValues = PerformanceMacro.neutralValues
     @Published var layoutRevision = 0
+    var fb01BankFileOrigin: FB01BankFileVoiceOrigin?
+    var dx100BankFileOrigin: DX100BankFileVoiceOrigin?
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
@@ -121,6 +311,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         noteVoiceReplacement()
         errorMessage = nil
         statusMessage = nil
+    }
+
+    var canStoreToLinkedBankWindow: Bool {
+        sourceDevice == .dx100 || sourceDevice == .fb01
+    }
+
+    var linkedBankWindowStoreTitle: String? {
+        "Store Voice to Open Bank Window..."
     }
 
     func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
@@ -270,6 +468,59 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return LoadedDX100VoiceBankFile(fileURL: url, candidates: candidates)
         } catch {
             showEditorError(title: "Load DX100/27 Voice Bank Failed", message: "\(error)")
+            return nil
+        }
+    }
+
+    static func loadFB01BankFile() -> LoadedFB01VoiceBankFile? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = UTType.currentModuleVoiceBankFileTypes
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = preferredEditorLoadDirectoryURL()
+        panel.message = "Load an FB-01 voice bank file from disk and open it as a bank window."
+        panel.prompt = "Load Voice Bank from File"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return nil
+        }
+
+        return loadFB01BankFile(from: url)
+    }
+
+    static func loadFB01BankFile(from url: URL) -> LoadedFB01VoiceBankFile? {
+        do {
+            let artifact = try FB01Artifact(sysexBytes: Array(Data(contentsOf: url)))
+            guard artifact.messages.count == 1 else {
+                throw FB01AppError.message("This file does not contain a single FB-01 voice bank.")
+            }
+
+            switch artifact.messages[0] {
+            case let .voiceBankDumpData(systemChannel, bank, _, data, _):
+                let bankData = try FB01VoiceBankData(bank: bank, data: data)
+                rememberEditorLoadDirectory(for: url)
+                return LoadedFB01VoiceBankFile(
+                    fileURL: url,
+                    title: url.deletingPathExtension().lastPathComponent,
+                    systemChannel: systemChannel,
+                    bankData: bankData,
+                    isVoiceRAM: false
+                )
+            case let .voiceRAMDumpData(systemChannel, _, data, _):
+                let bankData = try FB01VoiceBankData(bank: 0, data: data)
+                rememberEditorLoadDirectory(for: url)
+                return LoadedFB01VoiceBankFile(
+                    fileURL: url,
+                    title: url.deletingPathExtension().lastPathComponent,
+                    systemChannel: systemChannel,
+                    bankData: bankData,
+                    isVoiceRAM: true
+                )
+            default:
+                throw FB01AppError.message("This file does not contain an FB-01 voice bank.")
+            }
+        } catch {
+            showEditorError(title: "Load Voice Bank Failed", message: "\(error)")
             return nil
         }
     }
@@ -821,6 +1072,126 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             progressPanel.dismiss()
             isBusy = false
         }
+    }
+
+    func storeToLinkedBankWindow(workspace: EditorDocumentWorkspace) {
+        guard !isBusy else { return }
+
+        switch sourceDevice {
+        case .dx100:
+            let selectors = workspace.openDX100VoiceBankFileSelectors
+            guard !selectors.isEmpty else {
+                errorMessage = "Open a DX100/27 voice bank window before storing this voice into a bank file."
+                statusMessage = nil
+                return
+            }
+
+            guard let target = chooseDX100BankFileStoreTarget(selectors: selectors, preferredOrigin: dx100BankFileOrigin) else {
+                return
+            }
+
+            do {
+                let dxVoice = try neutralVoice.dx100Voice()
+                try workspace.replaceVoice(inDX100VoiceBankFileSelector: target.selectorID, slotIndex: target.slotIndex, with: dxVoice)
+                dx100BankFileOrigin = DX100BankFileVoiceOrigin(
+                    selectorID: target.selectorID,
+                    slotIndex: target.slotIndex,
+                    bankTitle: target.selectorTitle
+                )
+                statusMessage = "Stored \(displayName) into \(target.selectorTitle) slot \(target.slotIndex + 1). Save the bank window to write the updated bank file."
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store to bank window failed: \(error)"
+            }
+        case .fb01:
+            let selectors = workspace.openFB01VoiceBankFileSelectors
+            guard !selectors.isEmpty else {
+                errorMessage = "Open an FB-01 voice bank window before storing this voice into a bank file."
+                statusMessage = nil
+                return
+            }
+
+            guard let target = chooseFB01BankFileStoreTarget(selectors: selectors, preferredOrigin: fb01BankFileOrigin) else {
+                return
+            }
+
+            do {
+                try workspace.replaceVoice(inFB01VoiceBankFileSelector: target.selectorID, slotIndex: target.slotIndex, with: voice)
+                fb01BankFileOrigin = FB01BankFileVoiceOrigin(
+                    selectorID: target.selectorID,
+                    slotIndex: target.slotIndex,
+                    bankTitle: target.selectorTitle
+                )
+                statusMessage = "Stored \(displayName) into \(target.selectorTitle) slot \(target.slotIndex + 1). Save the bank window to write the updated bank file."
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store to bank window failed: \(error)"
+            }
+        }
+    }
+
+    private struct DX100BankFileStoreTarget {
+        var selectorID: UUID
+        var selectorTitle: String
+        var slotIndex: Int
+    }
+
+    private func chooseDX100BankFileStoreTarget(
+        selectors: [EditorDocumentWorkspace.DX100VoiceBankFileSelector],
+        preferredOrigin: DX100BankFileVoiceOrigin?
+    ) -> DX100BankFileStoreTarget? {
+        let alert = NSAlert()
+        alert.messageText = "Store Voice to Open Bank Window"
+        alert.informativeText = "Choose which open DX100/27 bank window and which slot should receive this voice."
+        alert.addButton(withTitle: "Store")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let accessory = DX100BankFileStoreAccessory(selectors: selectors, preferredOrigin: preferredOrigin)
+        alert.accessoryView = accessory
+
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let selection = accessory.selection else {
+            return nil
+        }
+        return DX100BankFileStoreTarget(
+            selectorID: selection.selector.id,
+            selectorTitle: selection.selector.title,
+            slotIndex: selection.item.slotIndex
+        )
+    }
+
+    private struct FB01BankFileStoreTarget {
+        var selectorID: UUID
+        var selectorTitle: String
+        var slotIndex: Int
+    }
+
+    private func chooseFB01BankFileStoreTarget(
+        selectors: [EditorDocumentWorkspace.FB01VoiceBankFileSelector],
+        preferredOrigin: FB01BankFileVoiceOrigin?
+    ) -> FB01BankFileStoreTarget? {
+        let alert = NSAlert()
+        alert.messageText = "Store Voice to Open Bank Window"
+        alert.informativeText = "Choose which open FB-01 bank window and which slot should receive this voice."
+        alert.addButton(withTitle: "Store")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let accessory = FB01BankFileStoreAccessory(selectors: selectors, preferredOrigin: preferredOrigin)
+        alert.accessoryView = accessory
+
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let selection = accessory.selection else {
+            return nil
+        }
+        return FB01BankFileStoreTarget(
+            selectorID: selection.selector.id,
+            selectorTitle: selection.selector.title,
+            slotIndex: selection.item.slotIndex
+        )
     }
 
     func sendKeyboardNote(_ note: Int, isOn: Bool, device: DocumentModel) {

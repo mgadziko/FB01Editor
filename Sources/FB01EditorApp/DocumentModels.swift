@@ -2976,6 +2976,86 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func saveDX100VoiceBankFile(_ selector: EditorDocumentWorkspace.DX100VoiceBankFileSelector) {
+        guard selectedEditorDevice == .dx100 else {
+            return
+        }
+
+        let voices = selector.items.map(\.candidate.voice)
+        let channel = selector.items.first?.candidate.channel ?? systemChannel
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = UTType.dx100VoiceBankFileTypes
+        panel.directoryURL = preferredSaveDirectoryURL()
+        panel.nameFieldStringValue = "\(safeFileName(selector.title)).\(DX100SynthModule.shared.fileProfile.voiceBankExtension)"
+        panel.message = "Save the displayed DX100/27 bank file as a voice bank file."
+        panel.prompt = "Save Bank to File"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            let voiceBank = try DX100DocumentService.shared.voiceBank(fromDisplayedVoices: voices, channel: channel)
+            try DX100DocumentService.shared.writeVoiceBank(voiceBank, channel: channel, to: url)
+            rememberSaveDirectory(for: url)
+            statusMessage = "Saved \(selector.title) to \(url.lastPathComponent)."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Save Bank failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    func saveFB01VoiceBankFile(_ selector: EditorDocumentWorkspace.FB01VoiceBankFileSelector) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = UTType.currentModuleVoiceBankFileTypes
+        panel.directoryURL = preferredSaveDirectoryURL()
+        panel.nameFieldStringValue = "\(safeFileName(selector.title)).\(EditorSynthModule.fileProfile.voiceBankExtension)"
+        panel.message = "Save the displayed FB-01 bank file as a voice bank file."
+        panel.prompt = "Save Bank to File"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            let bankDataBytes = selector.items
+                .sorted { $0.displayNumber < $1.displayNumber }
+                .flatMap { $0.voice.bytes }
+            let editedVoices = Dictionary(uniqueKeysWithValues: selector.items.map { ($0.displayNumber, $0.voice) })
+            let editedBank = try FB01VoiceBankData(
+                bank: selector.isVoiceRAM ? 0 : max(0, selector.displayBank - 1),
+                data: bankDataBytes
+            )
+            let savedBank = try editedBank.replacingVoices(editedVoices)
+            let artifact: FB01Artifact
+            if selector.isVoiceRAM {
+                artifact = FB01Artifact(message: .voiceRAMDumpData(
+                    systemChannel: selector.systemChannel,
+                    byteCount: FB01VoiceBankData.bankHeaderByteCount,
+                    data: savedBank.data,
+                    checksum: FB01.checksum(for: savedBank.data)
+                ))
+            } else {
+                artifact = FB01Artifact(message: .voiceBankDumpData(
+                    systemChannel: selector.systemChannel,
+                    bank: max(0, selector.displayBank - 1),
+                    byteCount: FB01VoiceBankData.bankHeaderByteCount,
+                    data: savedBank.data,
+                    checksum: FB01.checksum(for: savedBank.data)
+                ))
+            }
+            try artifact.writeSysEx(to: url)
+            rememberSaveDirectory(for: url)
+            statusMessage = "Saved \(selector.title) to \(url.lastPathComponent)."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Save Bank failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
     func copyVoiceToLocalSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
         guard let target = chooseVoiceSlot(
                 title: "Copy Voice to Slot",

@@ -94,7 +94,7 @@ struct FB01EditorApplication: App {
         .defaultSize(width: 1080, height: 920)
         WindowGroup("Voice Document", id: "voice-document", for: UUID.self) { $id in
             if let id, let voiceDocument = documentWorkspace.voiceDocument(id: id) {
-                VoiceDocumentWindow(document: voiceDocument, device: document) {
+                VoiceDocumentWindow(document: voiceDocument, device: document, workspace: documentWorkspace) {
                     documentWorkspace.closeVoiceDocument(id: id)
                 }
                     .frame(minWidth: 760, minHeight: 620)
@@ -128,6 +128,18 @@ struct FB01EditorApplication: App {
             if let id, let selector = documentWorkspace.dx100VoiceBankFileSelector(id: id) {
                 DX100VoiceBankFileSelectorWindow(selector: selector, document: document, workspace: documentWorkspace) {
                     documentWorkspace.closeDX100VoiceBankFileSelector(id: id)
+                }
+            } else {
+                MissingEditorDocumentView()
+                    .frame(width: 420, height: 180)
+            }
+        }
+        .defaultSize(width: voiceSelectorLayout.windowWidth, height: voiceSelectorLayout.minimumWindowHeight)
+        .windowResizability(.contentSize)
+        WindowGroup("FB-01 Voice Bank File", id: "fb01-voice-bank-file-selector", for: UUID.self) { $id in
+            if let id, let selector = documentWorkspace.fb01VoiceBankFileSelector(id: id) {
+                FB01VoiceBankFileSelectorWindow(selector: selector, document: document, workspace: documentWorkspace) {
+                    documentWorkspace.closeFB01VoiceBankFileSelector(id: id)
                 }
             } else {
                 MissingEditorDocumentView()

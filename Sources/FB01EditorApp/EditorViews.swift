@@ -292,17 +292,74 @@ struct DX100VoiceBankFileSelectorWindow: View {
             identifier: EditorDocumentWorkspace.dx100VoiceBankFileSelectorWindowIdentifier(for: selector.id),
             title: selector.title
         ))
+        .focusedSceneValue(\.activeDX100VoiceBankFileSelector, selector.id)
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
         .onDisappear(perform: onClose)
     }
 
     @MainActor
     private func openVoiceDocument(_ item: EditorDocumentWorkspace.DX100VoiceBankFileSelector.Item) {
-        guard let id = workspace.createVoiceDocument(fromDX100Candidate: item.candidate) else {
+        guard let id = workspace.createVoiceDocument(
+            fromDX100Candidate: item.candidate,
+            bankFileOrigin: DX100BankFileVoiceOrigin(
+                selectorID: selector.id,
+                slotIndex: item.slotIndex,
+                bankTitle: selector.title
+            )
+        ) else {
             return
         }
         if let voiceDocument = workspace.voiceDocument(id: id) {
-            voiceDocument.statusMessage = "Loaded from \(selector.fileURL.lastPathComponent)."
+            voiceDocument.statusMessage = "Pulled \(item.title) from \(selector.fileURL.lastPathComponent)."
+        }
+        openWindow(id: "voice-document", value: id)
+    }
+}
+
+struct FB01VoiceBankFileSelectorWindow: View {
+    let selector: EditorDocumentWorkspace.FB01VoiceBankFileSelector
+    @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
+    var onClose: () -> Void
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        let layout = document.selectedDeviceVoiceBankSelectorLayout
+        SelectorWindowLayout(
+            title: selector.title,
+            subtitle: "Select a voice from this FB-01 bank file to open it in a new Voice Document.",
+            isLoading: false,
+            errorMessage: nil,
+            layout: layout,
+            showsTitle: false
+        ) {
+            selectorGrid(items: selector.items, layout: layout) { item in
+                SelectorGridButton(number: item.displayNumber, title: item.title, buttonWidth: layout.buttonWidth) {
+                    openVoiceDocument(item)
+                }
+                .disabled(document.isBusy)
+                .forestHoverHelp("Opens FB-01 voice \(item.displayNumber) from \(selector.fileURL.lastPathComponent) in a new Voice Document.")
+            }
+        }
+        .background(WindowIdentifierSetter(
+            identifier: EditorDocumentWorkspace.fb01VoiceBankFileSelectorWindowIdentifier(for: selector.id),
+            title: selector.title
+        ))
+        .focusedSceneValue(\.activeFB01VoiceBankFileSelector, selector.id)
+        .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
+        .onDisappear(perform: onClose)
+    }
+
+    @MainActor
+    private func openVoiceDocument(_ item: EditorDocumentWorkspace.FB01VoiceBankFileSelector.Item) {
+        let id = workspace.createVoiceDocument(voice: item.voice, systemChannel: item.systemChannel, statusMessage: "Pulled \(item.title) from \(selector.fileURL.lastPathComponent).")
+        if let voiceDocument = workspace.voiceDocument(id: id) {
+            voiceDocument.sourceDevice = .fb01
+            voiceDocument.fb01BankFileOrigin = FB01BankFileVoiceOrigin(
+                selectorID: selector.id,
+                slotIndex: item.slotIndex,
+                bankTitle: selector.title
+            )
         }
         openWindow(id: "voice-document", value: id)
     }
@@ -2239,6 +2296,7 @@ struct ConfigurationDocumentLiveKeyboardView: View {
 struct VoiceDocumentWindow: View {
     @ObservedObject var document: VoiceDocumentModel
     @ObservedObject var device: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
     var closeDocument: () -> Void
 
     private var voice: FB01VoiceData {
@@ -2561,6 +2619,10 @@ struct VoiceDocumentWindow: View {
             importFromLibraryTitle: "Import Selected Library Voice Into Current Document",
             fetchFromDevice: { device in document.fetchFromDevice(device: device) },
             fetchFromDeviceTitle: device.selectedDeviceVoiceFetchIntoDocumentTitle,
+            storeToLinkedBankWindow: document.canStoreToLinkedBankWindow ? {
+                document.storeToLinkedBankWindow(workspace: workspace)
+            } : nil,
+            storeToLinkedBankWindowTitle: document.linkedBankWindowStoreTitle,
             storeToDevice: { device in document.storeToDevice(device: device) },
             storeToDeviceTitle: device.selectedDeviceVoiceStoreCommandTitle,
             isEdited: document.isEdited,
