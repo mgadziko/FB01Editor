@@ -157,3 +157,6 @@ Before adding another real device module:
 
 Mock modules in tests are useful for proving the app architecture is not
 hardwired to the FB-01, but they are not a substitute for hardware verification.
+
+For authoritative Yamaha wording used during DX100/27 integration, see
+`Docs/ReferenceSources.md`.

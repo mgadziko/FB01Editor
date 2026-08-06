@@ -166,15 +166,6 @@ struct VoiceSelectorCommands: View {
         }
         .disabled(document.isBusy || !document.supportsSelectedDeviceCommand(.showVoiceBank))
 
-        if document.selectedEditorDevice == .dx100 {
-            Button("Save Bank to File...") {
-                if let sourceBank = activeVoiceBankSelector {
-                    document.saveDX100VoiceBankFromSelector(bank: sourceBank)
-                }
-            }
-            .disabled(document.isBusy || activeVoiceBankSelector == nil)
-        }
-
         if document.supportsSelectedDeviceCommand(.storeVoiceBank) {
             Menu(document.selectedDeviceCommandTitle(.storeVoiceBank, fallback: "Store Bank")) {
                 ForEach(document.selectedDeviceWritableVoiceBanks, id: \.self) { targetBank in
@@ -269,6 +260,51 @@ struct VoiceBankSelectorWindow: View {
                 recentTitle: item.fetchTitle
             )
         }
+    }
+}
+
+struct DX100VoiceBankFileSelectorWindow: View {
+    let selector: EditorDocumentWorkspace.DX100VoiceBankFileSelector
+    @ObservedObject var document: DocumentModel
+    @ObservedObject var workspace: EditorDocumentWorkspace
+    var onClose: () -> Void
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        let layout = document.selectedDeviceVoiceBankSelectorLayout
+        SelectorWindowLayout(
+            title: selector.title,
+            subtitle: "Select a voice from this DX100/27 bank file to open it in a new Voice Document.",
+            isLoading: false,
+            errorMessage: nil,
+            layout: layout,
+            showsTitle: false
+        ) {
+            selectorGrid(items: selector.items, layout: layout) { item in
+                SelectorGridButton(number: item.displayNumber, title: item.title, buttonWidth: layout.buttonWidth) {
+                    openVoiceDocument(item)
+                }
+                .disabled(document.isBusy)
+                .forestHoverHelp("Opens DX100/27 voice \(item.displayNumber) from \(selector.fileURL.lastPathComponent) in a new Voice Document.")
+            }
+        }
+        .background(WindowIdentifierSetter(
+            identifier: EditorDocumentWorkspace.dx100VoiceBankFileSelectorWindowIdentifier(for: selector.id),
+            title: selector.title
+        ))
+        .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
+        .onDisappear(perform: onClose)
+    }
+
+    @MainActor
+    private func openVoiceDocument(_ item: EditorDocumentWorkspace.DX100VoiceBankFileSelector.Item) {
+        guard let id = workspace.createVoiceDocument(fromDX100Candidate: item.candidate) else {
+            return
+        }
+        if let voiceDocument = workspace.voiceDocument(id: id) {
+            voiceDocument.statusMessage = "Loaded from \(selector.fileURL.lastPathComponent)."
+        }
+        openWindow(id: "voice-document", value: id)
     }
 }
 
@@ -2287,6 +2323,7 @@ struct VoiceDocumentWindow: View {
                     ))
 
                     OperatorEditor(
+                        editingDevice: document.sourceDevice,
                         operators: voice.operators,
                         neutralOperators: document.neutralVoice.operators,
                         savedNeutralOperators: document.savedNeutralVoice.operators,
@@ -3957,6 +3994,7 @@ struct VoiceDetailView: View {
                 ))
 
                 OperatorEditor(
+                    editingDevice: .fb01,
                     operators: editableVoice.operators,
                     neutralOperators: editableVoice.fourOperatorVoice.operators,
                     savedNeutralOperators: summary.voice.fourOperatorVoice.operators,
@@ -4849,6 +4887,7 @@ struct AlgorithmDiagramView: View {
 }
 
 struct OperatorEditor: View {
+    var editingDevice: EditorDeviceSelection = .fb01
     var operators: [FB01VoiceOperatorData]
     var neutralOperators: [FourOperatorVoiceOperatorData] = []
     var savedNeutralOperators: [FourOperatorVoiceOperatorData] = []
@@ -4893,6 +4932,7 @@ struct OperatorEditor: View {
                 VStack(alignment: .leading, spacing: 10) {
                     if let selectedOperator {
                         OperatorInspector(
+                            editingDevice: editingDevice,
                             operatorData: selectedOperator,
                             neutralOperatorData: selectedNeutralOperator ?? selectedOperator.fourOperatorOperator,
                             savedNeutralOperatorData: selectedSavedNeutralOperator,
@@ -4941,7 +4981,7 @@ struct OperatorSelectorButton: View {
                     roleLabel
                 }
 
-                Text("TL \(operatorData.totalLevel), Mul \(operatorData.multiple)")
+                Text("TL \(operatorData.totalLevel), Ratio \(operatorData.multiple)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -4985,12 +5025,25 @@ struct OperatorSelectorButton: View {
 }
 
 struct OperatorInspector: View {
+    var editingDevice: EditorDeviceSelection = .fb01
     var operatorData: FB01VoiceOperatorData
     var neutralOperatorData: FourOperatorVoiceOperatorData
     var savedNeutralOperatorData: FourOperatorVoiceOperatorData?
     @Binding var operatorEnabled: Bool
     var updateNeutralOperator: ((Int, (inout FourOperatorVoiceOperatorData) -> Void) -> Void)? = nil
     var updateOperator: (FB01VoiceOperatorData) -> Void
+
+    private var sustainLikeLabel: String {
+        editingDevice == .dx100 ? "Decay 1 Level" : "Sustain Level"
+    }
+
+    private var frequencyRatioLabel: String {
+        editingDevice == .dx100 ? "Oscillator Frequency Ratio" : "Frequency Ratio"
+    }
+
+    private var keyVelocityLevelLabel: String {
+        editingDevice == .dx100 ? "Key Velocity Sensitivity" : "Key Velocity to Level"
+    }
 
     var body: some View {
         LazyVGrid(columns: [
@@ -5009,7 +5062,7 @@ struct OperatorInspector: View {
                         neutralUpdate: { $0.totalLevel = $1 }
                     )
                     sharedOperatorKnob(
-                        "Key Velocity to Level",
+                        keyVelocityLevelLabel,
                         neutralValue: { $0.keyVelocityLevelSensitivity },
                         projectedValue: { $0.velocitySensitivityForTotalLevel },
                         range: 0...7,
@@ -5026,7 +5079,7 @@ struct OperatorInspector: View {
                 OperatorControlGroup(title: "Tuning") {
                     HStack(alignment: .top, spacing: 12) {
                         sharedOperatorKnob(
-                            "Frequency Ratio",
+                            frequencyRatioLabel,
                             neutralValue: { $0.oscillatorFrequencyControl },
                             projectedValue: { $0.multiple },
                             range: 0...15,
@@ -5058,10 +5111,10 @@ struct OperatorInspector: View {
                     GridItem(.adaptive(minimum: 82), spacing: 12),
                 ], alignment: .leading, spacing: 10) {
                     sharedOperatorKnob("Attack Rate", neutralValue: { $0.attack }, projectedValue: { $0.attackRate }, range: 0...31, projectedUpdate: { try $0.settingAttackRate($1) }, neutralUpdate: { $0.attack = $1 })
-                    sharedOperatorKnob("Velocity to Attack", neutralValue: { $0.velocityToAttack }, projectedValue: { $0.velocitySensitivityForAttackRate }, range: 0...7, projectedUpdate: { try $0.settingVelocitySensitivityForAttackRate($1) }, neutralUpdate: { $0.velocityToAttack = $1 })
+                    sharedOperatorKnob("Velocity to Attack Rate", neutralValue: { $0.velocityToAttack }, projectedValue: { $0.velocitySensitivityForAttackRate }, range: 0...7, projectedUpdate: { try $0.settingVelocitySensitivityForAttackRate($1) }, neutralUpdate: { $0.velocityToAttack = $1 })
                     sharedOperatorKnob("Decay 1 Rate", neutralValue: { $0.decay1 }, projectedValue: { $0.decay1Rate }, range: 0...15, projectedUpdate: { try $0.settingDecay1Rate($1) }, neutralUpdate: { $0.decay1 = $1 })
                     sharedOperatorKnob("Decay 2 Rate", neutralValue: { $0.decay2 }, projectedValue: { $0.decay2Rate }, range: 0...31, projectedUpdate: { try $0.settingDecay2Rate($1) }, neutralUpdate: { $0.decay2 = $1 })
-                    sharedOperatorKnob("Sustain Level", neutralValue: { $0.sustain }, projectedValue: { $0.sustainLevel }, range: 0...15, projectedUpdate: { try $0.settingSustainLevel($1) }, neutralUpdate: { $0.sustain = $1 })
+                    sharedOperatorKnob(sustainLikeLabel, neutralValue: { $0.sustain }, projectedValue: { $0.sustainLevel }, range: 0...15, projectedUpdate: { try $0.settingSustainLevel($1) }, neutralUpdate: { $0.sustain = $1 })
                     sharedOperatorKnob("Release Rate", neutralValue: { $0.release }, projectedValue: { $0.releaseRate }, range: 0...15, projectedUpdate: { try $0.settingReleaseRate($1) }, neutralUpdate: { $0.release = $1 })
                 }
             }

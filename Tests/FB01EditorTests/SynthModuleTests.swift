@@ -100,7 +100,7 @@ import Testing
     #expect(module.supportedDocumentDescriptors.map(\.kind) == [.voice, .voiceBank])
     #expect(module.commandDescriptors.map(\.kind) == [.showVoiceBank, .refreshDeviceCache])
     #expect(module.parameterDescriptors.contains { $0.id == "voice.lfoDelay" && $0.displayName == "LFO Delay" })
-    #expect(module.parameterDescriptors.contains { $0.id == "voice.operator.frequency" && $0.displayName == "Frequency Ratio" })
+    #expect(module.parameterDescriptors.contains { $0.id == "voice.operator.frequency" && $0.displayName == "Oscillator Frequency Ratio" })
     #expect(module.parameterBindingDescriptors.contains { $0.parameterID == "voice.operator.frequency" && $0.fieldName == "oscillatorFrequency" })
     #expect(module.writableVoiceBanks == [1, 2, 3, 4, 5])
     #expect(module.readOnlyVoiceBanks == [6, 7, 8, 9, 10, 11, 12, 13])

@@ -124,6 +124,18 @@ struct FB01EditorApplication: App {
         }
         .defaultSize(width: voiceSelectorLayout.windowWidth, height: voiceSelectorLayout.minimumWindowHeight)
         .windowResizability(.contentSize)
+        WindowGroup("DX100 Voice Bank File", id: "dx100-voice-bank-file-selector", for: UUID.self) { $id in
+            if let id, let selector = documentWorkspace.dx100VoiceBankFileSelector(id: id) {
+                DX100VoiceBankFileSelectorWindow(selector: selector, document: document, workspace: documentWorkspace) {
+                    documentWorkspace.closeDX100VoiceBankFileSelector(id: id)
+                }
+            } else {
+                MissingEditorDocumentView()
+                    .frame(width: 420, height: 180)
+            }
+        }
+        .defaultSize(width: voiceSelectorLayout.windowWidth, height: voiceSelectorLayout.minimumWindowHeight)
+        .windowResizability(.contentSize)
         WindowGroup("Configuration Bank", id: "configuration-bank-selector") {
             ConfigurationSelectorWindow(document: document, workspace: documentWorkspace)
         }

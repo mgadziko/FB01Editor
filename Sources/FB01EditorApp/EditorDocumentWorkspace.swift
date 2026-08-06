@@ -53,11 +53,17 @@ extension FocusedValues {
     }
 }
 
+private func isDX100VoiceBankFile(_ url: URL) -> Bool {
+    let ext = url.pathExtension.lowercased()
+    return ext == DX100SynthModule.shared.fileProfile.voiceBankExtension
+}
+
 struct EditorDocumentCommands: View {
     @ObservedObject var document: DocumentModel
     @ObservedObject var workspace: EditorDocumentWorkspace
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
+    @FocusedValue(\.activeVoiceBankSelector) private var activeVoiceBankSelector
 
     private var canSaveFocusedDocumentOrLibrary: Bool {
         if let activeDocumentActions {
@@ -146,7 +152,14 @@ struct EditorDocumentCommands: View {
         .keyboardShortcut("o", modifiers: [.command, .option])
 
         Button(loadVoiceBankFromFileTitle) {
-            if let id = workspace.loadVoiceDocumentFromBankFile(preferredDevice: document.selectedEditorDevice) {
+            if document.selectedEditorDevice == .dx100 {
+                if let id = workspace.loadDX100VoiceBankFileSelector() {
+                    if let selector = workspace.dx100VoiceBankFileSelector(id: id) {
+                        document.rememberRecentLoadedVoiceFile(selector.fileURL)
+                    }
+                    openWindow(id: "dx100-voice-bank-file-selector", value: id)
+                }
+            } else if let id = workspace.loadVoiceDocumentFromBankFile(preferredDevice: document.selectedEditorDevice) {
                 if let url = workspace.voiceDocument(id: id)?.fileURL {
                     document.rememberRecentLoadedVoiceFile(url)
                 }
@@ -165,6 +178,15 @@ struct EditorDocumentCommands: View {
                     .help(item.path)
                 }
             }
+        }
+
+        if document.selectedEditorDevice == .dx100 {
+            Button("Save Bank to File...") {
+                if let sourceBank = activeVoiceBankSelector {
+                    document.saveDX100VoiceBankFromSelector(bank: sourceBank)
+                }
+            }
+            .disabled(document.isBusy || activeVoiceBankSelector == nil)
         }
 
         if selectedDeviceSupportsConfigurations {
@@ -245,7 +267,12 @@ struct EditorDocumentCommands: View {
     }
 
     private func openRecentVoice(_ item: RecentEditorFile) {
-        if let id = workspace.loadVoiceDocument(from: item.url) {
+        if isDX100VoiceBankFile(item.url) {
+            if let id = workspace.loadDX100VoiceBankFileSelector(from: item.url) {
+                document.rememberRecentLoadedVoiceFile(item.url)
+                openWindow(id: "dx100-voice-bank-file-selector", value: id)
+            }
+        } else if let id = workspace.loadVoiceDocument(from: item.url) {
             document.rememberRecentLoadedVoiceFile(item.url)
             openWindow(id: "voice-document", value: id)
         }
@@ -286,15 +313,33 @@ struct VoiceDocumentDeviceCommands: View {
             }
             .disabled(document.isBusy)
 
-            Menu("Fetch Recent Voice") {
+            Menu("Fetch Cached Voice") {
                 if document.recentFetchedVoices.isEmpty {
-                    Text("No Recent Voice Fetches")
+                    Text("No Cached Voice Fetches")
                 } else {
                     ForEach(document.recentFetchedVoices) { item in
                         Button(item.title) {
-                            fetchRecentVoice(item)
+                            fetchRecentVoice(item, mode: .cacheOnly)
                         }
                         .disabled(document.isBusy || item.source == nil || !item.isCompatible(with: document.selectedEditorDevice))
+                    }
+                }
+            }
+
+            if document.selectedEditorDevice == .dx100 {
+                Menu("Fetch Voice Manually") {
+                    let manualItems = document.recentFetchedVoices.filter {
+                        $0.isCompatible(with: document.selectedEditorDevice) && $0.kind == .dx100Bank && $0.source != nil
+                    }
+                    if manualItems.isEmpty {
+                        Text("No Manual DX Voice Fetches")
+                    } else {
+                        ForEach(manualItems) { item in
+                            Button(item.title) {
+                                fetchRecentVoice(item, mode: .manualAssist)
+                            }
+                            .disabled(document.isBusy)
+                        }
                     }
                 }
             }
@@ -313,15 +358,28 @@ struct VoiceDocumentDeviceCommands: View {
         }
     }
 
-    private func fetchRecentVoice(_ item: RecentVoiceFetch) {
+    private func fetchRecentVoice(_ item: RecentVoiceFetch, mode: VoiceFetchExecutionMode) {
         guard let source = item.source else {
             return
         }
+
+        if mode == .cacheOnly,
+           document.cachedVoiceFetchResult(source: source, systemChannel: document.systemChannel) == nil {
+            document.errorMessage = "Cached fetch unavailable for \(item.title). Show the bank first or fetch the voice manually."
+            document.statusMessage = nil
+            return
+        }
+
         let id = workspace.createVoiceDocument()
         openWindow(id: "voice-document", value: id)
         Task { @MainActor in
             await Task.yield()
-            workspace.voiceDocument(id: id)?.fetchFromDevice(device: document, source: source, recentTitle: item.title)
+            workspace.voiceDocument(id: id)?.fetchFromDevice(
+                device: document,
+                source: source,
+                recentTitle: item.title,
+                mode: mode
+            )
         }
     }
 }
@@ -379,8 +437,26 @@ struct ConfigurationDocumentDeviceCommands: View {
 
 @MainActor
 final class EditorDocumentWorkspace: ObservableObject {
+    struct DX100VoiceBankFileSelector: Identifiable {
+        struct Item: Identifiable {
+            let id = UUID()
+            let displayNumber: Int
+            let candidate: DX100VoiceDocumentCandidate
+
+            var title: String {
+                candidate.voice.name.isEmpty ? "Voice \(displayNumber)" : candidate.voice.name
+            }
+        }
+
+        let id: UUID
+        let fileURL: URL
+        let title: String
+        let items: [Item]
+    }
+
     @Published private(set) var voiceDocuments: [UUID: VoiceDocumentModel] = [:]
     @Published private(set) var configurationDocuments: [UUID: ConfigurationDocumentModel] = [:]
+    @Published private(set) var dx100VoiceBankFileSelectors: [UUID: DX100VoiceBankFileSelector] = [:]
     private var voiceDocumentObservers: [UUID: AnyCancellable] = [:]
     private var configurationDocumentObservers: [UUID: AnyCancellable] = [:]
 
@@ -414,12 +490,26 @@ final class EditorDocumentWorkspace: ObservableObject {
         return loaded.id
     }
 
+    func loadDX100VoiceBankFileSelector() -> UUID? {
+        guard let loaded = VoiceDocumentModel.loadDX100BankFile() else {
+            return nil
+        }
+        return insertDX100VoiceBankFileSelector(loaded)
+    }
+
     func loadVoiceDocument(from url: URL) -> UUID? {
         guard let loaded = VoiceDocumentModel.loadFromDisk(url: url) else {
             return nil
         }
         insertVoiceDocument(loaded)
         return loaded.id
+    }
+
+    func loadDX100VoiceBankFileSelector(from url: URL) -> UUID? {
+        guard let loaded = VoiceDocumentModel.loadDX100BankFile(from: url) else {
+            return nil
+        }
+        return insertDX100VoiceBankFileSelector(loaded)
     }
 
     func loadConfigurationDocument() -> UUID? {
@@ -446,6 +536,10 @@ final class EditorDocumentWorkspace: ObservableObject {
         configurationDocuments[id]
     }
 
+    func dx100VoiceBankFileSelector(id: UUID) -> DX100VoiceBankFileSelector? {
+        dx100VoiceBankFileSelectors[id]
+    }
+
     func closeVoiceDocument(id: UUID) {
         voiceDocuments[id] = nil
         voiceDocumentObservers[id] = nil
@@ -456,6 +550,10 @@ final class EditorDocumentWorkspace: ObservableObject {
         configurationDocumentObservers[id] = nil
     }
 
+    func closeDX100VoiceBankFileSelector(id: UUID) {
+        dx100VoiceBankFileSelectors[id] = nil
+    }
+
     private func insertVoiceDocument(_ document: VoiceDocumentModel) {
         voiceDocumentObservers[document.id] = document.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
@@ -463,11 +561,42 @@ final class EditorDocumentWorkspace: ObservableObject {
         voiceDocuments[document.id] = document
     }
 
+    func createVoiceDocument(fromDX100Candidate candidate: DX100VoiceDocumentCandidate) -> UUID? {
+        do {
+            let loaded = LoadedVoiceDocument(
+                projection: try candidate.voice.fb01EditableVoice(),
+                neutralVoice: candidate.voice.fourOperatorVoice,
+                systemChannel: candidate.channel,
+                sourceDevice: .dx100
+            )
+            let document = VoiceDocumentModel(loadedDocument: loaded, fileURL: nil)
+            insertVoiceDocument(document)
+            return document.id
+        } catch {
+            showEditorError(title: "Open DX100/27 Voice Failed", message: "\(error)")
+            return nil
+        }
+    }
+
     private func insertConfigurationDocument(_ document: ConfigurationDocumentModel) {
         configurationDocumentObservers[document.id] = document.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
         configurationDocuments[document.id] = document
+    }
+
+    private func insertDX100VoiceBankFileSelector(_ loaded: LoadedDX100VoiceBankFile) -> UUID {
+        let id = UUID()
+        let items = loaded.candidates.enumerated().map { index, candidate in
+            DX100VoiceBankFileSelector.Item(displayNumber: index + 1, candidate: candidate)
+        }
+        dx100VoiceBankFileSelectors[id] = DX100VoiceBankFileSelector(
+            id: id,
+            fileURL: loaded.fileURL,
+            title: loaded.title,
+            items: items
+        )
+        return id
     }
 
     func confirmApplicationTermination() -> NSApplication.TerminateReply {
@@ -523,6 +652,10 @@ final class EditorDocumentWorkspace: ObservableObject {
 
     static func voiceBankSelectorWindowIdentifier(for bank: Int) -> String {
         "voice-bank-selector-\(bank)"
+    }
+
+    static func dx100VoiceBankFileSelectorWindowIdentifier(for id: UUID) -> String {
+        "dx100-voice-bank-file-selector-\(id.uuidString)"
     }
 
     static var configurationBankSelectorWindowIdentifier: String {

@@ -52,33 +52,35 @@ enum ControlHoverText {
             return "Sets how readily the voice accepts loudness modulation from the LFO or other controllers."
         case "Pitch MOD Sensitivity":
             return "Sets how readily the voice accepts pitch modulation, usually from vibrato sources like the mod wheel."
-        case "Frequency Ratio", "OSC Frequency Ratio", "OSC FRQ Multiplier", "OSC Frequency":
-            return "Sets the operator's pitch ratio. Simple ratios sound pure; wider ratios add brighter, reedier, or more metallic harmonics."
+        case "Frequency Ratio", "Oscillator Frequency Ratio", "OSC Frequency Ratio", "OSC FRQ Multiplier", "OSC Frequency":
+            return "Sets the operator's tuning ratio. Simple ratios sound pure; wider or stranger ratios add brighter, reedier, or more metallic harmonics."
         case "Detune", "Detune 1":
             return "Fine-shifts pitch for beating, chorus, or rougher harmonic color."
         case "Detune 2":
-            return "Adds another small pitch offset for thickness or shimmer."
+            return "FB-01 only. Adds a second small pitch offset for extra thickness or shimmer."
         case "Total Level":
             return "Sets this operator's output strength. On carriers it changes loudness; on modulators it changes harmonic brightness and complexity."
         case "TL Adjust", "Level Adjust":
-            return "Adds a fine level offset for balancing this operator against the others."
-        case "Vel to TL", "Velocity to Total Level", "Key Velocity to Level":
+            return "FB-01 only. Adds a fine level offset for balancing this operator against the others."
+        case "Vel to TL", "Velocity to Total Level", "Key Velocity to Level", "Key Velocity Sensitivity":
             return "Makes playing harder change this operator's level, adding touch-sensitive loudness or brightness."
         case "Keyboard Level Depth":
             return "Changes how strongly this operator gets louder or softer across the keyboard range."
         case "Keyboard Rate Scaling Depth":
             return "Changes how much this operator's envelope speeds up higher on the keyboard."
-        case "Attack":
+        case "Attack", "Attack Rate":
             return "Controls how quickly the sound reaches its initial level after a note starts."
-        case "Vel to Attack":
+        case "Vel to Attack", "Velocity to Attack", "Velocity to Attack Rate":
             return "Makes harder playing change attack speed for more expressive starts."
-        case "Decay 1":
+        case "Decay 1", "Decay 1 Rate":
             return "Controls the first drop after the attack, shaping punch or pluck."
-        case "Decay 2":
+        case "Decay 2", "Decay 2 Rate":
             return "Controls the later decay toward sustain, shaping how the tone settles."
-        case "Sustain":
+        case "Sustain", "Sustain Level":
             return "Sets the held level after the decay stages."
-        case "Release":
+        case "Decay 1 Level":
+            return "DX100/27 held level after the first decay stage. Higher values keep more body in the note."
+        case "Release", "Release Rate":
             return "Controls how quickly the sound fades after you release a key."
         case "Level":
             return "Sets output level; higher values make this part louder."

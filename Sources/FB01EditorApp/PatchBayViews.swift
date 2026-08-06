@@ -310,7 +310,7 @@ enum PerformanceMacro: String, CaseIterable, Identifiable {
     }
 
     static func summary(for characterType: VoiceCharacterType) -> String {
-        "Neutral is 64. Moving a macro above or below neutral applies musical deltas to FB-01 parameters. Character currently uses the \(characterType.title) recipe."
+        "Neutral is 64. Moving a macro above or below neutral applies musical deltas to the current 4-op voice parameters. Character currently uses the \(characterType.title) recipe."
     }
 
     func apply(previousValue: Int, newValue: Int, characterType: VoiceCharacterType, to voice: FB01VoiceData) throws -> FB01VoiceData {
@@ -1066,10 +1066,10 @@ struct FMPatchOperatorModule: View {
                 subtitle: "Pitch source, ratio, and fine tuning."
             ) {
                 LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                    ParameterKnob(label: "Frequency Ratio", value: sharedOperatorBinding(neutralValue: { $0.oscillatorFrequencyControl }, projectedValue: { $0.multiple }, projectedUpdate: { try $0.settingMultiple($1) }, neutralUpdate: { $0.oscillatorFrequencyControl = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.oscillatorFrequencyControl }, projected: { $0.multiple }))
+                    ParameterKnob(label: frequencyRatioLabel, value: sharedOperatorBinding(neutralValue: { $0.oscillatorFrequencyControl }, projectedValue: { $0.multiple }, projectedUpdate: { try $0.settingMultiple($1) }, neutralUpdate: { $0.oscillatorFrequencyControl = $1 }), range: 0...15, helpText: frequencyRatioHelpText, isModified: sharedIsModified(neutral: { $0.oscillatorFrequencyControl }, projected: { $0.multiple }))
                     ParameterKnob(label: "Detune 1", value: sharedOperatorBinding(neutralValue: { $0.detune }, projectedValue: { $0.detune1 }, projectedUpdate: { try $0.settingDetune1($1) }, neutralUpdate: { $0.detune = $1 }), range: 0...7, isModified: sharedIsModified(neutral: { $0.detune }, projected: { $0.detune1 }))
                     if supportsDetune2 {
-                        ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3, isModified: isModified(\.detune2))
+                        ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3, helpText: "FB-01 only. Adds a second detune stage for extra shimmer and thickness.", isModified: isModified(\.detune2))
                     }
                 }
             }
@@ -1080,11 +1080,11 @@ struct FMPatchOperatorModule: View {
             ) {
                 VStack(alignment: .leading, spacing: 10) {
                     LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                        ParameterKnob(label: "Total Level", value: sharedOperatorBinding(neutralValue: { $0.totalLevel }, projectedValue: { $0.totalLevel }, projectedUpdate: { try $0.settingTotalLevel($1) }, neutralUpdate: { $0.totalLevel = $1 }), range: 0...127, isModified: sharedIsModified(neutral: { $0.totalLevel }, projected: { $0.totalLevel }))
+                        ParameterKnob(label: "Total Level", value: sharedOperatorBinding(neutralValue: { $0.totalLevel }, projectedValue: { $0.totalLevel }, projectedUpdate: { try $0.settingTotalLevel($1) }, neutralUpdate: { $0.totalLevel = $1 }), range: 0...127, helpText: totalLevelHelpText, isModified: sharedIsModified(neutral: { $0.totalLevel }, projected: { $0.totalLevel }))
                         if supportsTLAdjust {
-                            ParameterKnob(label: "Level Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, isModified: isModified(\.totalLevelAdjust))
+                            ParameterKnob(label: "Level Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, helpText: "FB-01 only. Adds a fine level trim for balancing this operator against the others.", isModified: isModified(\.totalLevelAdjust))
                         }
-                        ParameterKnob(label: "Key Velocity\nto Level", value: sharedOperatorBinding(neutralValue: { $0.keyVelocityLevelSensitivity }, projectedValue: { $0.velocitySensitivityForTotalLevel }, projectedUpdate: { try $0.settingVelocitySensitivityForTotalLevel($1) }, neutralUpdate: { $0.keyVelocityLevelSensitivity = $1 }), range: 0...7, isModified: sharedIsModified(neutral: { $0.keyVelocityLevelSensitivity }, projected: { $0.velocitySensitivityForTotalLevel }))
+                        ParameterKnob(label: keyVelocityToLevelLabel, value: sharedOperatorBinding(neutralValue: { $0.keyVelocityLevelSensitivity }, projectedValue: { $0.velocitySensitivityForTotalLevel }, projectedUpdate: { try $0.settingVelocitySensitivityForTotalLevel($1) }, neutralUpdate: { $0.keyVelocityLevelSensitivity = $1 }), range: 0...7, helpText: keyVelocityToLevelHelpText, isModified: sharedIsModified(neutral: { $0.keyVelocityLevelSensitivity }, projected: { $0.velocitySensitivityForTotalLevel }))
                     }
 
                     HStack(alignment: .top, spacing: 16) {
@@ -1115,12 +1115,12 @@ struct FMPatchOperatorModule: View {
                 .allowsHitTesting(operatorEnabled)
 
                 LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
-                    ParameterKnob(label: "Attack", value: sharedOperatorBinding(neutralValue: { $0.attack }, projectedValue: { $0.attackRate }, projectedUpdate: { try $0.settingAttackRate($1) }, neutralUpdate: { $0.attack = $1 }), range: 0...31, isModified: sharedIsModified(neutral: { $0.attack }, projected: { $0.attackRate }))
-                    ParameterKnob(label: "Vel to Attack", value: sharedOperatorBinding(neutralValue: { $0.velocityToAttack }, projectedValue: { $0.velocitySensitivityForAttackRate }, projectedUpdate: { try $0.settingVelocitySensitivityForAttackRate($1) }, neutralUpdate: { $0.velocityToAttack = $1 }), range: 0...7, isModified: sharedIsModified(neutral: { $0.velocityToAttack }, projected: { $0.velocitySensitivityForAttackRate }))
-                    ParameterKnob(label: "Decay 1", value: sharedOperatorBinding(neutralValue: { $0.decay1 }, projectedValue: { $0.decay1Rate }, projectedUpdate: { try $0.settingDecay1Rate($1) }, neutralUpdate: { $0.decay1 = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.decay1 }, projected: { $0.decay1Rate }))
-                    ParameterKnob(label: "Decay 2", value: sharedOperatorBinding(neutralValue: { $0.decay2 }, projectedValue: { $0.decay2Rate }, projectedUpdate: { try $0.settingDecay2Rate($1) }, neutralUpdate: { $0.decay2 = $1 }), range: 0...31, isModified: sharedIsModified(neutral: { $0.decay2 }, projected: { $0.decay2Rate }))
-                    ParameterKnob(label: "Sustain", value: sharedOperatorBinding(neutralValue: { $0.sustain }, projectedValue: { $0.sustainLevel }, projectedUpdate: { try $0.settingSustainLevel($1) }, neutralUpdate: { $0.sustain = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.sustain }, projected: { $0.sustainLevel }))
-                    ParameterKnob(label: "Release", value: sharedOperatorBinding(neutralValue: { $0.release }, projectedValue: { $0.releaseRate }, projectedUpdate: { try $0.settingReleaseRate($1) }, neutralUpdate: { $0.release = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.release }, projected: { $0.releaseRate }))
+                    ParameterKnob(label: "Attack Rate", value: sharedOperatorBinding(neutralValue: { $0.attack }, projectedValue: { $0.attackRate }, projectedUpdate: { try $0.settingAttackRate($1) }, neutralUpdate: { $0.attack = $1 }), range: 0...31, isModified: sharedIsModified(neutral: { $0.attack }, projected: { $0.attackRate }))
+                    ParameterKnob(label: "Velocity to\nAttack Rate", value: sharedOperatorBinding(neutralValue: { $0.velocityToAttack }, projectedValue: { $0.velocitySensitivityForAttackRate }, projectedUpdate: { try $0.settingVelocitySensitivityForAttackRate($1) }, neutralUpdate: { $0.velocityToAttack = $1 }), range: 0...7, isModified: sharedIsModified(neutral: { $0.velocityToAttack }, projected: { $0.velocitySensitivityForAttackRate }))
+                    ParameterKnob(label: "Decay 1 Rate", value: sharedOperatorBinding(neutralValue: { $0.decay1 }, projectedValue: { $0.decay1Rate }, projectedUpdate: { try $0.settingDecay1Rate($1) }, neutralUpdate: { $0.decay1 = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.decay1 }, projected: { $0.decay1Rate }))
+                    ParameterKnob(label: "Decay 2 Rate", value: sharedOperatorBinding(neutralValue: { $0.decay2 }, projectedValue: { $0.decay2Rate }, projectedUpdate: { try $0.settingDecay2Rate($1) }, neutralUpdate: { $0.decay2 = $1 }), range: 0...31, isModified: sharedIsModified(neutral: { $0.decay2 }, projected: { $0.decay2Rate }))
+                    ParameterKnob(label: sustainLikeLabel, value: sharedOperatorBinding(neutralValue: { $0.sustain }, projectedValue: { $0.sustainLevel }, projectedUpdate: { try $0.settingSustainLevel($1) }, neutralUpdate: { $0.sustain = $1 }), range: 0...15, helpText: sustainLikeHelpText, isModified: sharedIsModified(neutral: { $0.sustain }, projected: { $0.sustainLevel }))
+                    ParameterKnob(label: "Release Rate", value: sharedOperatorBinding(neutralValue: { $0.release }, projectedValue: { $0.releaseRate }, projectedUpdate: { try $0.settingReleaseRate($1) }, neutralUpdate: { $0.release = $1 }), range: 0...15, isModified: sharedIsModified(neutral: { $0.release }, projected: { $0.releaseRate }))
                 }
             }
 
@@ -1152,6 +1152,45 @@ struct FMPatchOperatorModule: View {
 
     private var amplifierTitle: String {
         neutralOperatorData.isCarrier ? "Amplifier - Volume Level" : "Amplifier - Modulation Level"
+    }
+
+    private var frequencyRatioLabel: String {
+        editingDevice == .dx100 ? "Oscillator\nFrequency Ratio" : "Frequency Ratio"
+    }
+
+    private var frequencyRatioHelpText: String {
+        switch editingDevice {
+        case .dx100:
+            return "DX100/27 oscillator frequency ratio. Lower ratios sound foundational; higher or unusual ratios add brighter or more metallic harmonics."
+        case .fb01:
+            return "FB-01 ratio control. It behaves like a multiplier-style oscillator ratio for setting harmonic relationships."
+        }
+    }
+
+    private var totalLevelHelpText: String {
+        neutralOperatorData.isCarrier
+            ? "Sets the carrier loudness you actually hear."
+            : "Sets the modulator depth that shapes tone color and harmonic brightness."
+    }
+
+    private var keyVelocityToLevelHelpText: String {
+        neutralOperatorData.isCarrier
+            ? "Makes harder playing change this carrier's loudness."
+            : "Makes harder playing change this modulator's strength, so harder playing can brighten or roughen the tone."
+    }
+
+    private var keyVelocityToLevelLabel: String {
+        editingDevice == .dx100 ? "Key Velocity\nSensitivity" : "Key Velocity\nto Level"
+    }
+
+    private var sustainLikeLabel: String {
+        editingDevice == .dx100 ? "Decay 1 Level" : "Sustain Level"
+    }
+
+    private var sustainLikeHelpText: String {
+        editingDevice == .dx100
+            ? "DX100/27 Decay 1 Level. Sets the level the envelope settles toward after its first decay."
+            : "Sets the held level after the decay stages."
     }
 
     private var supportsDetune2: Bool { editingDevice == .fb01 }

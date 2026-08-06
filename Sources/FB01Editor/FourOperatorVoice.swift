@@ -67,10 +67,13 @@ public struct FourOperatorVoiceData: Equatable, Sendable {
 public struct FourOperatorVoiceOperatorData: Equatable, Sendable {
     public var operatorNumber: Int
     public var isCarrier: Bool
+    /// Shared operator output-level concept.
+    /// On carriers this is directly heard loudness; on modulators it is
+    /// modulation depth that changes harmonic content.
     public var totalLevel: Int
     /// Device-specific coarse oscillator tuning control.
     /// On FB-01 this maps to the integer frequency multiplier.
-    /// On DX100/27 this maps to Yamaha's frequency-ratio control value.
+    /// On DX100/27 this maps to Yamaha's oscillator frequency ratio value.
     public var oscillatorFrequencyControl: Int
     public var detune: Int
     public var keyboardLevelScalingDepth: Int
@@ -83,6 +86,9 @@ public struct FourOperatorVoiceOperatorData: Equatable, Sendable {
     public var attack: Int
     public var decay1: Int
     public var decay2: Int
+    /// Shared held-level concept.
+    /// On FB-01 this maps to Sustain Level.
+    /// On DX100/27 this maps to Yamaha's Decay 1 Level.
     public var sustain: Int
     public var release: Int
 

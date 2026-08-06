@@ -11,9 +11,24 @@ struct LoadedVoiceDocument: Sendable {
     var sourceDevice: EditorDeviceSelection
 }
 
+struct LoadedDX100VoiceBankFile: Sendable {
+    var fileURL: URL
+    var candidates: [DX100VoiceDocumentCandidate]
+
+    var title: String {
+        fileURL.deletingPathExtension().lastPathComponent
+    }
+}
+
 enum VoiceDocumentLoadContext {
     case singleOrGeneric
     case bankFile
+}
+
+enum VoiceFetchExecutionMode {
+    case automatic
+    case cacheOnly
+    case manualAssist
 }
 
 @MainActor
@@ -232,6 +247,33 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
+    static func loadDX100BankFile() -> LoadedDX100VoiceBankFile? {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = UTType.dx100VoiceBankFileTypes
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.directoryURL = preferredEditorLoadDirectoryURL()
+        panel.message = "Load a DX100/27 voice bank file from disk and open it as a bank window."
+        panel.prompt = "Load DX100/27 Voice Bank File"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return nil
+        }
+
+        return loadDX100BankFile(from: url)
+    }
+
+    static func loadDX100BankFile(from url: URL) -> LoadedDX100VoiceBankFile? {
+        do {
+            let candidates = try DX100DocumentService.shared.readVoiceCandidates(from: url)
+            rememberEditorLoadDirectory(for: url)
+            return LoadedDX100VoiceBankFile(fileURL: url, candidates: candidates)
+        } catch {
+            showEditorError(title: "Load DX100/27 Voice Bank Failed", message: "\(error)")
+            return nil
+        }
+    }
+
     func importFromDisk() {
         guard !isBusy else { return }
         let panel = NSOpenPanel()
@@ -268,7 +310,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    func fetchFromDevice(device: DocumentModel, source preselectedSource: VoiceDocumentFetchSource? = nil, recentTitle: String? = nil) {
+    func fetchFromDevice(
+        device: DocumentModel,
+        source preselectedSource: VoiceDocumentFetchSource? = nil,
+        recentTitle: String? = nil,
+        mode: VoiceFetchExecutionMode = .automatic
+    ) {
         guard !isBusy else { return }
         guard let selectedDevice = device.selectedEditorDevice else {
             errorMessage = "Fetch failed: select a device first."
@@ -285,7 +332,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         if selectedDevice == .dx100 {
             let source = preselectedSource ?? .currentVoice
-            if let cachedResult = device.cachedVoiceFetchResult(source: source, systemChannel: systemChannel) {
+            if mode != .manualAssist,
+               let cachedResult = device.cachedVoiceFetchResult(source: source, systemChannel: systemChannel) {
                 applyDocumentVoices(
                     workingNeutral: cachedResult.neutralVoice,
                     projection: cachedResult.voice,
@@ -303,6 +351,94 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 device.rememberRecentFetchedVoice(source, title: cachedResult.title)
                 errorMessage = nil
                 isBusy = false
+                return
+            }
+
+            if mode == .cacheOnly {
+                errorMessage = "Cached fetch unavailable for \(recentTitle ?? source.title()). Show the bank first or fetch the voice manually."
+                statusMessage = nil
+                isBusy = false
+                return
+            }
+
+            if mode == .manualAssist {
+                guard case let .dx100Bank(bank, voiceNumber) = source else {
+                    errorMessage = "Manual fetch is available only for DX100/27 bank voices."
+                    statusMessage = nil
+                    isBusy = false
+                    return
+                }
+
+                let bankTitle = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)"
+                let fetchTitle = recentTitle ?? "DX100/27 \(bankTitle) Voice \(voiceNumber + 1)"
+                statusMessage = "Preparing manual fetch for \(fetchTitle) on \(systemChannelName)..."
+                let fetchProgressPanel = EditorProgressPanel(
+                    title: "Fetching Voice",
+                    message: "The voice is being fetched. Please wait.\nSelecting \(fetchTitle) on the DX100/27..."
+                )
+                fetchProgressPanel.show()
+
+                Task {
+                    do {
+                        try await Task.detached(priority: .userInitiated) {
+                            try EditorVoiceDocumentService.prepareDX100AssistedDeviceVoiceRecall(
+                                bank: bank - 1,
+                                voiceNumber: voiceNumber,
+                                destinationIndex: destinationIndex,
+                                systemChannel: systemChannel
+                            )
+                        }.value
+
+                        fetchProgressPanel.update(
+                            message: "The voice is being fetched. Please wait.\nPress the matching front-panel voice number for \(fetchTitle), then Continue."
+                        )
+                        let confirmed = confirmDX100AssistedVoiceRecall(
+                            bankTitle: bankTitle,
+                            voiceNumber: voiceNumber + 1
+                        )
+                        guard confirmed else {
+                            throw CancellationError()
+                        }
+
+                        fetchProgressPanel.update(
+                            message: "The voice is being fetched. Please wait.\nRequesting current voice dump for \(fetchTitle)..."
+                        )
+                        let fetched = try await Task.detached(priority: .userInitiated) {
+                            try EditorVoiceDocumentService.fetchDX100CurrentVoice(
+                                sourceIndex: sourceIndex,
+                                destinationIndex: destinationIndex,
+                                systemChannel: systemChannel
+                            )
+                        }.value
+
+                        let dxVoice = fetched.voice
+                        let projected = try dxVoice.fb01EditableVoice()
+                        applyDocumentVoices(
+                            workingNeutral: dxVoice.fourOperatorVoice,
+                            projection: projected,
+                            savedNeutral: dxVoice.fourOperatorVoice,
+                            savedProjection: projected
+                        )
+                        resetPerformanceMacros()
+                        self.systemChannel = fetched.channel
+                        self.sourceDevice = .dx100
+                        fileURL = nil
+                        noteVoiceReplacement()
+                        preparedKeyboardVoiceSignature = nil
+                        let fetchedName = dxVoice.name.isEmpty ? "Untitled" : dxVoice.name
+                        statusMessage = "Fetched \(fetchedName) from \(fetchTitle) into this document."
+                        device.rememberRecentFetchedVoice(source, title: fetchTitle)
+                        errorMessage = nil
+                    } catch is CancellationError {
+                        errorMessage = "Manual fetch canceled."
+                        statusMessage = nil
+                    } catch {
+                        errorMessage = "Fetch failed on \(systemChannelName): \(error)"
+                        statusMessage = nil
+                    }
+                    fetchProgressPanel.dismiss()
+                    isBusy = false
+                }
                 return
             }
 

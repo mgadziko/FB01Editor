@@ -192,16 +192,16 @@ public struct DX100SynthModule: SynthModule {
         SynthParameterDescriptor(id: "voice.lfoSyncEnabled", displayName: "LFO Sync", valueKind: .toggle, defaultValue: 0, group: "LFO"),
         SynthParameterDescriptor(id: "voice.operator.carrier", displayName: "Carrier", valueKind: .toggle, defaultValue: 0, isEditable: false, group: "Operator"),
         SynthParameterDescriptor(id: "voice.operator.totalLevel", displayName: "Total Level", valueKind: .integer, range: SynthSlotRange(0...99), defaultValue: 0, group: "Operator"),
-        SynthParameterDescriptor(id: "voice.operator.frequency", displayName: "Frequency Ratio", valueKind: .integer, range: SynthSlotRange(0...63), defaultValue: 1, group: "Operator"),
+        SynthParameterDescriptor(id: "voice.operator.frequency", displayName: "Oscillator Frequency Ratio", valueKind: .integer, range: SynthSlotRange(0...63), defaultValue: 1, group: "Operator"),
         SynthParameterDescriptor(id: "voice.operator.detune", displayName: "Detune", valueKind: .signedInteger, range: SynthSlotRange(-3...3), defaultValue: 0, group: "Operator"),
         SynthParameterDescriptor(id: "voice.operator.keyboardLevelDepth", displayName: "Keyboard Level Depth", valueKind: .integer, range: SynthSlotRange(0...99), defaultValue: 0, group: "Operator"),
         SynthParameterDescriptor(id: "voice.operator.keyboardRateScalingDepth", displayName: "Keyboard Rate Scaling Depth", valueKind: .integer, range: SynthSlotRange(0...3), defaultValue: 0, group: "Operator"),
-        SynthParameterDescriptor(id: "voice.operator.velocityToTotalLevel", displayName: "Key Velocity to Level", valueKind: .integer, range: SynthSlotRange(0...7), defaultValue: 0, group: "Operator"),
-        SynthParameterDescriptor(id: "voice.operator.attack", displayName: "Attack", valueKind: .integer, range: SynthSlotRange(0...31), defaultValue: 0, group: "Operator Envelope"),
-        SynthParameterDescriptor(id: "voice.operator.decay1", displayName: "Decay 1", valueKind: .integer, range: SynthSlotRange(0...31), defaultValue: 0, group: "Operator Envelope"),
-        SynthParameterDescriptor(id: "voice.operator.decay2", displayName: "Decay 2", valueKind: .integer, range: SynthSlotRange(0...31), defaultValue: 0, group: "Operator Envelope"),
-        SynthParameterDescriptor(id: "voice.operator.sustain", displayName: "Sustain", valueKind: .integer, range: SynthSlotRange(0...15), defaultValue: 0, group: "Operator Envelope"),
-        SynthParameterDescriptor(id: "voice.operator.release", displayName: "Release", valueKind: .integer, range: SynthSlotRange(0...15), defaultValue: 0, group: "Operator Envelope"),
+        SynthParameterDescriptor(id: "voice.operator.velocityToTotalLevel", displayName: "Key Velocity Sensitivity", valueKind: .integer, range: SynthSlotRange(0...7), defaultValue: 0, group: "Operator"),
+        SynthParameterDescriptor(id: "voice.operator.attack", displayName: "Attack Rate", valueKind: .integer, range: SynthSlotRange(0...31), defaultValue: 0, group: "Operator Envelope"),
+        SynthParameterDescriptor(id: "voice.operator.decay1", displayName: "Decay 1 Rate", valueKind: .integer, range: SynthSlotRange(0...31), defaultValue: 0, group: "Operator Envelope"),
+        SynthParameterDescriptor(id: "voice.operator.decay2", displayName: "Decay 2 Rate", valueKind: .integer, range: SynthSlotRange(0...31), defaultValue: 0, group: "Operator Envelope"),
+        SynthParameterDescriptor(id: "voice.operator.sustain", displayName: "Decay 1 Level", valueKind: .integer, range: SynthSlotRange(0...15), defaultValue: 0, group: "Operator Envelope"),
+        SynthParameterDescriptor(id: "voice.operator.release", displayName: "Release Rate", valueKind: .integer, range: SynthSlotRange(0...15), defaultValue: 0, group: "Operator Envelope"),
     ]
 
     public let parameterBindingDescriptors: [SynthParameterBindingDescriptor] = [
