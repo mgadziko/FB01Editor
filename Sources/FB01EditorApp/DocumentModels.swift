@@ -50,6 +50,14 @@ enum EditorDeviceSelection: String, CaseIterable, Identifiable, Codable {
 }
 
 @MainActor
+final class LiveKeyboardDisplayModel: ObservableObject {
+    @Published var status = "Off"
+    @Published var pressedNotes: Set<Int> = []
+    @Published var title = "Live Keyboard"
+    @Published var subtitle = "MIDI notes only"
+}
+
+@MainActor
 final class DocumentModel: ObservableObject {
     @Published var sources: [LibrarySource] = []
     @Published var selectedSourceID: LibrarySource.ID?
@@ -63,7 +71,6 @@ final class DocumentModel: ObservableObject {
     @Published var selectedDestinationIndex = 0
     @Published var selectedKeyboardSourceIndex = 0
     @Published var externalKeyboardEnabled = false
-    @Published var externalKeyboardStatus = "Off"
     @Published var externalKeyboardVolume = 127
     @Published var externalKeyboardPortamento = 0
     @Published var selectedVoiceNumbers: [LibrarySource.ID: Int] = [:]
@@ -87,9 +94,6 @@ final class DocumentModel: ObservableObject {
     @Published var customControlLiveValues: [Int: Int] = [:]
     @Published var customControlLiveValuesByIndex: [Int?] = Array(repeating: nil, count: CustomControlsControllerProfile.oxygen25.defaultControlChangeNumbers.count)
     @Published var lastCustomControlMessage = "No controller input yet"
-    @Published var externalKeyboardPressedNotes: Set<Int> = []
-    @Published var liveKeyboardTitle = "Live Keyboard"
-    @Published var liveKeyboardSubtitle = "MIDI notes only"
     @Published var recentLoadedVoiceFiles: [RecentEditorFile] = []
     @Published var recentFetchedVoices: [RecentVoiceFetch] = []
     @Published var recentLoadedConfigurationFiles: [RecentEditorFile] = []
@@ -102,8 +106,10 @@ final class DocumentModel: ObservableObject {
     @Published var selectedEditorDevice: EditorDeviceSelection?
     @Published var deviceCacheStatus = "Not loaded"
     @Published private(set) var configurationSelectorRevision = 0
+    let liveKeyboardDisplay = LiveKeyboardDisplayModel()
 
     private let generalMIDIStoreMaximumPasses = 5
+    private let externalKeyboardRealtimeState = ExternalKeyboardRealtimeState()
     private var backgroundDeviceCacheTask: Task<Void, Never>?
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
@@ -205,6 +211,7 @@ final class DocumentModel: ObservableObject {
         preferredDeviceCount = (1...4).contains(savedDeviceCount) ? savedDeviceCount : 1
         loadDevicePreferences()
         externalKeyboardVolume = systemMasterOutputLevel
+        refreshExternalKeyboardRealtimeState()
         refreshMIDIEndpoints()
     }
 
@@ -313,6 +320,26 @@ final class DocumentModel: ObservableObject {
 
     var hasKeyboardVoiceContext: Bool {
         selectedVoiceContext != nil
+    }
+
+    var externalKeyboardStatus: String {
+        get { liveKeyboardDisplay.status }
+        set { liveKeyboardDisplay.status = newValue }
+    }
+
+    var externalKeyboardPressedNotes: Set<Int> {
+        get { liveKeyboardDisplay.pressedNotes }
+        set { liveKeyboardDisplay.pressedNotes = newValue }
+    }
+
+    var liveKeyboardTitle: String {
+        get { liveKeyboardDisplay.title }
+        set { liveKeyboardDisplay.title = newValue }
+    }
+
+    var liveKeyboardSubtitle: String {
+        get { liveKeyboardDisplay.subtitle }
+        set { liveKeyboardDisplay.subtitle = newValue }
     }
 
     var liveKeyboardAuditionStatus: String {
@@ -586,6 +613,7 @@ final class DocumentModel: ObservableObject {
         }
 
         selectedEditorDevice = device
+        refreshExternalKeyboardRealtimeState()
         switch device {
         case .fb01:
             refreshDeviceCache(
@@ -1491,23 +1519,27 @@ final class DocumentModel: ObservableObject {
             invalidateKeyboardPreparation()
         }
         persistSelectedEndpoints()
+        refreshExternalKeyboardRealtimeState()
         restartExternalKeyboardMonitor()
     }
 
     func selectSource(_ source: FB01MIDIEndpoint) {
         selectedSourceIndex = source.index
         persistSelectedEndpoints()
+        refreshExternalKeyboardRealtimeState()
     }
 
     func selectDestination(_ destination: FB01MIDIEndpoint) {
         selectedDestinationIndex = destination.index
         invalidateKeyboardPreparation()
         persistSelectedEndpoints()
+        refreshExternalKeyboardRealtimeState()
     }
 
     func selectKeyboardSource(_ source: FB01MIDIEndpoint) {
         selectedKeyboardSourceIndex = source.index
         persistSelectedEndpoints()
+        refreshExternalKeyboardRealtimeState()
         restartExternalKeyboardMonitor()
     }
 
@@ -1517,6 +1549,7 @@ final class DocumentModel: ObservableObject {
             externalKeyboardPressedNotes.removeAll()
         }
         UserDefaults.standard.set(enabled, forKey: DefaultsKey.externalKeyboardEnabled)
+        refreshExternalKeyboardRealtimeState()
         restartExternalKeyboardMonitor()
     }
 
@@ -1534,6 +1567,7 @@ final class DocumentModel: ObservableObject {
         keyboardChannel = min(max(channel, 0), 15)
         invalidateKeyboardPreparation()
         UserDefaults.standard.set(keyboardChannel, forKey: DefaultsKey.keyboardChannel)
+        refreshExternalKeyboardRealtimeState()
         if selectedEditorDevice == .dx100,
            externalKeyboardEnabled,
            selectedKeyboardSourceIndex == selectedSourceIndex {
@@ -3594,9 +3628,23 @@ final class DocumentModel: ObservableObject {
         keyboardPreparationTask?.cancel()
     }
 
+    private func refreshExternalKeyboardRealtimeState() {
+        let snapshot = ExternalKeyboardRealtimeState.Snapshot(
+            enabled: externalKeyboardEnabled,
+            channel: UInt8(min(max(keyboardChannel, 0), 15)),
+            destinationIndex: selectedDestinationIndex,
+            destinationName: selectedDestinationName,
+            suppressEcho: selectedEditorDevice == .dx100 && selectedKeyboardSourceIndex == selectedSourceIndex
+        )
+        Task(priority: .high) { [externalKeyboardRealtimeState] in
+            await externalKeyboardRealtimeState.update(snapshot)
+        }
+    }
+
     private func restartExternalKeyboardMonitor() {
         externalKeyboardMonitor?.stop()
         externalKeyboardMonitor = nil
+        refreshExternalKeyboardRealtimeState()
 
         guard externalKeyboardEnabled else {
             externalKeyboardStatus = "Off"
@@ -3609,9 +3657,29 @@ final class DocumentModel: ObservableObject {
 
         do {
             let sourceName = selectedKeyboardSourceName
-            externalKeyboardMonitor = try FB01MIDI.liveInputMonitor(sourceIndex: selectedKeyboardSourceIndex) { [weak self] message in
-                Task(priority: .high) { @MainActor [weak self] in
-                    self?.receiveExternalKeyboardMessage(message)
+            let realtimeState = externalKeyboardRealtimeState
+            externalKeyboardMonitor = try FB01MIDI.liveInputMonitor(sourceIndex: selectedKeyboardSourceIndex) { [weak self, realtimeState] message in
+                Task(priority: .high) { [weak self] in
+                    if let fastPath = await realtimeState.fastForwardIfPossible(message) {
+                        await MainActor.run {
+                            guard let self else { return }
+                            switch fastPath.outcome {
+                            case .forwarded(let status), .suppressed(let status):
+                                self.externalKeyboardStatus = status
+                                self.errorMessage = nil
+                            case .failed(let status, let errorMessage):
+                                self.externalKeyboardStatus = status
+                                self.errorMessage = errorMessage
+                                self.statusMessage = nil
+                            }
+                            self.updateExternalKeyboardPressedNotes(from: message)
+                        }
+                        return
+                    }
+
+                    await MainActor.run {
+                        self?.receiveExternalKeyboardMessage(message)
+                    }
                 }
             }
             externalKeyboardStatus = "Listening to \(sourceName)"

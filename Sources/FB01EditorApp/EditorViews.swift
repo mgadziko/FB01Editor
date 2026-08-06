@@ -485,11 +485,13 @@ private struct WindowIdentifierSetter: NSViewRepresentable {
 
 struct LiveKeyboardView: View {
     @ObservedObject var document: DocumentModel
+    @ObservedObject var liveKeyboard: LiveKeyboardDisplayModel
 
     var body: some View {
         HStack(alignment: .center, spacing: 18) {
             LiveKeyboardMIDIControlsView(
                 document: document,
+                liveKeyboard: liveKeyboard,
                 title: document.selectedVoiceDocumentPayload().map { "Live Keyboard - \($0.voice.name)" } ?? "Live Keyboard",
                 subtitle: document.hasKeyboardVoiceContext ? "Current voice" : "MIDI notes only"
             )
@@ -498,7 +500,7 @@ struct LiveKeyboardView: View {
             PianoKeyboardRepresentable(
                 startNote: document.keyboardStartNote,
                 octaveCount: 5,
-                highlightedNotes: document.externalKeyboardPressedNotes,
+                highlightedNotes: liveKeyboard.pressedNotes,
                 noteOn: { document.sendKeyboardNote($0, isOn: true) },
                 noteOff: { document.sendKeyboardNote($0, isOn: false) }
             )
@@ -528,12 +530,12 @@ struct LiveKeyboardPaletteView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LiveKeyboardPaletteControlsView(document: document)
+            LiveKeyboardPaletteControlsView(document: document, liveKeyboard: document.liveKeyboardDisplay)
 
             PianoKeyboardRepresentable(
                 startNote: document.keyboardStartNote,
                 octaveCount: 5,
-                highlightedNotes: document.externalKeyboardPressedNotes,
+                highlightedNotes: document.liveKeyboardDisplay.pressedNotes,
                 noteOn: { document.sendLiveKeyboardPaletteNote($0, isOn: true) },
                 noteOff: { document.sendLiveKeyboardPaletteNote($0, isOn: false) }
             )
@@ -649,9 +651,10 @@ struct CustomControlLiveValueDisplay: View {
 
 struct LiveKeyboardPaletteControlsView: View {
     @ObservedObject var document: DocumentModel
+    @ObservedObject var liveKeyboard: LiveKeyboardDisplayModel
 
     private var paletteStatus: String {
-        document.externalKeyboardStatus.hasPrefix("Listening to ") ? " " : document.externalKeyboardStatus
+        liveKeyboard.status.hasPrefix("Listening to ") ? " " : liveKeyboard.status
     }
 
     var body: some View {
@@ -746,6 +749,7 @@ struct LiveKeyboardPaletteControlsView: View {
 
 struct LiveKeyboardMIDIControlsView: View {
     @ObservedObject var document: DocumentModel
+    @ObservedObject var liveKeyboard: LiveKeyboardDisplayModel
     var title = "Live Keyboard"
     var subtitle: String
 
@@ -808,7 +812,7 @@ struct LiveKeyboardMIDIControlsView: View {
             }
             .font(.caption)
 
-            Text(document.externalKeyboardStatus)
+            Text(liveKeyboard.status)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -1277,12 +1281,15 @@ struct GlobalStatusView: View {
                 Text("Status Window")
                     .font(.title2.weight(.semibold))
 
-                Button("Select Device") {
-                    document.showDeviceSelectionDialog()
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Select Device")
+                        .font(.headline.weight(.semibold))
+
+                    HStack(spacing: 10) {
+                        deviceSelectionButton(.dx100, title: "DX100")
+                        deviceSelectionButton(.fb01, title: "FB-01")
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(document.isBusy)
-                .forestHoverHelp("Choose which connected Yamaha FM device Forest Editor should fetch and cache.")
 
                 HStack(alignment: .top, spacing: 14) {
                     statusCard(title: "\(document.selectedEditorDevice?.displayName ?? "MIDI Device") Connection", rows: [
@@ -1296,11 +1303,12 @@ struct GlobalStatusView: View {
                     statusCard(title: "External Keyboard/MIDI Source", rows: [
                         KeyValueRow("Enabled", document.externalKeyboardEnabled ? "On" : "Off"),
                         KeyValueRow("MIDI In", document.selectedKeyboardSourceName),
-                        KeyValueRow("Status", document.externalKeyboardStatus),
                         KeyValueRow("Channel", "\(document.keyboardChannel + 1)"),
                         KeyValueRow("Velocity", "\(document.keyboardVelocity)"),
                     ])
                 }
+
+                LiveMIDIStatusCard(liveKeyboard: document.liveKeyboardDisplay)
 
                 HStack(alignment: .top, spacing: 14) {
                     statusCard(title: "Open Documents", rows: [
@@ -1330,6 +1338,26 @@ struct GlobalStatusView: View {
             + workspace.configurationDocuments.values.filter(\.isEdited).count
     }
 
+    private func deviceSelectionButton(_ device: EditorDeviceSelection, title: String) -> some View {
+        let isSelected = document.selectedEditorDevice == device
+        return Group {
+            if isSelected {
+                Button(title) {
+                    document.selectDevice(device)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+            } else {
+                Button(title) {
+                    document.selectDevice(device)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .disabled(document.isBusy)
+        .forestHoverHelp("Choose \(device.displayName) as the active device Forest Editor should fetch and cache.")
+    }
+
     private func statusCard(title: String, rows: [KeyValueRow]) -> some View {
         GroupBox {
             SummaryPanel(rows: rows)
@@ -1337,6 +1365,23 @@ struct GlobalStatusView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
             SectionTitle(title)
+        }
+        .frame(minWidth: 300, maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
+struct LiveMIDIStatusCard: View {
+    @ObservedObject var liveKeyboard: LiveKeyboardDisplayModel
+
+    var body: some View {
+        GroupBox {
+            SummaryPanel(rows: [
+                KeyValueRow("Status", liveKeyboard.status),
+            ])
+            .padding(.top, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            SectionTitle("Live MIDI Status")
         }
         .frame(minWidth: 300, maxWidth: .infinity, alignment: .topLeading)
     }
@@ -1997,6 +2042,7 @@ struct VoiceDocumentLiveKeyboardView: View {
         VStack(alignment: .leading, spacing: 8) {
             LiveKeyboardMIDIControlsView(
                 document: device,
+                liveKeyboard: device.liveKeyboardDisplay,
                 title: document.neutralVoice.name.isEmpty ? "Live Keyboard" : "Live Keyboard - \(document.neutralVoice.name)",
                 subtitle: "Document voice"
             )
@@ -2004,7 +2050,7 @@ struct VoiceDocumentLiveKeyboardView: View {
             PianoKeyboardRepresentable(
                 startNote: device.keyboardStartNote,
                 octaveCount: 5,
-                highlightedNotes: device.externalKeyboardPressedNotes,
+                highlightedNotes: device.liveKeyboardDisplay.pressedNotes,
                 noteOn: { document.sendKeyboardNote($0, isOn: true, device: device) },
                 noteOff: { document.sendKeyboardNote($0, isOn: false, device: device) }
             )
@@ -2073,6 +2119,7 @@ struct ConfigurationDocumentLiveKeyboardView: View {
         VStack(alignment: .leading, spacing: 8) {
             LiveKeyboardMIDIControlsView(
                 document: device,
+                liveKeyboard: device.liveKeyboardDisplay,
                 title: "Live Keyboard",
                 subtitle: "Configuration performance"
             )
@@ -2080,7 +2127,7 @@ struct ConfigurationDocumentLiveKeyboardView: View {
             PianoKeyboardRepresentable(
                 startNote: device.keyboardStartNote,
                 octaveCount: 5,
-                highlightedNotes: device.externalKeyboardPressedNotes,
+                highlightedNotes: device.liveKeyboardDisplay.pressedNotes,
                 noteOn: { device.sendKeyboardNoteWithoutVoicePreparation($0, isOn: true) },
                 noteOff: { device.sendKeyboardNoteWithoutVoicePreparation($0, isOn: false) }
             )
@@ -5442,12 +5489,14 @@ struct SummaryPanel: View {
     var rows: [KeyValueRow]
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
             ForEach(rows) { row in
                 GridRow {
                     Text(row.key)
                         .foregroundStyle(.secondary)
                     Text(row.value)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
             }

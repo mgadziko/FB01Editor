@@ -690,38 +690,29 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let destinationName = device.selectedDestinationName
         let channel = UInt8(min(max(device.keyboardChannel, 0), 15))
         let velocity = UInt8(min(max(device.keyboardVelocity, 1), 127))
-
-        do {
-            if isOn {
-                keyboardPreparationTask?.cancel()
-                keyboardPreparationTask = nil
-            }
-            let preparationMessages = isOn ? try keyboardPreparationMessages(midiChannel: Int(channel), device: device) : []
-            let noteMessage = [
-                (isOn ? 0x90 : 0x80) | channel,
-                UInt8(boundedNote),
-                isOn ? velocity : 0,
-            ]
-            Task(priority: .high) { [weak self, weak device] in
-                do {
-                    try await LiveMIDIPlaybackController.shared.sendPreparedNote(
-                        preparationMessages: preparationMessages,
-                        noteMessage: noteMessage,
-                        destinationIndex: destinationIndex,
-                        settleDelay: keyboardPreparationSettleDelay
-                    )
-                    if isOn {
+        let noteMessage = [
+            (isOn ? 0x90 : 0x80) | channel,
+            UInt8(boundedNote),
+            isOn ? velocity : 0,
+        ]
+        Task(priority: .high) { [weak self, weak device] in
+            do {
+                try await LiveMIDIPlaybackController.shared.sendImmediate(noteMessage, destinationIndex: destinationIndex)
+                if isOn {
+                    await MainActor.run {
                         device?.externalKeyboardStatus = "Sent note \(boundedNote) on channel \(Int(channel) + 1) to \(destinationName)."
                         self?.errorMessage = nil
+                        if let device {
+                            self?.scheduleKeyboardVoicePreparation(device: device)
+                        }
                     }
-                } catch {
+                }
+            } catch {
+                await MainActor.run {
                     self?.errorMessage = "Keyboard note failed: \(error)"
                     self?.statusMessage = nil
                 }
             }
-        } catch {
-            errorMessage = "Keyboard note failed: \(error)"
-            statusMessage = nil
         }
     }
 
