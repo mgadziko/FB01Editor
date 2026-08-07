@@ -296,15 +296,6 @@ public struct FB01VoiceService: SynthVoiceServicing {
     }
 
     public func voiceBankLoadMessage(bank: FB01VoiceBankData, systemChannel: Int) throws -> [UInt8] {
-        if bank.bank == 0 {
-            return try FB01SysExMessage.voiceRAMDumpData(
-                systemChannel: systemChannel,
-                byteCount: FB01VoiceBankData.bankHeaderByteCount,
-                data: bank.data,
-                checksum: FB01.checksum(for: bank.data)
-            ).bytes
-        }
-
         return try FB01SysExMessage.voiceBankDumpData(
             systemChannel: systemChannel,
             bank: bank.bank,
@@ -348,14 +339,49 @@ public struct FB01VoiceService: SynthVoiceServicing {
         try Task.checkCancellation()
 
         await progress?(.storingBank)
-        let loadMessage = try voiceBankLoadMessage(bank: targetBank, systemChannel: systemChannel)
-        try await Task.detached(priority: .userInitiated) {
-            try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
-        }.value
-        try Task.checkCancellation()
-
-        await progress?(.verifyingBank)
         let requestKind = try FB01DeviceService.shared.requestKind(forDisplayBank: displayBank)
+        var readback = try await fetchReadbackVoiceBank(
+            requestKind: requestKind,
+            expectedDisplayBank: displayBank,
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel
+        )
+        var pass = 0
+
+        while readback.data != targetBank.data {
+            try Task.checkCancellation()
+            pass += 1
+            guard pass <= 60 else {
+                throw FB01VoiceStoreError.bankVerificationFailed(bank: displayBank)
+            }
+
+            let loadMessage = try voiceBankLoadMessage(bank: targetBank, systemChannel: systemChannel)
+            try await Task.detached(priority: .userInitiated) {
+                try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+            }.value
+            try Task.checkCancellation()
+
+            await progress?(.verifyingBank)
+            readback = try await fetchReadbackVoiceBank(
+                requestKind: requestKind,
+                expectedDisplayBank: displayBank,
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel
+            )
+        }
+
+        return readback
+    }
+
+    private func fetchReadbackVoiceBank(
+        requestKind: FB01MIDIRequestKind,
+        expectedDisplayBank: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) async throws -> FB01VoiceBankData {
         let readbackBytes = try await Task.detached(priority: .userInitiated) {
             try await Task.sleep(for: .milliseconds(1500))
             return try FB01MIDI.request(
@@ -366,12 +392,7 @@ public struct FB01VoiceService: SynthVoiceServicing {
                 timeout: 15
             )
         }.value
-        let readback = try voiceBankData(from: readbackBytes, expectedDisplayBank: displayBank)
-        guard readback.data == targetBank.data else {
-            throw FB01VoiceStoreError.bankVerificationFailed(bank: displayBank)
-        }
-
-        return readback
+        return try voiceBankData(from: readbackBytes, expectedDisplayBank: expectedDisplayBank)
     }
 
     public func storeVoiceInBankImage(
@@ -383,6 +404,7 @@ public struct FB01VoiceService: SynthVoiceServicing {
         destinationIndex: Int,
         systemChannel: Int,
         maximumPasses: Int = 60,
+        sendProtectOff: Bool = true,
         progress: (@Sendable (FB01VoiceBankImageStoreEvent) async -> Void)? = nil
     ) async throws -> FB01VoiceBankData {
         guard (0..<module.voicesPerBank).contains(zeroBasedVoiceNumber) else {
@@ -396,12 +418,14 @@ public struct FB01VoiceService: SynthVoiceServicing {
         let voiceNumber = zeroBasedVoiceNumber + 1
         var readback = try voiceBankData(from: initialBankDumpBytes, expectedDisplayBank: displayBank)
 
-        await progress?(.turningProtectOff)
-        let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
-        try await Task.detached(priority: .userInitiated) {
-            try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
-        }.value
-        try await Task.sleep(for: .milliseconds(300))
+        if sendProtectOff {
+            await progress?(.turningProtectOff)
+            let protectOff = try FB01SysExMessage.command(.setMemoryProtect(systemChannel: systemChannel, .off)).bytes
+            try await Task.detached(priority: .userInitiated) {
+                try FB01MIDI.sendSysEx([protectOff], destinationIndex: destinationIndex, delayBetweenMessages: 0)
+            }.value
+            try await Task.sleep(for: .milliseconds(300))
+        }
 
         var pass = 0
         while readback.voices[zeroBasedVoiceNumber].voice.bytes != voice.bytes {

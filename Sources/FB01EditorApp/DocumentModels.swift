@@ -1227,13 +1227,8 @@ final class DocumentModel: ObservableObject {
 
         operationTask = Task {
             do {
-                let bankDataBytes = selector.items
-                    .sorted { $0.displayNumber < $1.displayNumber }
-                    .flatMap { $0.voice.bytes }
-                let sourceBankData = try FB01VoiceBankData(
-                    bank: selector.isVoiceRAM ? 0 : max(0, selector.displayBank - 1),
-                    data: bankDataBytes
-                )
+                let editedVoices = Dictionary(uniqueKeysWithValues: selector.items.map { ($0.displayNumber, $0.voice) })
+                let sourceBankData = try selector.bankData.replacingVoices(editedVoices)
 
                 let (readback, backupURL) = try await storeFB01VoiceBankDataToDevice(
                     sourceBankData,
@@ -2408,32 +2403,87 @@ final class DocumentModel: ObservableObject {
                 try await Task.sleep(for: .milliseconds(300))
                 try Task.checkCancellation()
 
-                let originalBank = try voiceBankData(from: originalBytes, expectedBankNumber: targetBank)
-                let targetVoiceBank = try originalBank.replacingVoices(selectedVoices)
-                let readback = try await FB01ModuleServices.shared.voiceService.storeVoiceBank(
-                    targetVoiceBank,
-                    displayBank: targetBank,
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
-                ) { [self] event in
+                var readback = try voiceBankData(from: originalBytes, expectedBankNumber: targetBank)
+                let orderedMappings = FB01GeneralMIDI.mappings.sorted { $0.gmNumber < $1.gmNumber }
+
+                for (index, mapping) in orderedMappings.enumerated() {
+                    try Task.checkCancellation()
+                    guard let expected = selectedVoices[mapping.gmNumber] else {
+                        throw FB01AppError.message("Missing General MIDI source voice \(mapping.gmNumber) \(mapping.gmName).")
+                    }
+
+                    let currentVoice = readback.voices.first(where: { $0.number == mapping.gmNumber })?.voice
+                    if currentVoice?.bytes == expected.voice.bytes {
+                        await MainActor.run {
+                            self.statusMessage = "General MIDI voice \(mapping.gmNumber) \(expected.voice.name) already matches in Bank \(targetBank)..."
+                            progressPanel.update(
+                                message: "The voices are being stored. Please wait.\nVoice \(mapping.gmNumber) of \(orderedMappings.count) already matches \(expected.voice.name)...",
+                                completed: Double(index + 1),
+                                total: Double(orderedMappings.count)
+                            )
+                        }
+                        continue
+                    }
+
+                    let statusPrefix = "Storing General MIDI voice \(mapping.gmNumber) \(expected.voice.name) in Bank \(targetBank)"
                     await MainActor.run {
-                        switch event {
-                        case .turningProtectOff:
-                            self.statusMessage = "Turning FB-01 Protect OFF before storing General MIDI voices in Bank \(targetBank)..."
-                            progressPanel.update(message: "The voices are being stored. Please wait.\nTurning FB-01 Protect OFF...")
-                        case .storingBank:
-                            self.statusMessage = "Storing General MIDI voices in Bank \(targetBank)..."
-                            progressPanel.update(message: "The voices are being stored. Please wait.\nStoring General MIDI voices in Bank \(targetBank)...")
-                        case .verifyingBank:
-                            self.statusMessage = "Fetching Bank \(targetBank) to verify the General MIDI store..."
-                            progressPanel.update(message: "The voices are being stored. Please wait.\nFetching Bank \(targetBank) to verify store...")
+                        self.statusMessage = "\(statusPrefix)..."
+                        progressPanel.update(
+                            message: "The voices are being stored. Please wait.\nVoice \(mapping.gmNumber) of \(orderedMappings.count): \(expected.voice.name)...",
+                            completed: Double(index),
+                            total: Double(orderedMappings.count)
+                        )
+                    }
+
+                    let nextReadback = try await FB01ModuleServices.shared.voiceService.storeVoiceInBankImage(
+                        expected.voice,
+                        displayBank: targetBank,
+                        zeroBasedVoiceNumber: mapping.gmNumber - 1,
+                        initialBankDumpBytes: try FB01Artifact(message: .voiceBankDumpData(
+                            systemChannel: systemChannel,
+                            bank: readback.bank,
+                            byteCount: FB01VoiceBankData.bankHeaderByteCount,
+                            data: readback.data,
+                            checksum: FB01.checksum(for: readback.data)
+                        )).sysexBytes,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel
+                        ,
+                        sendProtectOff: false
+                    ) { [self] event in
+                        await MainActor.run {
+                            switch event {
+                            case .turningProtectOff:
+                                self.statusMessage = "Turning FB-01 Protect OFF before storing General MIDI voice \(mapping.gmNumber) in Bank \(targetBank)..."
+                                progressPanel.update(
+                                    message: "The voices are being stored. Please wait.\nTurning FB-01 Protect OFF for voice \(mapping.gmNumber)...",
+                                    completed: Double(index),
+                                    total: Double(orderedMappings.count)
+                                )
+                            case .storePass(let pass):
+                                self.statusMessage = "Storing General MIDI voice \(mapping.gmNumber) in Bank \(targetBank), pass \(pass)..."
+                                progressPanel.update(
+                                    message: "The voices are being stored. Please wait.\nVoice \(mapping.gmNumber) pass \(pass), verifying...",
+                                    completed: Double(index),
+                                    total: Double(orderedMappings.count)
+                                )
+                            }
                         }
                     }
-                }
-                let mismatches = generalMIDIMismatches(readback: readback, targetBank: targetBank, selectedVoices: selectedVoices)
-                guard mismatches.isEmpty else {
-                    throw FB01AppError.message("Bank \(targetBank) did not verify after the General MIDI store; first mismatch: \(mismatches[0])")
+
+                    guard nextReadback.voices.first(where: { $0.number == mapping.gmNumber })?.voice.bytes == expected.voice.bytes else {
+                        throw FB01AppError.message("Bank \(targetBank) voice \(mapping.gmNumber) did not verify after storing \(expected.voice.name).")
+                    }
+
+                    readback = nextReadback
+                    await MainActor.run {
+                        progressPanel.update(
+                            message: "The voices are being stored. Please wait.\nStored voice \(mapping.gmNumber) of \(orderedMappings.count): \(expected.voice.name).",
+                            completed: Double(index + 1),
+                            total: Double(orderedMappings.count)
+                        )
+                    }
                 }
 
                 cacheVoiceBank(readback, userBankNumber: targetBank)
@@ -3264,15 +3314,8 @@ final class DocumentModel: ObservableObject {
         }
 
         do {
-            let bankDataBytes = selector.items
-                .sorted { $0.displayNumber < $1.displayNumber }
-                .flatMap { $0.voice.bytes }
             let editedVoices = Dictionary(uniqueKeysWithValues: selector.items.map { ($0.displayNumber, $0.voice) })
-            let editedBank = try FB01VoiceBankData(
-                bank: selector.isVoiceRAM ? 0 : max(0, selector.displayBank - 1),
-                data: bankDataBytes
-            )
-            let savedBank = try editedBank.replacingVoices(editedVoices)
+            let savedBank = try selector.bankData.replacingVoices(editedVoices)
             let artifact: FB01Artifact
             if selector.isVoiceRAM {
                 artifact = FB01Artifact(message: .voiceRAMDumpData(
@@ -5376,7 +5419,7 @@ final class DocumentModel: ObservableObject {
         destinationIndex: Int,
         systemChannel: Int,
         progressPanel: EditorProgressPanel
-    ) async throws -> [Int: FB01VoiceData] {
+    ) async throws -> [Int: FB01VoiceSummary] {
         let mappings = FB01GeneralMIDI.mappings
         let sourceBanks = Set(mappings.map(\.sourceBank)).sorted()
         var banks: [Int: FB01VoiceBankData] = [:]
@@ -5408,22 +5451,22 @@ final class DocumentModel: ObservableObject {
         }
         try Task.checkCancellation()
 
-        return try Dictionary(uniqueKeysWithValues: mappings.map { mapping -> (Int, FB01VoiceData) in
-            guard let voice = banks[mapping.sourceBank]?.voices.first(where: { $0.number == mapping.sourceVoice })?.voice else {
+        return try Dictionary(uniqueKeysWithValues: mappings.map { mapping -> (Int, FB01VoiceSummary) in
+            guard let voiceSummary = banks[mapping.sourceBank]?.voices.first(where: { $0.number == mapping.sourceVoice }) else {
                 throw FB01AppError.message("Missing source Bank \(mapping.sourceBank) Voice \(mapping.sourceVoice) for GM \(mapping.gmNumber) \(mapping.gmName).")
             }
-            return (mapping.gmNumber, voice)
+            return (mapping.gmNumber, voiceSummary)
         })
     }
 
-    private func generalMIDIMismatches(readback: FB01VoiceBankData, targetBank: Int, selectedVoices: [Int: FB01VoiceData]) -> [String] {
+    private func generalMIDIMismatches(readback: FB01VoiceBankData, targetBank: Int, selectedVoices: [Int: FB01VoiceSummary]) -> [String] {
         FB01GeneralMIDI.mappings.compactMap { mapping -> String? in
             guard let expected = selectedVoices[mapping.gmNumber],
                   let actual = readback.voices.first(where: { $0.number == mapping.gmNumber })?.voice else {
                 return "Bank \(targetBank) Voice \(mapping.gmNumber): missing readback"
             }
-            guard actual.bytes == expected.bytes else {
-                return "Bank \(targetBank) Voice \(mapping.gmNumber): expected \(expected.name), got \(actual.name)"
+            guard actual.bytes == expected.voice.bytes else {
+                return "Bank \(targetBank) Voice \(mapping.gmNumber): expected \(expected.voice.name), got \(actual.name)"
             }
             return nil
         }

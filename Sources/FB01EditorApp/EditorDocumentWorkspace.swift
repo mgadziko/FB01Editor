@@ -524,6 +524,7 @@ final class EditorDocumentWorkspace: ObservableObject {
         let systemChannel: Int
         let displayBank: Int
         let isVoiceRAM: Bool
+        let bankData: FB01VoiceBankData
         let items: [Item]
     }
 
@@ -708,6 +709,7 @@ final class EditorDocumentWorkspace: ObservableObject {
             systemChannel: selector.systemChannel,
             displayBank: selector.displayBank,
             isVoiceRAM: selector.isVoiceRAM,
+            bankData: selector.bankData,
             items: items
         )
         fb01VoiceBankFileSelectors[id] = selector
@@ -813,6 +815,7 @@ final class EditorDocumentWorkspace: ObservableObject {
             systemChannel: loaded.systemChannel,
             displayBank: loaded.isVoiceRAM ? 1 : loaded.bankData.bank + 1,
             isVoiceRAM: loaded.isVoiceRAM,
+            bankData: loaded.bankData,
             items: items
         )
         return id

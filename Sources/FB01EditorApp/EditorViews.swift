@@ -171,17 +171,34 @@ struct VoiceSelectorCommands: View {
             Menu(document.selectedDeviceCommandTitle(.storeVoiceBank, fallback: "Store Bank")) {
                 ForEach(document.selectedDeviceWritableVoiceBanks, id: \.self) { targetBank in
                     Button(document.selectedDeviceVoiceBankTitle(targetBank)) {
-                        if let sourceBank = activeVoiceBankSelector {
-                            document.storeVoiceBankFromSelector(sourceBank: sourceBank, targetBank: targetBank)
-                        } else if let selectorID = activeFB01VoiceBankFileSelector,
-                                  let selector = workspace.fb01VoiceBankFileSelector(id: selectorID) {
+                        if let selectorID = activeFB01VoiceBankFileSelector,
+                           let selector = workspace.fb01VoiceBankFileSelector(id: selectorID) {
                             document.storeFB01VoiceBankFileSelectorToDevice(selector, targetBank: targetBank)
+                        } else if workspace.openFB01VoiceBankFileSelectors.count == 1,
+                                  let selector = workspace.openFB01VoiceBankFileSelectors.first {
+                            document.storeFB01VoiceBankFileSelectorToDevice(selector, targetBank: targetBank)
+                        } else if let sourceBank = activeVoiceBankSelector {
+                            document.storeVoiceBankFromSelector(sourceBank: sourceBank, targetBank: targetBank)
                         }
                     }
-                    .disabled(document.isBusy || (activeVoiceBankSelector == nil && activeFB01VoiceBankFileSelector == nil))
+                    .disabled(
+                        document.isBusy ||
+                        (
+                            activeVoiceBankSelector == nil &&
+                            activeFB01VoiceBankFileSelector == nil &&
+                            workspace.openFB01VoiceBankFileSelectors.count != 1
+                        )
+                    )
                 }
             }
-            .disabled(document.isBusy || (activeVoiceBankSelector == nil && activeFB01VoiceBankFileSelector == nil))
+            .disabled(
+                document.isBusy ||
+                (
+                    activeVoiceBankSelector == nil &&
+                    activeFB01VoiceBankFileSelector == nil &&
+                    workspace.openFB01VoiceBankFileSelectors.count != 1
+                )
+            )
         }
     }
 }

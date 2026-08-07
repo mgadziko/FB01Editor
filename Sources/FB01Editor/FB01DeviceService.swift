@@ -27,9 +27,6 @@ public struct FB01DeviceService: Sendable {
                 range: validRange
             )
         }
-        if displayBank == module.writableVoiceBanks.first {
-            return .voiceRAM1
-        }
         return .voiceBank(displayBank)
     }
 
