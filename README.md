@@ -114,18 +114,18 @@ mouse interaction and note auditioning responsive.
 
 ## Device Capability Snapshot
 
-| Area | FB-01 | DX100/27 |
-| --- | --- | --- |
-| Single voice file load/save | Yes | Yes |
-| Voice bank file load/save | Yes | Yes |
-| Configuration file load/save | Yes | No |
-| Current voice fetch | Yes | Yes |
-| Device voice-bank fetch | Yes, Banks 1-7 | Internal bank verified |
-| Additional device bank fetch | ROM via standard requests | Bank A-D and presets still experimental |
-| Live voice edit send | Yes | Yes |
-| Voice slot store | Yes | Current edit buffer only |
-| Configuration support | Yes | No |
-| General MIDI bank install | Yes | No |
+| Area                          | FB-01                         | DX100/27                                  |
+| ---                           | ---                           | ---                                       |
+| Single voice file load/save   | Yes                           | Yes                                       |
+| Voice bank file load/save     | Yes                           | Yes                                       |
+| Configuration file load/save  | Yes                           | No                                        |
+| Current voice fetch           | Yes                           | Yes                                       |
+| Device voice-bank fetch       | Yes, Banks 1-7                | Internal bank verified                    |
+| Additional device bank fetch  | ROM via standard requests     | Bank A-D and presets still experimental   |
+| Live voice edit send          | Yes                           | Yes                                       |
+| Voice slot store              | Yes                           | Current edit buffer only                  |
+| Configuration support         | Yes                           | No                                        |
+| General MIDI bank install     | Yes                           | No                                        |
 
 ## Module Boundary
 

@@ -21,6 +21,12 @@
 		100000000000000000000029 /* FB01DeviceCacheService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002F /* FB01DeviceCacheService.swift */; };
 		10000000000000000000002A /* FB01ModuleServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000030 /* FB01ModuleServices.swift */; };
 		10000000000000000000002D /* FB01ModuleAdapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000033 /* FB01ModuleAdapter.swift */; };
+		100000000000000000000033 /* DX100DocumentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000038 /* DX100DocumentService.swift */; };
+		100000000000000000000034 /* DX100Module.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000039 /* DX100Module.swift */; };
+		100000000000000000000035 /* DX100VoiceData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003A /* DX100VoiceData.swift */; };
+		100000000000000000000036 /* DX100VoiceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003B /* DX100VoiceService.swift */; };
+		100000000000000000000037 /* FourOperatorVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003C /* FourOperatorVoice.swift */; };
+		100000000000000000000038 /* FourOperatorVoiceBridges.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000003D /* FourOperatorVoiceBridges.swift */; };
 		100000000000000000000007 /* EditorDocumentExtraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* EditorDocumentExtraction.swift */; };
 		100000000000000000000008 /* FB01EditorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* FB01EditorApp.swift */; };
 		100000000000000000000009 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* AppIcon.icns */; };
@@ -52,6 +58,9 @@
 		10000000000000000000002B /* EditorSynthModule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000031 /* EditorSynthModule.swift */; };
 		10000000000000000000002C /* FB01VoiceDocumentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000032 /* FB01VoiceDocumentService.swift */; };
 		10000000000000000000002E /* FB01ConfigurationDocumentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000034 /* FB01ConfigurationDocumentService.swift */; };
+		100000000000000000000030 /* EditorVoiceDocumentServiceError.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000035 /* EditorVoiceDocumentServiceError.swift */; };
+		100000000000000000000031 /* EditorVoiceDocumentService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000036 /* EditorVoiceDocumentService.swift */; };
+		100000000000000000000032 /* VoiceProjectionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000037 /* VoiceProjectionBridge.swift */; };
 		100000000000000000000025 /* SynthModuleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000002B /* SynthModuleTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -108,6 +117,12 @@
 		20000000000000000000002F /* FB01DeviceCacheService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01DeviceCacheService.swift; sourceTree = "<group>"; };
 		200000000000000000000030 /* FB01ModuleServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01ModuleServices.swift; sourceTree = "<group>"; };
 		200000000000000000000033 /* FB01ModuleAdapter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01ModuleAdapter.swift; sourceTree = "<group>"; };
+		200000000000000000000038 /* DX100DocumentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DX100DocumentService.swift; sourceTree = "<group>"; };
+		200000000000000000000039 /* DX100Module.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DX100Module.swift; sourceTree = "<group>"; };
+		20000000000000000000003A /* DX100VoiceData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DX100VoiceData.swift; sourceTree = "<group>"; };
+		20000000000000000000003B /* DX100VoiceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DX100VoiceService.swift; sourceTree = "<group>"; };
+		20000000000000000000003C /* FourOperatorVoice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FourOperatorVoice.swift; sourceTree = "<group>"; };
+		20000000000000000000003D /* FourOperatorVoiceBridges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FourOperatorVoiceBridges.swift; sourceTree = "<group>"; };
 		200000000000000000000007 /* EditorDocumentExtraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorDocumentExtraction.swift; sourceTree = "<group>"; };
 		200000000000000000000008 /* FB01EditorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01EditorApp.swift; sourceTree = "<group>"; };
 		200000000000000000000009 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
@@ -145,6 +160,9 @@
 		200000000000000000000031 /* EditorSynthModule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorSynthModule.swift; sourceTree = "<group>"; };
 		200000000000000000000032 /* FB01VoiceDocumentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01VoiceDocumentService.swift; sourceTree = "<group>"; };
 		200000000000000000000034 /* FB01ConfigurationDocumentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FB01ConfigurationDocumentService.swift; sourceTree = "<group>"; };
+		200000000000000000000035 /* EditorVoiceDocumentServiceError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorVoiceDocumentServiceError.swift; sourceTree = "<group>"; };
+		200000000000000000000036 /* EditorVoiceDocumentService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorVoiceDocumentService.swift; sourceTree = "<group>"; };
+		200000000000000000000037 /* VoiceProjectionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceProjectionBridge.swift; sourceTree = "<group>"; };
 		20000000000000000000002B /* SynthModuleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SynthModuleTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -210,6 +228,10 @@
 		700000000000000000000003 /* FB01Editor */ = {
 			isa = PBXGroup;
 			children = (
+				200000000000000000000038 /* DX100DocumentService.swift */,
+				200000000000000000000039 /* DX100Module.swift */,
+				20000000000000000000003A /* DX100VoiceData.swift */,
+				20000000000000000000003B /* DX100VoiceService.swift */,
 				200000000000000000000001 /* FB01Artifact.swift */,
 				20000000000000000000002E /* FB01ConfigurationService.swift */,
 				200000000000000000000002 /* FB01Data.swift */,
@@ -223,6 +245,8 @@
 				200000000000000000000005 /* FB01SysEx.swift */,
 				200000000000000000000006 /* FB01SysExParser.swift */,
 				20000000000000000000002D /* FB01VoiceService.swift */,
+				20000000000000000000003C /* FourOperatorVoice.swift */,
+				20000000000000000000003D /* FourOperatorVoiceBridges.swift */,
 				20000000000000000000002A /* SynthModule.swift */,
 			);
 			path = FB01Editor;
@@ -236,6 +260,8 @@
 				200000000000000000000024 /* EditorDocumentWorkspace.swift */,
 				200000000000000000000007 /* EditorDocumentExtraction.swift */,
 				200000000000000000000025 /* EditorDocumentUtilities.swift */,
+				200000000000000000000036 /* EditorVoiceDocumentService.swift */,
+				200000000000000000000035 /* EditorVoiceDocumentServiceError.swift */,
 				200000000000000000000020 /* EditorViews.swift */,
 				200000000000000000000034 /* FB01ConfigurationDocumentService.swift */,
 				200000000000000000000008 /* FB01EditorApp.swift */,
@@ -245,6 +271,7 @@
 				20000000000000000000001F /* ParameterKnob.swift */,
 				200000000000000000000022 /* PatchBayViews.swift */,
 				200000000000000000000026 /* VoiceDocuments.swift */,
+				200000000000000000000037 /* VoiceProjectionBridge.swift */,
 				200000000000000000000028 /* DocumentModels.swift */,
 			);
 			path = FB01EditorApp;
@@ -505,6 +532,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				100000000000000000000001 /* FB01Artifact.swift in Sources */,
+				100000000000000000000033 /* DX100DocumentService.swift in Sources */,
+				100000000000000000000034 /* DX100Module.swift in Sources */,
+				100000000000000000000035 /* DX100VoiceData.swift in Sources */,
+				100000000000000000000036 /* DX100VoiceService.swift in Sources */,
 				100000000000000000000028 /* FB01ConfigurationService.swift in Sources */,
 				100000000000000000000002 /* FB01Data.swift in Sources */,
 				100000000000000000000029 /* FB01DeviceCacheService.swift in Sources */,
@@ -517,6 +548,8 @@
 				100000000000000000000005 /* FB01SysEx.swift in Sources */,
 				100000000000000000000006 /* FB01SysExParser.swift in Sources */,
 				100000000000000000000027 /* FB01VoiceService.swift in Sources */,
+				100000000000000000000037 /* FourOperatorVoice.swift in Sources */,
+				100000000000000000000038 /* FourOperatorVoiceBridges.swift in Sources */,
 				100000000000000000000024 /* SynthModule.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -527,6 +560,8 @@
 			files = (
 				100000000000000000000007 /* EditorDocumentExtraction.swift in Sources */,
 				10000000000000000000001F /* EditorDocumentUtilities.swift in Sources */,
+				100000000000000000000031 /* EditorVoiceDocumentService.swift in Sources */,
+				100000000000000000000030 /* EditorVoiceDocumentServiceError.swift in Sources */,
 				10000000000000000000001A /* EditorViews.swift in Sources */,
 				10000000000000000000002E /* FB01ConfigurationDocumentService.swift in Sources */,
 				100000000000000000000008 /* FB01EditorApp.swift in Sources */,
@@ -538,6 +573,7 @@
 				100000000000000000000019 /* ParameterKnob.swift in Sources */,
 				10000000000000000000001C /* PatchBayViews.swift in Sources */,
 				100000000000000000000020 /* VoiceDocuments.swift in Sources */,
+				100000000000000000000032 /* VoiceProjectionBridge.swift in Sources */,
 				100000000000000000000021 /* ConfigurationDocuments.swift in Sources */,
 				100000000000000000000022 /* DocumentModels.swift in Sources */,
 			);

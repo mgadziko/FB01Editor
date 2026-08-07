@@ -296,7 +296,16 @@ public struct FB01VoiceService: SynthVoiceServicing {
     }
 
     public func voiceBankLoadMessage(bank: FB01VoiceBankData, systemChannel: Int) throws -> [UInt8] {
-        try FB01SysExMessage.voiceBankDumpData(
+        if bank.bank == 0 {
+            return try FB01SysExMessage.voiceRAMDumpData(
+                systemChannel: systemChannel,
+                byteCount: FB01VoiceBankData.bankHeaderByteCount,
+                data: bank.data,
+                checksum: FB01.checksum(for: bank.data)
+            ).bytes
+        }
+
+        return try FB01SysExMessage.voiceBankDumpData(
             systemChannel: systemChannel,
             bank: bank.bank,
             byteCount: FB01VoiceBankData.bankHeaderByteCount,
@@ -346,10 +355,11 @@ public struct FB01VoiceService: SynthVoiceServicing {
         try Task.checkCancellation()
 
         await progress?(.verifyingBank)
+        let requestKind = try FB01DeviceService.shared.requestKind(forDisplayBank: displayBank)
         let readbackBytes = try await Task.detached(priority: .userInitiated) {
             try await Task.sleep(for: .milliseconds(1500))
             return try FB01MIDI.request(
-                .voiceBank(displayBank),
+                requestKind,
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
                 systemChannel: systemChannel,
@@ -408,11 +418,12 @@ public struct FB01VoiceService: SynthVoiceServicing {
             await progress?(.storePass(pass))
             let editedBank = try readback.replacingVoices([voiceNumber: voice])
             let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
+            let requestKind = try FB01DeviceService.shared.requestKind(forDisplayBank: displayBank)
             let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
                 try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
                 try await Task.sleep(for: .milliseconds(1500))
                 return try FB01MIDI.request(
-                    .voiceBank(displayBank),
+                    requestKind,
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
                     systemChannel: systemChannel,

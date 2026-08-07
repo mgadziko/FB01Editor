@@ -105,6 +105,7 @@ final class DocumentModel: ObservableObject {
     @Published private var cachedDX100VoiceBanks: [Int: [DX100VoiceData]] = [:]
     @Published var selectedEditorDevice: EditorDeviceSelection?
     @Published var deviceCacheStatus = "Not loaded"
+    @Published private(set) var voiceBankSelectorRevision = 0
     @Published private(set) var configurationSelectorRevision = 0
     let liveKeyboardDisplay = LiveKeyboardDisplayModel()
 
@@ -965,8 +966,9 @@ final class DocumentModel: ObservableObject {
 
             do {
                 let names = try await Task.detached(priority: .userInitiated) {
+                    let requestKind = try FB01ModuleServices.shared.deviceService.requestKind(forDisplayBank: bank)
                     let bytes = try FB01MIDI.request(
-                        .voiceBank(bank),
+                        requestKind,
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
                         systemChannel: systemChannel,
@@ -1108,17 +1110,16 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    private func fb01RequestKind(forDisplayBank bank: Int) throws -> FB01MIDIRequestKind {
+        try FB01ModuleServices.shared.deviceService.requestKind(forDisplayBank: bank)
+    }
+
     func storeVoiceBankFromSelector(sourceBank: Int, targetBank: Int) {
         guard !isBusy else { return }
         let module = FB01ModuleServices.shared.module
         guard module.isValidVoiceBank(sourceBank),
               module.isWritableVoiceBank(targetBank) else {
             errorMessage = "Store Bank failed: invalid source or target bank."
-            statusMessage = nil
-            return
-        }
-        guard let sourceBankData = cachedVoiceBanks[sourceBank] else {
-            errorMessage = "Store Bank failed: Voice Bank \(sourceBank) is not loaded. Show Voice Bank \(sourceBank) again before storing it."
             statusMessage = nil
             return
         }
@@ -1148,50 +1149,35 @@ final class DocumentModel: ObservableObject {
 
         operationTask = Task {
             do {
-                let backupDirectory = try ensureDefaultBackupDirectory()
-                let backupURL = backupDirectory.appendingPathComponent(
-                    backupFileName(prefix: "bank-\(targetBank)-before-store-bank")
-                )
-
-                statusMessage = "Backing up Bank \(targetBank) before storing Voice Bank \(sourceBank)..."
-                progressPanel.update(message: "The voice bank is being stored. Please wait.\nBacking up Bank \(targetBank)...")
-                let originalBytes = try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.request(
-                        .voiceBank(targetBank),
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: systemChannel,
-                        timeout: 15
-                    )
-                }.value
-                let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
-                try await Task.detached(priority: .userInitiated) {
-                    try originalArtifact.writeSysEx(to: backupURL)
-                }.value
-                try Task.checkCancellation()
-
-                let readback = try await FB01ModuleServices.shared.voiceService.storeVoiceBank(
+                let sourceBankData: FB01VoiceBankData
+                if let cached = cachedVoiceBanks[sourceBank] {
+                    sourceBankData = cached
+                } else {
+                    statusMessage = "Fetching Voice Bank \(sourceBank) before storing it in Bank \(targetBank)..."
+                    progressPanel.update(message: "The voice bank is being stored. Please wait.\nFetching Voice Bank \(sourceBank)...")
+                    let requestKind = try fb01RequestKind(forDisplayBank: sourceBank)
+                    let sourceBytes = try await Task.detached(priority: .userInitiated) {
+                        try FB01MIDI.request(
+                            requestKind,
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 15
+                        )
+                    }.value
+                    sourceBankData = try voiceBankData(from: sourceBytes, expectedBankNumber: sourceBank)
+                    cacheVoiceBank(sourceBankData, userBankNumber: sourceBank)
+                }
+                let (readback, backupURL) = try await storeFB01VoiceBankDataToDevice(
                     sourceBankData,
-                    displayBank: targetBank,
+                    sourceDescription: "Voice Bank \(sourceBank)",
+                    targetBank: targetBank,
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
-                    systemChannel: systemChannel
-                ) { [self] event in
-                    await MainActor.run {
-                        switch event {
-                        case .turningProtectOff:
-                            self.statusMessage = "Turning FB-01 Protect OFF before storing Bank \(targetBank)..."
-                            progressPanel.update(message: "The voice bank is being stored. Please wait.\nTurning FB-01 Protect OFF...")
-                        case .storingBank:
-                            self.statusMessage = "Storing Voice Bank \(sourceBank) in Bank \(targetBank)..."
-                            progressPanel.update(message: "The voice bank is being stored. Please wait.\nStoring Voice Bank \(sourceBank) in Bank \(targetBank)...")
-                        case .verifyingBank:
-                            self.statusMessage = "Fetching Bank \(targetBank) to verify store..."
-                            progressPanel.update(message: "The voice bank is being stored. Please wait.\nFetching Bank \(targetBank) to verify store...")
-                        }
-                    }
-                }
-
+                    systemChannel: systemChannel,
+                    destinationName: destinationName,
+                    progressPanel: progressPanel
+                )
                 cacheVoiceBank(readback, userBankNumber: targetBank)
                 statusMessage = "FB-01 verified Voice Bank \(sourceBank) stored in Bank \(targetBank) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
                 errorMessage = nil
@@ -1206,6 +1192,131 @@ final class DocumentModel: ObservableObject {
             progressPanel.dismiss()
             isFetchingFromDevice = false
         }
+    }
+
+    func storeFB01VoiceBankFileSelectorToDevice(_ selector: EditorDocumentWorkspace.FB01VoiceBankFileSelector, targetBank: Int) {
+        guard !isBusy else { return }
+        guard FB01ModuleServices.shared.module.isWritableVoiceBank(targetBank) else {
+            errorMessage = "Store Bank failed: Bank \(targetBank) is not writable."
+            statusMessage = nil
+            return
+        }
+        guard confirmStoreVoiceBank(sourceBank: selector.displayBank, targetBank: targetBank) else {
+            return
+        }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        let destinationName = selectedDestinationName
+        isFetchingFromDevice = true
+        statusMessage = "Preparing to store \(selector.title) in Bank \(targetBank)..."
+        errorMessage = nil
+
+        let progressPanel = EditorProgressPanel(
+            title: "Store Voice Bank",
+            message: "The voice bank is being stored. Please wait.\nPreparing \(selector.title) -> Bank \(targetBank)...",
+            showsCancelButton: true
+        )
+        progressPanel.show()
+
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
+
+        operationTask = Task {
+            do {
+                let bankDataBytes = selector.items
+                    .sorted { $0.displayNumber < $1.displayNumber }
+                    .flatMap { $0.voice.bytes }
+                let sourceBankData = try FB01VoiceBankData(
+                    bank: selector.isVoiceRAM ? 0 : max(0, selector.displayBank - 1),
+                    data: bankDataBytes
+                )
+
+                let (readback, backupURL) = try await storeFB01VoiceBankDataToDevice(
+                    sourceBankData,
+                    sourceDescription: selector.title,
+                    targetBank: targetBank,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    destinationName: destinationName,
+                    progressPanel: progressPanel
+                )
+                cacheVoiceBank(readback, userBankNumber: targetBank)
+                statusMessage = "FB-01 verified \(selector.title) stored in Bank \(targetBank) on \(destinationName). Backup saved to \(backupURL.lastPathComponent)."
+                errorMessage = nil
+            } catch is CancellationError {
+                statusMessage = nil
+                errorMessage = "Store Bank canceled."
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store Bank failed: \(error)"
+            }
+
+            progressPanel.dismiss()
+            isFetchingFromDevice = false
+        }
+    }
+
+    private func storeFB01VoiceBankDataToDevice(
+        _ sourceBankData: FB01VoiceBankData,
+        sourceDescription: String,
+        targetBank: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        destinationName: String,
+        progressPanel: EditorProgressPanel
+    ) async throws -> (FB01VoiceBankData, URL) {
+        let backupDirectory = try ensureDefaultBackupDirectory()
+        let backupURL = backupDirectory.appendingPathComponent(
+            backupFileName(prefix: "bank-\(targetBank)-before-store-bank")
+        )
+
+        statusMessage = "Backing up Bank \(targetBank) before storing \(sourceDescription)..."
+        progressPanel.update(message: "The voice bank is being stored. Please wait.\nBacking up Bank \(targetBank)...")
+        let backupRequestKind = try fb01RequestKind(forDisplayBank: targetBank)
+        let originalBytes = try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.request(
+                backupRequestKind,
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 15
+            )
+        }.value
+        let originalArtifact = try FB01Artifact(sysexBytes: originalBytes)
+        try await Task.detached(priority: .userInitiated) {
+            try originalArtifact.writeSysEx(to: backupURL)
+        }.value
+        try Task.checkCancellation()
+
+        let readback = try await FB01ModuleServices.shared.voiceService.storeVoiceBank(
+            sourceBankData,
+            displayBank: targetBank,
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel
+        ) { [self] event in
+            await MainActor.run {
+                switch event {
+                case .turningProtectOff:
+                    self.statusMessage = "Turning FB-01 Protect OFF before storing Bank \(targetBank)..."
+                    progressPanel.update(message: "The voice bank is being stored. Please wait.\nTurning FB-01 Protect OFF...")
+                case .storingBank:
+                    self.statusMessage = "Storing \(sourceDescription) in Bank \(targetBank)..."
+                    progressPanel.update(message: "The voice bank is being stored. Please wait.\nStoring \(sourceDescription) in Bank \(targetBank)...")
+                case .verifyingBank:
+                    self.statusMessage = "Fetching Bank \(targetBank) to verify store..."
+                    progressPanel.update(message: "The voice bank is being stored. Please wait.\nFetching Bank \(targetBank) to verify store...")
+                }
+            }
+        }
+
+        return (readback, backupURL)
     }
 
     private func confirmStoreVoiceBank(sourceBank: Int, targetBank: Int) -> Bool {
@@ -1624,6 +1735,7 @@ final class DocumentModel: ObservableObject {
                 summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
             }
         }
+        voiceBankSelectorRevision += 1
         deviceCacheStatus = "Updated Voice Bank \(userBankNumber)"
     }
 
@@ -1636,6 +1748,32 @@ final class DocumentModel: ObservableObject {
     func cacheCurrentConfiguration(_ configuration: FB01ConfigurationData) {
         cachedCurrentConfiguration = configuration
         deviceCacheStatus = "Updated current configuration"
+    }
+
+    func ensureFB01VoiceBankCachedForEditing(bank: Int) async throws {
+        guard FB01ModuleServices.shared.module.isValidVoiceBank(bank) else {
+            throw FB01AppError.message("Voice Bank \(bank) is not valid.")
+        }
+
+        if cachedVoiceBanks[bank] != nil {
+            return
+        }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        let requestKind = try fb01RequestKind(forDisplayBank: bank)
+        let bytes = try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.request(
+                requestKind,
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 15
+            )
+        }.value
+        let bankData = try voiceBankData(from: bytes, expectedBankNumber: bank)
+        cacheVoiceBank(bankData, userBankNumber: bank)
     }
 
     func refreshMIDIEndpoints() {
@@ -2246,9 +2384,10 @@ final class DocumentModel: ObservableObject {
 
                 statusMessage = "Backing up Bank \(targetBank) before General MIDI install..."
                 progressPanel.update(message: "The voices are being stored. Please wait.\nBacking up Bank \(targetBank)...")
+                let backupRequestKind = try fb01RequestKind(forDisplayBank: targetBank)
                 let originalBytes = try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.request(
-                        .voiceBank(targetBank),
+                        backupRequestKind,
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
                         systemChannel: systemChannel,
@@ -2269,39 +2408,32 @@ final class DocumentModel: ObservableObject {
                 try await Task.sleep(for: .milliseconds(300))
                 try Task.checkCancellation()
 
-                var readback = try voiceBankData(from: originalBytes, expectedBankNumber: targetBank)
-                var mismatches = generalMIDIMismatches(readback: readback, targetBank: targetBank, selectedVoices: selectedVoices)
-                var previousMismatchCount = mismatches.count + 1
-                var pass = 0
-
-                while !mismatches.isEmpty {
-                    pass += 1
-                    guard pass <= generalMIDIStoreMaximumPasses else {
-                        throw FB01AppError.message("Bank \(targetBank) still has \(mismatches.count) General MIDI mismatches after \(generalMIDIStoreMaximumPasses) store passes. The FB-01 may be rejecting the bulk dump; stop playing notes during store operations and check Protect/cabling before retrying.")
+                let originalBank = try voiceBankData(from: originalBytes, expectedBankNumber: targetBank)
+                let targetVoiceBank = try originalBank.replacingVoices(selectedVoices)
+                let readback = try await FB01ModuleServices.shared.voiceService.storeVoiceBank(
+                    targetVoiceBank,
+                    displayBank: targetBank,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                ) { [self] event in
+                    await MainActor.run {
+                        switch event {
+                        case .turningProtectOff:
+                            self.statusMessage = "Turning FB-01 Protect OFF before storing General MIDI voices in Bank \(targetBank)..."
+                            progressPanel.update(message: "The voices are being stored. Please wait.\nTurning FB-01 Protect OFF...")
+                        case .storingBank:
+                            self.statusMessage = "Storing General MIDI voices in Bank \(targetBank)..."
+                            progressPanel.update(message: "The voices are being stored. Please wait.\nStoring General MIDI voices in Bank \(targetBank)...")
+                        case .verifyingBank:
+                            self.statusMessage = "Fetching Bank \(targetBank) to verify the General MIDI store..."
+                            progressPanel.update(message: "The voices are being stored. Please wait.\nFetching Bank \(targetBank) to verify store...")
+                        }
                     }
-                    guard mismatches.count < previousMismatchCount else {
-                        throw FB01AppError.message("Bank \(targetBank) made no store progress; first mismatch: \(mismatches[0])")
-                    }
-
-                    previousMismatchCount = mismatches.count
-                    statusMessage = "Storing General MIDI voices in Bank \(targetBank), pass \(pass); \(mismatches.count) mismatch\(mismatches.count == 1 ? "" : "es") remain..."
-                    progressPanel.update(message: "The voices are being stored. Please wait.\nStoring Bank \(targetBank), pass \(pass); verifying by readback...")
-                    let editedBank = try readback.replacingVoices(selectedVoices)
-                    let loadMessage = try voiceBankLoadMessage(bank: editedBank, systemChannel: systemChannel)
-                    let nextReadbackBytes = try await Task.detached(priority: .userInitiated) {
-                        try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
-                        try await Task.sleep(for: .milliseconds(1500))
-                        return try FB01MIDI.request(
-                            .voiceBank(targetBank),
-                            sourceIndex: sourceIndex,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel,
-                            timeout: 15
-                        )
-                    }.value
-                    try Task.checkCancellation()
-                    readback = try voiceBankData(from: nextReadbackBytes, expectedBankNumber: targetBank)
-                    mismatches = generalMIDIMismatches(readback: readback, targetBank: targetBank, selectedVoices: selectedVoices)
+                }
+                let mismatches = generalMIDIMismatches(readback: readback, targetBank: targetBank, selectedVoices: selectedVoices)
+                guard mismatches.isEmpty else {
+                    throw FB01AppError.message("Bank \(targetBank) did not verify after the General MIDI store; first mismatch: \(mismatches[0])")
                 }
 
                 cacheVoiceBank(readback, userBankNumber: targetBank)
@@ -2976,10 +3108,120 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func saveFB01VoiceBankFromSelector(bank: Int) {
+        guard FB01ModuleServices.shared.module.isValidVoiceBank(bank) else {
+            errorMessage = "Save Bank failed: Voice Bank \(bank) is not valid."
+            statusMessage = nil
+            return
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+
+        let performSave: @MainActor (FB01VoiceBankData) -> Void = { bankData in
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = UTType.currentModuleVoiceBankFileTypes
+            panel.directoryURL = self.preferredSaveDirectoryURL()
+            panel.nameFieldStringValue = "\(self.safeFileName(self.selectedDeviceVoiceBankTitle(bank))).\(EditorSynthModule.fileProfile.voiceBankExtension)"
+            panel.message = "Save the displayed FB-01 bank as a voice bank file."
+            panel.prompt = "Save Bank to File"
+
+            guard panel.runModal() == .OK, let url = panel.url else {
+                return
+            }
+
+            do {
+                let artifact: FB01Artifact
+                if bank == 1 {
+                    artifact = FB01Artifact(message: .voiceRAMDumpData(
+                        systemChannel: self.systemChannel,
+                        byteCount: FB01VoiceBankData.bankHeaderByteCount,
+                        data: bankData.data,
+                        checksum: FB01.checksum(for: bankData.data)
+                    ))
+                } else {
+                    artifact = FB01Artifact(message: .voiceBankDumpData(
+                        systemChannel: self.systemChannel,
+                        bank: max(0, bank - 1),
+                        byteCount: FB01VoiceBankData.bankHeaderByteCount,
+                        data: bankData.data,
+                        checksum: FB01.checksum(for: bankData.data)
+                    ))
+                }
+                try artifact.writeSysEx(to: url)
+                self.rememberSaveDirectory(for: url)
+                self.statusMessage = "Saved Voice Bank \(bank) to \(url.lastPathComponent)."
+                self.errorMessage = nil
+            } catch {
+                self.errorMessage = "Save Bank failed: \(error)"
+                self.statusMessage = nil
+            }
+        }
+
+        if let cached = cachedVoiceBanks[bank] {
+            performSave(cached)
+            return
+        }
+
+        let sourceIndex = selectedSourceIndex
+        let destinationIndex = selectedDestinationIndex
+        let systemChannel = systemChannel
+        isFetchingFromDevice = true
+        statusMessage = "Fetching Voice Bank \(bank) before saving it to a file..."
+        errorMessage = nil
+
+        let progressPanel = EditorProgressPanel(
+            title: "Save Bank to File",
+            message: "The voice bank is being fetched. Please wait.\nFetching Voice Bank \(bank)...",
+            showsCancelButton: true
+        )
+        progressPanel.show()
+
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
+
+        operationTask = Task {
+            do {
+                let requestKind = try fb01RequestKind(forDisplayBank: bank)
+                let bytes = try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.request(
+                        requestKind,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        timeout: 15
+                    )
+                }.value
+                let bankData = try voiceBankData(from: bytes, expectedBankNumber: bank)
+                await MainActor.run {
+                    self.cacheVoiceBank(bankData, userBankNumber: bank)
+                    performSave(bankData)
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self.statusMessage = nil
+                    self.errorMessage = "Save Bank canceled."
+                }
+            } catch {
+                await MainActor.run {
+                    self.statusMessage = nil
+                    self.errorMessage = "Save Bank failed: \(error)"
+                }
+            }
+            await MainActor.run {
+                progressPanel.dismiss()
+                self.isFetchingFromDevice = false
+            }
+        }
+    }
+
     func saveDX100VoiceBankFile(_ selector: EditorDocumentWorkspace.DX100VoiceBankFileSelector) {
         guard selectedEditorDevice == .dx100 else {
             return
         }
+
+        NSApp.activate(ignoringOtherApps: true)
 
         let voices = selector.items.map(\.candidate.voice)
         let channel = selector.items.first?.candidate.channel ?? systemChannel
@@ -3008,6 +3250,8 @@ final class DocumentModel: ObservableObject {
     }
 
     func saveFB01VoiceBankFile(_ selector: EditorDocumentWorkspace.FB01VoiceBankFileSelector) {
+        NSApp.activate(ignoringOtherApps: true)
+
         let panel = NSSavePanel()
         panel.allowedContentTypes = UTType.currentModuleVoiceBankFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
@@ -3054,6 +3298,35 @@ final class DocumentModel: ObservableObject {
             errorMessage = "Save Bank failed: \(error)"
             statusMessage = nil
         }
+    }
+
+    func replaceCachedVoice(inBank bank: Int, slotIndex: Int, with voice: FB01VoiceData) throws {
+        guard let cachedBank = cachedVoiceBanks[bank] else {
+            throw FB01AppError.message("Voice Bank \(bank) is not loaded yet.")
+        }
+        guard (0..<FB01VoiceBankData.voiceCount).contains(slotIndex) else {
+            throw FB01AppError.message("Voice slot \(slotIndex + 1) is not available.")
+        }
+
+        let updatedBank = try cachedBank.replacingVoices([slotIndex + 1: voice])
+        cacheVoiceBank(updatedBank, userBankNumber: bank)
+    }
+
+    func cachedVoiceName(inBank bank: Int, slotIndex: Int) -> String? {
+        guard let bankData = cachedVoiceBanks[bank],
+              bankData.voices.indices.contains(slotIndex) else {
+            return nil
+        }
+        let name = bankData.voices[slotIndex].voice.name
+        return name.isEmpty ? "Voice \(slotIndex + 1)" : name
+    }
+
+    func cachedVoice(inBank bank: Int, slotIndex: Int) -> FB01VoiceData? {
+        guard let bankData = cachedVoiceBanks[bank],
+              bankData.voices.indices.contains(slotIndex) else {
+            return nil
+        }
+        return bankData.voices[slotIndex].voice
     }
 
     func copyVoiceToLocalSlot(sourceID: LibrarySource.ID, number: Int, voice: FB01VoiceData, voices: [FB01VoiceSummary]) {
@@ -3784,9 +4057,10 @@ final class DocumentModel: ObservableObject {
             backupFileName(prefix: "bank-\(bankNumber)-before-voice-\(voiceNumber)")
         )
         statusMessage = "\(statusPrefix): backing up Bank \(bankNumber) on \(destinationName)..."
+        let requestKind = try FB01ModuleServices.shared.deviceService.requestKind(forDisplayBank: bankNumber)
         let originalBytes = try await Task.detached(priority: .userInitiated) {
             try FB01MIDI.request(
-                .voiceBank(bankNumber),
+                requestKind,
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
                 systemChannel: systemChannel,
@@ -5118,9 +5392,10 @@ final class DocumentModel: ObservableObject {
 
             statusMessage = "Fetching source Bank \(bank) for General MIDI store..."
             progressPanel.update(message: "The voices are being stored. Please wait.\nFetching source Bank \(bank) from the FB-01...")
+            let requestKind = try fb01RequestKind(forDisplayBank: bank)
             let bytes = try await Task.detached(priority: .userInitiated) {
                 try FB01MIDI.request(
-                    .voiceBank(bank),
+                    requestKind,
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
                     systemChannel: systemChannel,

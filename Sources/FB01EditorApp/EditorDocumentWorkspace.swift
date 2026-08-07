@@ -108,7 +108,7 @@ struct EditorDocumentCommands: View {
         case .dx100:
             return "Load DX100/27 Voice Bank File..."
         default:
-            return "Load Voice Bank from File..."
+            return "Load Bank from File..."
         }
     }
 
@@ -221,8 +221,19 @@ struct EditorDocumentCommands: View {
             } else if let selectorID = activeFB01VoiceBankFileSelector,
                       let selector = workspace.fb01VoiceBankFileSelector(id: selectorID) {
                 document.saveFB01VoiceBankFile(selector)
+            } else if workspace.openFB01VoiceBankFileSelectors.count == 1,
+                      let selector = workspace.openFB01VoiceBankFileSelectors.first {
+                document.saveFB01VoiceBankFile(selector)
+            } else if workspace.openDX100VoiceBankFileSelectors.count == 1,
+                      let selector = workspace.openDX100VoiceBankFileSelectors.first {
+                document.saveDX100VoiceBankFile(selector)
             } else if let sourceBank = activeVoiceBankSelector, document.selectedEditorDevice == .dx100 {
                 document.saveDX100VoiceBankFromSelector(bank: sourceBank)
+            } else if let sourceBank = activeVoiceBankSelector, document.selectedEditorDevice == .fb01 {
+                document.saveFB01VoiceBankFromSelector(bank: sourceBank)
+            } else {
+                document.errorMessage = "Save Bank failed: bring a bank window to the front first."
+                document.statusMessage = nil
             }
         }
         .disabled(document.isBusy || (activeVoiceBankSelector == nil && activeDX100VoiceBankFileSelector == nil && activeFB01VoiceBankFileSelector == nil))
@@ -700,6 +711,22 @@ final class EditorDocumentWorkspace: ObservableObject {
             items: items
         )
         fb01VoiceBankFileSelectors[id] = selector
+    }
+
+    func replaceVoice(inFB01DeviceBank bank: Int, slotIndex: Int, with voice: FB01VoiceData) throws {
+        guard let appDelegate = NSApp.delegate as? AppDelegate,
+              let document = appDelegate.document else {
+            throw FB01AppError.message("The FB-01 bank window is not available right now.")
+        }
+        try document.replaceCachedVoice(inBank: bank, slotIndex: slotIndex, with: voice)
+    }
+
+    func voiceNameInFB01DeviceBank(bank: Int, slotIndex: Int) -> String? {
+        guard let appDelegate = NSApp.delegate as? AppDelegate,
+              let document = appDelegate.document else {
+            return nil
+        }
+        return document.cachedVoiceName(inBank: bank, slotIndex: slotIndex)
     }
 
     func closeVoiceDocument(id: UUID) {

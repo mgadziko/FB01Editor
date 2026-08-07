@@ -51,6 +51,12 @@ struct FB01BankFileVoiceOrigin: Equatable {
     var bankTitle: String
 }
 
+struct FB01DeviceBankVoiceOrigin: Equatable {
+    var bank: Int
+    var slotIndex: Int
+    var bankTitle: String
+}
+
 private final class DX100BankFileStoreAccessory: NSView {
     private let selectors: [EditorDocumentWorkspace.DX100VoiceBankFileSelector]
     private let preferredOrigin: DX100BankFileVoiceOrigin?
@@ -219,6 +225,98 @@ private final class FB01BankFileStoreAccessory: NSView {
     }
 }
 
+private final class FB01DeviceBankStoreAccessory: NSView {
+    private let banks: [Int]
+    private let preferredOrigin: FB01DeviceBankVoiceOrigin?
+    private let voiceNameProvider: (Int, Int) -> String?
+    private let bankPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let slotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+
+    init(
+        banks: [Int],
+        preferredOrigin: FB01DeviceBankVoiceOrigin?,
+        voiceNameProvider: @escaping (Int, Int) -> String?
+    ) {
+        self.banks = banks
+        self.preferredOrigin = preferredOrigin
+        self.voiceNameProvider = voiceNameProvider
+        super.init(frame: NSRect(x: 0, y: 0, width: 520, height: 112))
+
+        let stack = NSStackView()
+        stack.frame = bounds
+        stack.autoresizingMask = [.width, .height]
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        banks.forEach { bank in
+            bankPopup.addItem(withTitle: "Voice Bank \(bank)")
+        }
+
+        if let preferredOrigin,
+           let preferredBankIndex = banks.firstIndex(of: preferredOrigin.bank) {
+            bankPopup.selectItem(at: preferredBankIndex)
+        } else {
+            bankPopup.selectItem(at: 0)
+        }
+
+        bankPopup.target = self
+        bankPopup.action = #selector(bankChanged)
+        reloadSlots()
+
+        stack.addArrangedSubview(labelledEditorPopup(label: "Bank window:", popup: bankPopup))
+        stack.addArrangedSubview(labelledEditorPopup(label: "Slot:", popup: slotPopup))
+
+        let note = NSTextField(wrappingLabelWithString: "If this voice came from the selected bank window, the original slot is preselected.")
+        note.textColor = .secondaryLabelColor
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        note.maximumNumberOfLines = 3
+        note.preferredMaxLayoutWidth = 500
+        note.frame = NSRect(x: 0, y: 0, width: 500, height: 40)
+        stack.addArrangedSubview(note)
+
+        addSubview(stack)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func bankChanged() {
+        reloadSlots()
+    }
+
+    var selection: (bank: Int, slotIndex: Int)? {
+        guard banks.indices.contains(bankPopup.indexOfSelectedItem) else { return nil }
+        let bank = banks[bankPopup.indexOfSelectedItem]
+        let slotIndex = slotPopup.indexOfSelectedItem
+        guard (0..<FB01VoiceBankData.voiceCount).contains(slotIndex) else { return nil }
+        return (bank, slotIndex)
+    }
+
+    private func reloadSlots() {
+        guard banks.indices.contains(bankPopup.indexOfSelectedItem) else { return }
+        let bank = banks[bankPopup.indexOfSelectedItem]
+        let priorIndex = slotPopup.indexOfSelectedItem
+        slotPopup.removeAllItems()
+        for slotIndex in 0..<FB01VoiceBankData.voiceCount {
+            let name = voiceNameProvider(bank, slotIndex) ?? "Voice \(slotIndex + 1)"
+            slotPopup.addItem(withTitle: "\(slotIndex + 1) \(name)")
+        }
+
+        if bank == preferredOrigin?.bank,
+           let preferredSlotIndex = preferredOrigin?.slotIndex,
+           (0..<FB01VoiceBankData.voiceCount).contains(preferredSlotIndex) {
+            slotPopup.selectItem(at: preferredSlotIndex)
+        } else if priorIndex >= 0, priorIndex < FB01VoiceBankData.voiceCount {
+            slotPopup.selectItem(at: priorIndex)
+        } else {
+            slotPopup.selectItem(at: 0)
+        }
+    }
+}
+
 @MainActor
 final class VoiceDocumentModel: ObservableObject, Identifiable {
     let id = UUID()
@@ -237,6 +335,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var performanceMacroValues = PerformanceMacro.neutralValues
     @Published var layoutRevision = 0
     var fb01BankFileOrigin: FB01BankFileVoiceOrigin?
+    var fb01DeviceBankOrigin: FB01DeviceBankVoiceOrigin?
     var dx100BankFileOrigin: DX100BankFileVoiceOrigin?
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
@@ -807,6 +906,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 resetPerformanceMacros()
                 self.systemChannel = cachedResult.systemChannel
                 self.sourceDevice = selectedDevice
+                self.updateOrigins(for: source, device: .fb01, bankTitleProvider: { bank in
+                    device.selectedDeviceVoiceBankTitle(bank)
+                })
                 fileURL = nil
                 noteVoiceReplacement()
                 let fetchedName = cachedResult.neutralVoice.name.isEmpty ? "Untitled" : cachedResult.neutralVoice.name
@@ -837,6 +939,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 resetPerformanceMacros()
                 self.systemChannel = result.systemChannel
                 self.sourceDevice = .fb01
+                self.updateOrigins(for: source, device: .fb01, bankTitleProvider: { bank in
+                    device.selectedDeviceVoiceBankTitle(bank)
+                })
                 fileURL = nil
                 noteVoiceReplacement()
                 let fetchedName = result.voice.name.isEmpty ? "Untitled" : result.voice.name
@@ -1023,9 +1128,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 let backupURL = backupDirectory.appendingPathComponent(
                     backupFileName(prefix: "bank-\(bankNumber)-before-voice-\(options.voiceNumber + 1)")
                 )
+                let requestKind = try FB01ModuleServices.shared.deviceService.requestKind(forDisplayBank: bankNumber)
                 let originalBytes = try await Task.detached(priority: .userInitiated) {
                     try FB01MIDI.request(
-                        .voiceBank(bankNumber),
+                        requestKind,
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
                         systemChannel: systemChannel,
@@ -1074,7 +1180,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    func storeToLinkedBankWindow(workspace: EditorDocumentWorkspace) {
+    func storeToLinkedBankWindow(workspace: EditorDocumentWorkspace, device: DocumentModel) {
         guard !isBusy else { return }
 
         switch sourceDevice {
@@ -1083,6 +1189,22 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             guard !selectors.isEmpty else {
                 errorMessage = "Open a DX100/27 voice bank window before storing this voice into a bank file."
                 statusMessage = nil
+                return
+            }
+
+            if let origin = dx100BankFileOrigin,
+               selectors.contains(where: { $0.id == origin.selectorID }) {
+                do {
+                    let dxVoice = try neutralVoice.dx100Voice()
+                    try workspace.replaceVoice(inDX100VoiceBankFileSelector: origin.selectorID, slotIndex: origin.slotIndex, with: dxVoice)
+                    markCurrentStateSaved()
+                    _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.dx100VoiceBankFileSelectorWindowIdentifier(for: origin.selectorID))
+                    statusMessage = "Stored \(displayName) into \(origin.bankTitle) slot \(origin.slotIndex + 1). Save the bank window to write the updated bank file."
+                    errorMessage = nil
+                } catch {
+                    statusMessage = nil
+                    errorMessage = "Store to bank window failed: \(error)"
+                }
                 return
             }
 
@@ -1098,6 +1220,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     slotIndex: target.slotIndex,
                     bankTitle: target.selectorTitle
                 )
+                markCurrentStateSaved()
+                _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.dx100VoiceBankFileSelectorWindowIdentifier(for: target.selectorID))
                 statusMessage = "Stored \(displayName) into \(target.selectorTitle) slot \(target.slotIndex + 1). Save the bank window to write the updated bank file."
                 errorMessage = nil
             } catch {
@@ -1105,10 +1229,58 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 errorMessage = "Store to bank window failed: \(error)"
             }
         case .fb01:
+            let openDeviceBanks = openFB01DeviceBankWindows()
+            if let origin = fb01DeviceBankOrigin {
+                storeToFB01DeviceBank(
+                    workspace: workspace,
+                    device: device,
+                    bank: origin.bank,
+                    slotIndex: origin.slotIndex,
+                    bankTitle: origin.bankTitle
+                )
+                return
+            }
+
+            if !openDeviceBanks.isEmpty {
+                guard let target = chooseFB01DeviceBankStoreTarget(
+                    banks: openDeviceBanks,
+                    preferredOrigin: fb01DeviceBankOrigin,
+                    voiceNameProvider: { bank, slotIndex in
+                        workspace.voiceNameInFB01DeviceBank(bank: bank, slotIndex: slotIndex)
+                    }
+                ) else {
+                    return
+                }
+
+                storeToFB01DeviceBank(
+                    workspace: workspace,
+                    device: device,
+                    bank: target.bank,
+                    slotIndex: target.slotIndex,
+                    bankTitle: target.bankTitle
+                )
+                return
+            }
+
             let selectors = workspace.openFB01VoiceBankFileSelectors
             guard !selectors.isEmpty else {
-                errorMessage = "Open an FB-01 voice bank window before storing this voice into a bank file."
+                errorMessage = "Open an FB-01 bank window before storing this voice into a bank window."
                 statusMessage = nil
+                return
+            }
+
+            if let origin = fb01BankFileOrigin,
+               selectors.contains(where: { $0.id == origin.selectorID }) {
+                do {
+                    try workspace.replaceVoice(inFB01VoiceBankFileSelector: origin.selectorID, slotIndex: origin.slotIndex, with: voice)
+                    markCurrentStateSaved()
+                    _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.fb01VoiceBankFileSelectorWindowIdentifier(for: origin.selectorID))
+                    statusMessage = "Stored \(displayName) into \(origin.bankTitle) slot \(origin.slotIndex + 1). Save the bank window to write the updated bank file."
+                    errorMessage = nil
+                } catch {
+                    statusMessage = nil
+                    errorMessage = "Store to bank window failed: \(error)"
+                }
                 return
             }
 
@@ -1123,12 +1295,60 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     slotIndex: target.slotIndex,
                     bankTitle: target.selectorTitle
                 )
+                markCurrentStateSaved()
+                _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.fb01VoiceBankFileSelectorWindowIdentifier(for: target.selectorID))
                 statusMessage = "Stored \(displayName) into \(target.selectorTitle) slot \(target.slotIndex + 1). Save the bank window to write the updated bank file."
                 errorMessage = nil
             } catch {
                 statusMessage = nil
                 errorMessage = "Store to bank window failed: \(error)"
             }
+        }
+    }
+
+    private func storeToFB01DeviceBank(
+        workspace: EditorDocumentWorkspace,
+        device: DocumentModel,
+        bank: Int,
+        slotIndex: Int,
+        bankTitle: String
+    ) {
+        isBusy = true
+        statusMessage = "Preparing \(bankTitle) slot \(slotIndex + 1) for update..."
+        errorMessage = nil
+
+        let progressPanel = EditorProgressPanel(
+            title: "Store Voice to Open Bank Window",
+            message: "The bank window is being updated. Please wait.\nPreparing \(bankTitle) slot \(slotIndex + 1)..."
+        )
+        progressPanel.show()
+
+        Task {
+            do {
+                try await device.ensureFB01VoiceBankCachedForEditing(bank: bank)
+                try device.replaceCachedVoice(inBank: bank, slotIndex: slotIndex, with: voice)
+                guard let cachedVoice = device.cachedVoice(inBank: bank, slotIndex: slotIndex) else {
+                    throw FB01AppError.message("Voice Bank \(bank) slot \(slotIndex + 1) did not remain available after the update.")
+                }
+                guard cachedVoice == voice else {
+                    throw FB01AppError.message("Voice Bank \(bank) slot \(slotIndex + 1) did not accept the updated voice in cache.")
+                }
+                fb01DeviceBankOrigin = FB01DeviceBankVoiceOrigin(
+                    bank: bank,
+                    slotIndex: slotIndex,
+                    bankTitle: bankTitle
+                )
+                markCurrentStateSaved()
+                _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank))
+                statusMessage = "Stored \(displayName) into \(bankTitle) slot \(slotIndex + 1). Save the bank window to write the updated bank file, or use Store Bank to write it to the FB-01."
+                errorMessage = nil
+            } catch {
+                statusMessage = nil
+                errorMessage = "Store to bank window failed: \(error)"
+                showEditorError(title: "Store to Bank Window Failed", message: "\(error)")
+            }
+            progressPanel.dismiss()
+            isBusy = false
         }
     }
 
@@ -1142,6 +1362,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         selectors: [EditorDocumentWorkspace.DX100VoiceBankFileSelector],
         preferredOrigin: DX100BankFileVoiceOrigin?
     ) -> DX100BankFileStoreTarget? {
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Store Voice to Open Bank Window"
         alert.informativeText = "Choose which open DX100/27 bank window and which slot should receive this voice."
@@ -1169,10 +1390,17 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         var slotIndex: Int
     }
 
+    private struct FB01DeviceBankStoreTarget {
+        var bank: Int
+        var bankTitle: String
+        var slotIndex: Int
+    }
+
     private func chooseFB01BankFileStoreTarget(
         selectors: [EditorDocumentWorkspace.FB01VoiceBankFileSelector],
         preferredOrigin: FB01BankFileVoiceOrigin?
     ) -> FB01BankFileStoreTarget? {
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Store Voice to Open Bank Window"
         alert.informativeText = "Choose which open FB-01 bank window and which slot should receive this voice."
@@ -1192,6 +1420,51 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             selectorTitle: selection.selector.title,
             slotIndex: selection.item.slotIndex
         )
+    }
+
+    private func chooseFB01DeviceBankStoreTarget(
+        banks: [Int],
+        preferredOrigin: FB01DeviceBankVoiceOrigin?,
+        voiceNameProvider: @escaping (Int, Int) -> String?
+    ) -> FB01DeviceBankStoreTarget? {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Store Voice to Open Bank Window"
+        alert.informativeText = "Choose which open FB-01 device bank window and which slot should receive this voice."
+        alert.addButton(withTitle: "Store")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let accessory = FB01DeviceBankStoreAccessory(
+            banks: banks,
+            preferredOrigin: preferredOrigin,
+            voiceNameProvider: voiceNameProvider
+        )
+        alert.accessoryView = accessory
+
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let selection = accessory.selection else {
+            return nil
+        }
+
+        return FB01DeviceBankStoreTarget(
+            bank: selection.bank,
+            bankTitle: "Voice Bank \(selection.bank)",
+            slotIndex: selection.slotIndex
+        )
+    }
+
+    private func openFB01DeviceBankWindows() -> [Int] {
+        NSApp.windows.compactMap { window in
+            guard let raw = window.identifier?.rawValue,
+                  raw.hasPrefix("voice-bank-selector-"),
+                  let bank = Int(raw.replacingOccurrences(of: "voice-bank-selector-", with: ""))
+            else {
+                return nil
+            }
+            return bank
+        }
+        .sorted()
     }
 
     func sendKeyboardNote(_ note: Int, isOn: Bool, device: DocumentModel) {
@@ -1526,6 +1799,42 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         preparedKeyboardVoiceSignature = nil
         preparedKeyboardVoiceDate = nil
         lastDX100LiveSentSignature = nil
+    }
+
+    private func markCurrentStateSaved() {
+        savedNeutralVoice = neutralVoice
+        savedProjectionOverlay = FB01VoiceProjectionOverlay(voice: voice)
+        savedProjectedVoiceCache = voice
+    }
+
+    private func updateOrigins(
+        for source: VoiceDocumentFetchSource,
+        device: EditorDeviceSelection,
+        bankTitleProvider: (Int) -> String
+    ) {
+        switch device {
+        case .fb01:
+            dx100BankFileOrigin = nil
+            fb01BankFileOrigin = nil
+            switch source {
+            case let .storedSlot(location, voiceNumber):
+                switch location {
+                case .bank(let bank):
+                    fb01DeviceBankOrigin = FB01DeviceBankVoiceOrigin(
+                        bank: bank,
+                        slotIndex: voiceNumber,
+                        bankTitle: bankTitleProvider(bank)
+                    )
+                case .voiceRAM1:
+                    fb01DeviceBankOrigin = nil
+                }
+            case .currentVoice, .instrument, .dx100Bank:
+                fb01DeviceBankOrigin = nil
+            }
+        case .dx100:
+            fb01DeviceBankOrigin = nil
+            fb01BankFileOrigin = nil
+        }
     }
 
     private var isKeyboardPreparationStale: Bool {

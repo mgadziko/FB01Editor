@@ -151,6 +151,7 @@ struct VoiceSelectorCommands: View {
     @ObservedObject var workspace: EditorDocumentWorkspace
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.activeVoiceBankSelector) private var activeVoiceBankSelector
+    @FocusedValue(\.activeFB01VoiceBankFileSelector) private var activeFB01VoiceBankFileSelector
 
     var body: some View {
         Menu(document.selectedDeviceCommandTitle(.showVoiceBank, fallback: "Show Voice Bank")) {
@@ -172,12 +173,15 @@ struct VoiceSelectorCommands: View {
                     Button(document.selectedDeviceVoiceBankTitle(targetBank)) {
                         if let sourceBank = activeVoiceBankSelector {
                             document.storeVoiceBankFromSelector(sourceBank: sourceBank, targetBank: targetBank)
+                        } else if let selectorID = activeFB01VoiceBankFileSelector,
+                                  let selector = workspace.fb01VoiceBankFileSelector(id: selectorID) {
+                            document.storeFB01VoiceBankFileSelectorToDevice(selector, targetBank: targetBank)
                         }
                     }
-                    .disabled(document.isBusy || activeVoiceBankSelector == nil)
+                    .disabled(document.isBusy || (activeVoiceBankSelector == nil && activeFB01VoiceBankFileSelector == nil))
                 }
             }
-            .disabled(document.isBusy || activeVoiceBankSelector == nil)
+            .disabled(document.isBusy || (activeVoiceBankSelector == nil && activeFB01VoiceBankFileSelector == nil))
         }
     }
 }
@@ -228,6 +232,13 @@ struct VoiceBankSelectorWindow: View {
         .task(id: bank) {
             await loadItems()
         }
+        .onChange(of: document.voiceBankSelectorRevision) {
+            guard !isLoading else { return }
+            items = document.voiceBankSelectorItems(bank: bank)
+            if !items.isEmpty {
+                errorMessage = nil
+            }
+        }
         .background(WindowIdentifierSetter(
             identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank),
             title: bankTitle
@@ -250,8 +261,16 @@ struct VoiceBankSelectorWindow: View {
 
     @MainActor
     private func openVoiceDocument(_ item: VoiceBankSelectorItem) {
+        let currentBankTitle = document.selectedDeviceVoiceBankTitle(bank)
         let id = workspace.createVoiceDocument(statusMessage: "Fetching \(item.fetchTitle)...")
         openWindow(id: "voice-document", value: id)
+        if document.selectedEditorDevice == .fb01 {
+            workspace.voiceDocument(id: id)?.fb01DeviceBankOrigin = FB01DeviceBankVoiceOrigin(
+                bank: bank,
+                slotIndex: item.zeroBasedVoiceNumber,
+                bankTitle: currentBankTitle
+            )
+        }
         Task { @MainActor in
             await Task.yield()
             workspace.voiceDocument(id: id)?.fetchFromDevice(
@@ -2620,7 +2639,7 @@ struct VoiceDocumentWindow: View {
             fetchFromDevice: { device in document.fetchFromDevice(device: device) },
             fetchFromDeviceTitle: device.selectedDeviceVoiceFetchIntoDocumentTitle,
             storeToLinkedBankWindow: document.canStoreToLinkedBankWindow ? {
-                document.storeToLinkedBankWindow(workspace: workspace)
+                document.storeToLinkedBankWindow(workspace: workspace, device: device)
             } : nil,
             storeToLinkedBankWindowTitle: document.linkedBankWindowStoreTitle,
             storeToDevice: { device in document.storeToDevice(device: device) },
