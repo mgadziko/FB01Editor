@@ -542,6 +542,30 @@ func sendSwitchPress(
     try send(bytes: releaseBytes, to: destination, outputPort: outputPort)
 }
 
+func shortHexPrefix(_ bytes: [UInt8], count: Int = 12) -> String {
+    bytes.prefix(count).map { String(format: "%02X", $0) }.joined(separator: " ")
+}
+
+func shortHexSuffix(_ bytes: [UInt8], count: Int = 12) -> String {
+    bytes.suffix(count).map { String(format: "%02X", $0) }.joined(separator: " ")
+}
+
+func printSysExDiagnostic(_ message: [UInt8], index: Int) {
+    print("SysEx #\(index): \(message.count) bytes")
+    print("  head: \(shortHexPrefix(message))")
+    print("  tail: \(shortHexSuffix(message))")
+}
+
+func printSysExTimeoutSummary(kind: DX100DumpRequestKind, messages: [[UInt8]]) {
+    guard !messages.isEmpty else { return }
+    print("Received \(messages.count) SysEx message\(messages.count == 1 ? "" : "s") while waiting for DX100 \(kind.displayName):")
+    for (index, message) in messages.enumerated() {
+        printSysExDiagnostic(message, index: index + 1)
+    }
+    let totalBytes = messages.reduce(0) { $0 + $1.count }
+    print("Total received bytes across all SysEx messages: \(totalBytes)")
+}
+
 func requestDump(kind: DX100DumpRequestKind, options: RequestOptions) throws {
     let source = try selectedSource(matching: options.sourceQuery)
     let destination = try selectedDestination(matching: options.destinationQuery)
@@ -585,7 +609,11 @@ func requestDump(kind: DX100DumpRequestKind, options: RequestOptions) throws {
             continue
         }
 
-        for message in messages[inspectedCount...] {
+        for (offset, message) in messages[inspectedCount...].enumerated() {
+            if kind == .voiceBank {
+                printSysExDiagnostic(message, index: inspectedCount + offset + 1)
+            }
+
             if kind == .currentVoice, let fetched = try? DX100VoiceService.shared.currentVoice(fromSingleVoiceBulkSysEx: message) {
                 print("Received DX100 current voice: \(fetched.voice.name)")
                 print("Channel: \(fetched.channel)")
@@ -619,6 +647,10 @@ func requestDump(kind: DX100DumpRequestKind, options: RequestOptions) throws {
             print("Received \(message.count)-byte SysEx message that is not a DX100 \(kind.displayName) dump.")
         }
         inspectedCount = messages.count
+    }
+
+    if kind == .voiceBank {
+        printSysExTimeoutSummary(kind: kind, messages: state.snapshot())
     }
 
     let timeoutDetails: String

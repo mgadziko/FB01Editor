@@ -9,6 +9,7 @@ private let dx100LiveResendDelayNanoseconds: UInt64 = 180_000_000
 struct ContentView: View {
     @ObservedObject var document: DocumentModel
     @ObservedObject var workspace: EditorDocumentWorkspace
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         ScrollView {
@@ -31,6 +32,15 @@ struct ContentView: View {
         }
         .background(MainWindowSizeConfigurator(contentSize: CGSize(width: 1080, height: 920)))
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
+        .onChange(of: document.pendingVoiceBankWindowOpenRevision) {
+            guard let bank = document.consumePendingVoiceBankWindowOpen() else {
+                return
+            }
+            let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank)
+            if !workspace.bringWindowToFront(identifier: identifier) {
+                openWindow(id: "voice-bank-selector", value: bank)
+            }
+        }
     }
 }
 
@@ -251,7 +261,11 @@ struct VoiceBankSelectorWindow: View {
         }
         .onChange(of: document.voiceBankSelectorRevision) {
             guard !isLoading else { return }
-            items = document.voiceBankSelectorItems(bank: bank)
+            if document.selectedEditorDevice == .dx100 {
+                items = document.dx100VoiceBankSelectorItems(bank: bank)
+            } else {
+                items = document.voiceBankSelectorItems(bank: bank)
+            }
             if !items.isEmpty {
                 errorMessage = nil
             }
@@ -283,6 +297,12 @@ struct VoiceBankSelectorWindow: View {
         openWindow(id: "voice-document", value: id)
         if document.selectedEditorDevice == .fb01 {
             workspace.voiceDocument(id: id)?.fb01DeviceBankOrigin = FB01DeviceBankVoiceOrigin(
+                bank: bank,
+                slotIndex: item.zeroBasedVoiceNumber,
+                bankTitle: currentBankTitle
+            )
+        } else if document.selectedEditorDevice == .dx100 {
+            workspace.voiceDocument(id: id)?.dx100DeviceBankOrigin = DX100DeviceBankVoiceOrigin(
                 bank: bank,
                 slotIndex: item.zeroBasedVoiceNumber,
                 bankTitle: currentBankTitle
@@ -1528,9 +1548,16 @@ struct LiveMIDIStatusCard: View {
 
     var body: some View {
         GroupBox {
-            SummaryPanel(rows: [
-                KeyValueRow("Status", liveKeyboard.status),
-            ])
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Live Status")
+                    .foregroundStyle(.secondary)
+
+                Text(liveKeyboard.status)
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            .font(.body)
             .padding(.top, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {

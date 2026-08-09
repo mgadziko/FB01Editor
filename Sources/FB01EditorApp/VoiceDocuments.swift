@@ -45,6 +45,12 @@ struct DX100BankFileVoiceOrigin: Equatable {
     var bankTitle: String
 }
 
+struct DX100DeviceBankVoiceOrigin: Equatable {
+    var bank: Int
+    var slotIndex: Int
+    var bankTitle: String
+}
+
 struct FB01BankFileVoiceOrigin: Equatable {
     var selectorID: UUID
     var slotIndex: Int
@@ -337,6 +343,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     var fb01BankFileOrigin: FB01BankFileVoiceOrigin?
     var fb01DeviceBankOrigin: FB01DeviceBankVoiceOrigin?
     var dx100BankFileOrigin: DX100BankFileVoiceOrigin?
+    var dx100DeviceBankOrigin: DX100DeviceBankVoiceOrigin?
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
@@ -693,6 +700,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 resetPerformanceMacros()
                 self.systemChannel = cachedResult.systemChannel
                 self.sourceDevice = .dx100
+                self.updateOrigins(for: source, device: .dx100, bankTitleProvider: { bank in
+                    device.selectedDeviceVoiceBankTitle(bank)
+                })
                 fileURL = nil
                 noteVoiceReplacement()
                 preparedKeyboardVoiceSignature = nil
@@ -780,6 +790,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                         resetPerformanceMacros()
                         self.systemChannel = fetched.channel
                         self.sourceDevice = .dx100
+                        self.updateOrigins(for: source, device: .dx100, bankTitleProvider: { bank in
+                            device.selectedDeviceVoiceBankTitle(bank)
+                        })
                         fileURL = nil
                         noteVoiceReplacement()
                         preparedKeyboardVoiceSignature = nil
@@ -829,6 +842,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     resetPerformanceMacros()
                     self.systemChannel = result.systemChannel
                     self.sourceDevice = result.sourceDevice
+                    self.updateOrigins(for: source, device: .dx100, bankTitleProvider: { bank in
+                        device.selectedDeviceVoiceBankTitle(bank)
+                    })
                     fileURL = nil
                     noteVoiceReplacement()
                     preparedKeyboardVoiceSignature = nil
@@ -1074,12 +1090,15 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let destinationName = device.selectedDestinationName
 
         if device.selectedEditorDevice == .dx100 {
+            guard let target = chooseDX100InternalStoreTarget(device: device) else {
+                return
+            }
             isBusy = true
-            statusMessage = "Sending voice to DX100/27 current buffer..."
+            statusMessage = "Sending voice to DX100/27 current buffer before internal store..."
             errorMessage = nil
             let progressPanel = EditorProgressPanel(
-                title: "Send Voice",
-                message: "The voice is being sent. Please wait.\nSending the current editable voice to the DX100/27 current buffer..."
+                title: "Store Voice",
+                message: "The voice is being stored. Please wait.\nSending the current editable voice to the DX100/27 current buffer..."
             )
             progressPanel.show()
             Task {
@@ -1093,8 +1112,51 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             systemChannel: systemChannel
                         )
                     }.value
+                    progressPanel.dismiss()
+
+                    let confirmed = confirmDX100InternalStoreStep(
+                        slotIndex: target.slotIndex,
+                        voiceName: displayName
+                    )
+                    guard confirmed else {
+                        statusMessage = "DX100/27 current edit buffer updated on \(destinationName). Internal store was canceled before verification."
+                        errorMessage = nil
+                        isBusy = false
+                        return
+                    }
+
+                    progressPanel.show()
+                    progressPanel.update(
+                        message: "The voice is being stored. Please wait.\nFetching the DX100/27 Internal bank to verify slot \(target.slotIndex + 1)..."
+                    )
+
+                    let storedVoice = try neutralVoiceToStore.dx100Voice()
+                    let refreshedInternalVoices = try await Task.detached(priority: .userInitiated) {
+                        try Self.fetchDX100InternalBankVoices(
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel
+                        )
+                    }.value
+
+                    device.cacheDX100VoiceBank(refreshedInternalVoices, bank: 1)
+                    guard refreshedInternalVoices.indices.contains(target.slotIndex) else {
+                        throw FB01AppError.message("DX100/27 Internal slot \(target.slotIndex + 1) was not present in the refreshed bank.")
+                    }
+
+                    let verifiedVoice = refreshedInternalVoices[target.slotIndex]
+                    guard verifiedVoice == storedVoice else {
+                        throw FB01AppError.message("DX100/27 Internal slot \(target.slotIndex + 1) did not match the edited voice after storing.")
+                    }
+
                     sourceDevice = .dx100
-                    statusMessage = "DX100/27 current voice buffer updated on \(destinationName)."
+                    dx100DeviceBankOrigin = DX100DeviceBankVoiceOrigin(
+                        bank: 1,
+                        slotIndex: target.slotIndex,
+                        bankTitle: "Internal"
+                    )
+                    markCurrentStateSaved()
+                    statusMessage = "Stored \(displayName) in DX100/27 Internal slot \(target.slotIndex + 1) on \(destinationName)."
                     errorMessage = nil
                 } catch {
                     statusMessage = nil
@@ -1185,9 +1247,46 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         switch sourceDevice {
         case .dx100:
+            let openDeviceBanks = openDX100DeviceBankWindows()
+            if let origin = dx100DeviceBankOrigin,
+               openDeviceBanks.contains(origin.bank) {
+                storeToDX100DeviceBank(
+                    workspace: workspace,
+                    device: device,
+                    bank: origin.bank,
+                    slotIndex: origin.slotIndex,
+                    bankTitle: origin.bankTitle
+                )
+                return
+            }
+
+            if !openDeviceBanks.isEmpty {
+                guard let target = chooseDX100DeviceBankStoreTarget(
+                    banks: openDeviceBanks,
+                    preferredOrigin: dx100DeviceBankOrigin,
+                    voiceNameProvider: { bank, slotIndex in
+                        device.cachedDX100VoiceName(inBank: bank, slotIndex: slotIndex)
+                    },
+                    bankTitleProvider: { bank in
+                        device.selectedDeviceVoiceBankTitle(bank)
+                    }
+                ) else {
+                    return
+                }
+
+                storeToDX100DeviceBank(
+                    workspace: workspace,
+                    device: device,
+                    bank: target.bank,
+                    slotIndex: target.slotIndex,
+                    bankTitle: target.bankTitle
+                )
+                return
+            }
+
             let selectors = workspace.openDX100VoiceBankFileSelectors
             guard !selectors.isEmpty else {
-                errorMessage = "Open a DX100/27 voice bank window before storing this voice into a bank file."
+                errorMessage = "Open a DX100/27 bank window before storing this voice into a bank."
                 statusMessage = nil
                 return
             }
@@ -1352,6 +1451,32 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
+    private func storeToDX100DeviceBank(
+        workspace: EditorDocumentWorkspace,
+        device: DocumentModel,
+        bank: Int,
+        slotIndex: Int,
+        bankTitle: String
+    ) {
+        do {
+            let dxVoice = try neutralVoice.dx100Voice()
+            try device.replaceCachedDX100Voice(inBank: bank, slotIndex: slotIndex, with: dxVoice)
+            dx100DeviceBankOrigin = DX100DeviceBankVoiceOrigin(
+                bank: bank,
+                slotIndex: slotIndex,
+                bankTitle: bankTitle
+            )
+            markCurrentStateSaved()
+            _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank))
+            statusMessage = "Stored \(displayName) into \(bankTitle) slot \(slotIndex + 1)."
+            errorMessage = nil
+        } catch {
+            statusMessage = nil
+            errorMessage = "Store to bank window failed: \(error)"
+            showEditorError(title: "Store to Bank Window Failed", message: "\(error)")
+        }
+    }
+
     private struct DX100BankFileStoreTarget {
         var selectorID: UUID
         var selectorTitle: String
@@ -1391,6 +1516,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     private struct FB01DeviceBankStoreTarget {
+        var bank: Int
+        var bankTitle: String
+        var slotIndex: Int
+    }
+
+    private struct DX100DeviceBankStoreTarget {
         var bank: Int
         var bankTitle: String
         var slotIndex: Int
@@ -1454,6 +1585,41 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         )
     }
 
+    private func chooseDX100DeviceBankStoreTarget(
+        banks: [Int],
+        preferredOrigin: DX100DeviceBankVoiceOrigin?,
+        voiceNameProvider: @escaping (Int, Int) -> String?,
+        bankTitleProvider: @escaping (Int) -> String
+    ) -> DX100DeviceBankStoreTarget? {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Store Voice to Open Bank Window"
+        alert.informativeText = "Choose which open DX100/27 bank window and which slot should receive this voice."
+        alert.addButton(withTitle: "Store")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let accessory = FB01DeviceBankStoreAccessory(
+            banks: banks,
+            preferredOrigin: preferredOrigin.map {
+                FB01DeviceBankVoiceOrigin(bank: $0.bank, slotIndex: $0.slotIndex, bankTitle: $0.bankTitle)
+            },
+            voiceNameProvider: voiceNameProvider
+        )
+        alert.accessoryView = accessory
+
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let selection = accessory.selection else {
+            return nil
+        }
+
+        return DX100DeviceBankStoreTarget(
+            bank: selection.bank,
+            bankTitle: bankTitleProvider(selection.bank),
+            slotIndex: selection.slotIndex
+        )
+    }
+
     private func openFB01DeviceBankWindows() -> [Int] {
         NSApp.windows.compactMap { window in
             guard let raw = window.identifier?.rawValue,
@@ -1465,6 +1631,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return bank
         }
         .sorted()
+    }
+
+    private func openDX100DeviceBankWindows() -> [Int] {
+        openFB01DeviceBankWindows()
     }
 
     func sendKeyboardNote(_ note: Int, isOn: Bool, device: DocumentModel) {
@@ -1814,6 +1984,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     ) {
         switch device {
         case .fb01:
+            dx100DeviceBankOrigin = nil
             dx100BankFileOrigin = nil
             fb01BankFileOrigin = nil
             switch source {
@@ -1834,6 +2005,16 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         case .dx100:
             fb01DeviceBankOrigin = nil
             fb01BankFileOrigin = nil
+            switch source {
+            case let .dx100Bank(bank, voiceNumber):
+                dx100DeviceBankOrigin = DX100DeviceBankVoiceOrigin(
+                    bank: bank,
+                    slotIndex: voiceNumber,
+                    bankTitle: bankTitleProvider(bank)
+                )
+            case .storedSlot, .currentVoice, .instrument:
+                dx100DeviceBankOrigin = nil
+            }
         }
     }
 
@@ -2179,6 +2360,83 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             bank: bank,
             voiceNumber: voiceNumber
         )
+    }
+
+    @MainActor
+    private func chooseDX100InternalStoreTarget(device: DocumentModel) -> DX100DeviceBankVoiceOrigin? {
+        let alert = NSAlert()
+        alert.messageText = "Store Voice to DX100/27 Internal Slot"
+        alert.informativeText = "Choose which Internal slot should permanently store \(displayName). Forest will first send the voice to the DX100/27 current edit buffer, then ask you to complete the front-panel STORE step."
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let stack = NSStackView()
+        stack.frame = NSRect(x: 0, y: 0, width: 520, height: 116)
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+
+        let slotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for slotIndex in 0..<DX100ModuleServices.shared.module.voicesPerBank {
+            let cachedName = device.cachedDX100VoiceName(inBank: 1, slotIndex: slotIndex) ?? "Voice \(slotIndex + 1)"
+            slotPopup.addItem(withTitle: "\(slotIndex + 1) \(cachedName)")
+        }
+
+        if let origin = dx100DeviceBankOrigin, origin.bank == 1 {
+            slotPopup.selectItem(at: origin.slotIndex)
+        }
+
+        stack.addArrangedSubview(labelledEditorPopup(label: "Internal slot:", popup: slotPopup))
+        stack.addArrangedSubview(makeWarningLabel("MEMORY PROTECT must be OFF on the DX100/27. Forest will verify the result by refetching the Internal bank after you complete the STORE step."))
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return nil
+        }
+
+        return DX100DeviceBankVoiceOrigin(
+            bank: 1,
+            slotIndex: slotPopup.indexOfSelectedItem,
+            bankTitle: "Internal"
+        )
+    }
+
+    @MainActor
+    private func confirmDX100InternalStoreStep(slotIndex: Int, voiceName: String) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Complete DX100/27 Store"
+        alert.informativeText = """
+        \(voiceName) is now in the DX100/27 current edit buffer.
+
+        On the synth:
+        1. Be sure MEMORY PROTECT is OFF.
+        2. Return to PLAY mode if needed.
+        3. Hold STORE (EG COPY).
+        4. Press voice \(slotIndex + 1) to store into Internal slot \(slotIndex + 1).
+
+        Click Stored after the synth finishes, and Forest will verify the Internal bank.
+        """
+        alert.addButton(withTitle: "Stored")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    nonisolated private static func fetchDX100InternalBankVoices(
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) throws -> [DX100VoiceData] {
+        let voiceBank = try EditorVoiceDocumentService.fetchDX100InternalBank(
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel
+        )
+        return (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
+            try? voiceBank.voice(atPackedVoiceIndex: index)
+        }
     }
 
 }

@@ -67,6 +67,63 @@ enum EditorVoiceDocumentService {
         return try DX100ModuleServices.shared.voiceService.currentVoice(from: messages)
     }
 
+    static func fetchDX100InternalBank(
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        timeout: Double = 10,
+        attempts: Int = 3,
+        preflightDelay: TimeInterval = 0.35
+    ) throws -> DX100VoiceBankData {
+        let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
+        var lastError: Error?
+
+        for _ in 1...max(1, attempts) {
+            do {
+                try sendDX100SwitchPress(
+                    switchNumber: 27,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    releaseDelay: 0.1
+                )
+                Thread.sleep(forTimeInterval: preflightDelay)
+
+                let responseMessages = try FB01MIDI.sendAndReceive(
+                    [request],
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    timeout: timeout,
+                    maxMessages: 1,
+                    delayBetweenMessages: 0
+                )
+                guard let response = responseMessages.first else {
+                    throw FB01MIDIError.timedOut("DX100/27 Internal bank")
+                }
+                return try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
+            } catch {
+                lastError = error
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+
+        throw lastError ?? FB01MIDIError.timedOut("DX100/27 Internal bank")
+    }
+
+    static func receiveDX100InternalBankManually(
+        sourceIndex: Int,
+        timeout: Double = 25
+    ) throws -> DX100VoiceBankData {
+        let responseMessages = try FB01MIDI.receiveSysEx(
+            sourceIndex: sourceIndex,
+            timeout: timeout,
+            maxMessages: 1
+        )
+        guard let response = responseMessages.first else {
+            throw FB01MIDIError.timedOut("manual DX100/27 Internal bank")
+        }
+        return try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
+    }
+
     static func fetchDX100DeviceVoice(
         bank: Int,
         voiceNumber: Int,

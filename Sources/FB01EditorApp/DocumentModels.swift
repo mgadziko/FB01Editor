@@ -107,6 +107,8 @@ final class DocumentModel: ObservableObject {
     @Published var deviceCacheStatus = "Not loaded"
     @Published private(set) var voiceBankSelectorRevision = 0
     @Published private(set) var configurationSelectorRevision = 0
+    @Published private(set) var pendingVoiceBankWindowToOpen: Int?
+    @Published private(set) var pendingVoiceBankWindowOpenRevision = 0
     let liveKeyboardDisplay = LiveKeyboardDisplayModel()
 
     private let generalMIDIStoreMaximumPasses = 5
@@ -494,7 +496,7 @@ final class DocumentModel: ObservableObject {
     var selectedDeviceVoiceStoreCommandTitle: String {
         switch selectedEditorDevice {
         case .dx100:
-            return "Send Voice to Current Edit Buffer..."
+            return "Store Voice to Internal Slot..."
         case .fb01, nil:
             return "Store Voice to Device Slot..."
         }
@@ -743,39 +745,28 @@ final class DocumentModel: ObservableObject {
 
         Task {
             do {
-                _ = try await Task.detached(priority: .userInitiated) {
-                    try EditorVoiceDocumentService.fetchDX100CurrentVoice(
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: systemChannel,
-                        timeout: 4
-                    )
-                }.value
-
                 progressPanel.update(
                     message: "The DX100/27 voice bank is being cached. Please wait.\nFetching 32-voice bulk data...",
                     completed: 0,
                     total: 1
                 )
-                let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
-                let responseMessages = try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendAndReceive(
-                        [request],
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        timeout: 10,
-                        maxMessages: 1,
-                        delayBetweenMessages: 0
-                    )
-                }.value
-                guard let response = responseMessages.first else {
-                    throw FB01MIDIError.timedOut("DX100/27 voice bank")
-                }
-                let bank = try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
+                let bank = try await fetchDX100InternalBankWithBluetoothFallback(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    progressPanel: progressPanel,
+                    contextTitle: "Internal"
+                )
                 let voices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
                     try? bank.voice(atPackedVoiceIndex: index)
                 }
-                cachedDX100VoiceBanks = [1: voices]
+                cacheDX100VoiceBank(voices, bank: 1)
+                if shouldOfferDX100ManualInternalDumpFallback(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex
+                ) {
+                    requestVoiceBankWindowOpen(bank: 1)
+                }
                 deviceCacheStatus = "Loaded 1 item"
                 statusMessage = "DX100/27 voice bank loaded from \(sourceName) -> \(destinationName)."
                 errorMessage = nil
@@ -798,7 +789,7 @@ final class DocumentModel: ObservableObject {
                     cachedDX100VoiceBanks = [:]
                     deviceCacheStatus = "Current voice reachable"
                     statusMessage = "DX100/27 current voice responds on \(sourceName) -> \(destinationName), but internal bank cache could not be fetched."
-                    errorMessage = "DX100/27 internal bank fetch failed: \(error)"
+                    errorMessage = "DX100/27 internal bank fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
                     progressPanel.dismiss()
                     isFetchingFromDevice = false
                     return
@@ -1516,30 +1507,13 @@ final class DocumentModel: ObservableObject {
 
             let voices: [DX100VoiceData]
             if kind == .internalRAM {
-                _ = try await Task.detached(priority: .userInitiated) {
-                    try EditorVoiceDocumentService.fetchDX100CurrentVoice(
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: systemChannel,
-                        timeout: 4
-                    )
-                }.value
-
-                let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
-                let responseMessages = try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendAndReceive(
-                        [request],
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        timeout: 8,
-                        maxMessages: 1,
-                        delayBetweenMessages: 0
-                    )
-                }.value
-                guard let response = responseMessages.first else {
-                    throw FB01MIDIError.timedOut("DX100/27 voice bank")
-                }
-                let voiceBank = try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
+                let voiceBank = try await fetchDX100InternalBankWithBluetoothFallback(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    progressPanel: progressPanel,
+                    contextTitle: selectedDeviceVoiceBankTitle(bank)
+                )
                 voices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
                     try? voiceBank.voice(atPackedVoiceIndex: index)
                 }
@@ -1585,7 +1559,7 @@ final class DocumentModel: ObservableObject {
                 voices = fetchedVoices
             }
 
-            cachedDX100VoiceBanks[bank] = voices
+            cacheDX100VoiceBank(voices, bank: bank)
             deviceCacheStatus = "Loaded DX100/27 voice bank"
             statusMessage = "Fetched DX100/27 \(selectedDeviceVoiceBankTitle(bank)) from \(sourceName) -> \(destinationName)."
             errorMessage = nil
@@ -1629,6 +1603,112 @@ final class DocumentModel: ObservableObject {
         • The synth is in PLAY mode for bank/program recall behavior
 
         Live Keyboard note playback can still work even when SysEx dump responses are disabled.
+        """
+    }
+
+    private func dx100ManualInternalDumpInstructions() -> String {
+        """
+        Automatic DX100/27 Internal-bank fetch did not reply over this MIDI transport.
+
+        Forest can still capture the Internal bank if you trigger the dump from the DX100/27 front panel now:
+        • press FUNCTION
+        • select 5: SYS INFO
+        • confirm SYS INFO = ON
+        • press SYS INFO again to show “MIDI Transmit?”
+        • press YES
+
+        Forest will listen for the manual 32-voice Internal dump for up to 25 seconds.
+        """
+    }
+
+    private func shouldOfferDX100ManualInternalDumpFallback(
+        sourceIndex: Int,
+        destinationIndex: Int
+    ) -> Bool {
+        let sourceName = midiSources.first(where: { $0.index == sourceIndex })?.displayName.lowercased() ?? ""
+        let destinationName = midiDestinations.first(where: { $0.index == destinationIndex })?.displayName.lowercased() ?? ""
+        return sourceName.contains("bluetooth")
+            || destinationName.contains("bluetooth")
+            || sourceName.contains("bt-")
+            || destinationName.contains("bt-")
+    }
+
+    private func confirmDX100ManualInternalDumpCapture(contextTitle: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Manual DX100/27 \(contextTitle) Capture"
+        alert.informativeText = dx100ManualInternalDumpInstructions()
+        alert.addButton(withTitle: "Listen")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func fetchDX100InternalBankWithBluetoothFallback(
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        progressPanel: EditorProgressPanel,
+        contextTitle: String
+    ) async throws -> DX100VoiceBankData {
+        do {
+            return try await Task.detached(priority: .userInitiated) {
+                try EditorVoiceDocumentService.fetchDX100InternalBank(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    timeout: 8
+                )
+            }.value
+        } catch {
+            guard shouldOfferDX100ManualInternalDumpFallback(
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex
+            ) else {
+                throw error
+            }
+            guard confirmDX100ManualInternalDumpCapture(contextTitle: contextTitle) else {
+                throw error
+            }
+
+            progressPanel.update(
+                message: "The DX100/27 \(contextTitle) is being fetched. Please wait.\nListening for a manual Internal bank dump...",
+                completed: 0,
+                total: 1
+            )
+
+            return try await Task.detached(priority: .userInitiated) {
+                try EditorVoiceDocumentService.receiveDX100InternalBankManually(
+                    sourceIndex: sourceIndex,
+                    timeout: 25
+                )
+            }.value
+        }
+    }
+
+    private func dx100VoiceBankResponseDiagnostic(_ bytes: [UInt8]) -> String? {
+        let expectedCount = DX100.thirtyTwoVoiceDataByteCount + 8
+
+        guard bytes.count != expectedCount else {
+            return nil
+        }
+
+        let looksLikeBankHeader =
+            bytes.count >= 6 &&
+            bytes[0] == DX100.start &&
+            bytes[1] == DX100.yamahaID &&
+            bytes[3] == DX100.thirtyTwoVoiceFormat &&
+            bytes[4] == DX100.thirtyTwoVoiceByteCountMSB &&
+            bytes[5] == DX100.thirtyTwoVoiceByteCountLSB
+
+        guard looksLikeBankHeader else {
+            return nil
+        }
+
+        return """
+        DX100/27 replied with a Yamaha 32-voice bank-style SysEx message, but it was \(bytes.count) bytes instead of the expected \(expectedCount).
+
+        This usually means the MIDI transport returned a shortened or incomplete bulk dump. Forest has seen this with Bluetooth MIDI adapters that handle current-voice SysEx correctly but do not carry the full bank dump cleanly.
+
+        For full DX100/27 bank capture, prefer a wired MIDI interface. Live editing and current-voice fetch can still work over the same transport.
         """
     }
 
@@ -1732,6 +1812,45 @@ final class DocumentModel: ObservableObject {
         }
         voiceBankSelectorRevision += 1
         deviceCacheStatus = "Updated Voice Bank \(userBankNumber)"
+    }
+
+    func replaceCachedDX100Voice(inBank bank: Int, slotIndex: Int, with voice: DX100VoiceData) throws {
+        guard var voices = cachedDX100VoiceBanks[bank] else {
+            throw FB01AppError.message("\(selectedDeviceVoiceBankTitle(bank)) is not loaded yet.")
+        }
+        guard voices.indices.contains(slotIndex) else {
+            throw FB01AppError.message("Voice slot \(slotIndex + 1) is not available.")
+        }
+
+        voices[slotIndex] = voice
+        cachedDX100VoiceBanks[bank] = voices
+        voiceBankSelectorRevision += 1
+        deviceCacheStatus = "Updated \(selectedDeviceVoiceBankTitle(bank))"
+    }
+
+    func cacheDX100VoiceBank(_ voices: [DX100VoiceData], bank: Int) {
+        cachedDX100VoiceBanks[bank] = voices
+        voiceBankSelectorRevision += 1
+        deviceCacheStatus = "Updated \(selectedDeviceVoiceBankTitle(bank))"
+    }
+
+    func requestVoiceBankWindowOpen(bank: Int) {
+        pendingVoiceBankWindowToOpen = bank
+        pendingVoiceBankWindowOpenRevision += 1
+    }
+
+    func consumePendingVoiceBankWindowOpen() -> Int? {
+        defer { pendingVoiceBankWindowToOpen = nil }
+        return pendingVoiceBankWindowToOpen
+    }
+
+    func cachedDX100VoiceName(inBank bank: Int, slotIndex: Int) -> String? {
+        guard let voices = cachedDX100VoiceBanks[bank],
+              voices.indices.contains(slotIndex) else {
+            return nil
+        }
+        let name = voices[slotIndex].name
+        return name.isEmpty ? "Voice \(slotIndex + 1)" : name
     }
 
     func cacheConfiguration(_ configuration: FB01ConfigurationData, slot: Int) {
@@ -2448,8 +2567,7 @@ final class DocumentModel: ObservableObject {
                         )).sysexBytes,
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
-                        systemChannel: systemChannel
-                        ,
+                        systemChannel: systemChannel,
                         sendProtectOff: false
                     ) { [self] event in
                         await MainActor.run {
@@ -4574,31 +4692,18 @@ final class DocumentModel: ObservableObject {
 
         Task {
             do {
-                let storeMessages = try storeVoiceMessages(voice: voice, systemChannel: systemChannel, instrument: instrument, voiceSlot: voiceSlot)
-                let status = try await Task.detached(priority: .userInitiated) {
-                    return try FB01MIDI.sendAndReceive(
-                        storeMessages,
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        timeout: 8,
-                        maxMessages: 1,
-                        delayBetweenMessages: 0.35
-                    )
-                }.value
+                let result = try await storeVoiceToDeviceSlotWithReadback(
+                    voice: voice,
+                    systemChannel: systemChannel,
+                    instrument: instrument,
+                    voiceSlot: voiceSlot,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    sendProtectOff: true
+                )
 
-                let requestKind = try voiceRAMBankRequestKind(forVoiceSlot: voiceSlot)
-                let readback = try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.request(
-                        requestKind,
-                        sourceIndex: sourceIndex,
-                        destinationIndex: destinationIndex,
-                        systemChannel: systemChannel,
-                        timeout: 15
-                    )
-                }.value
-
-                let readbackVoice = try storedVoicePayload(from: [readback], voiceSlot: voiceSlot)
-                let statusSuffix = try deviceStatusCode(from: status).map { " (status \(String(format: "0x%02X", $0)))" } ?? ""
+                let readbackVoice = try storedVoicePayload(from: [result.readback], voiceSlot: voiceSlot)
+                let statusSuffix = try deviceStatusCode(from: result.status).map { " (status \(String(format: "0x%02X", $0)))" } ?? ""
                 if readbackVoice?.bytes == voice.bytes {
                     statusMessage = "FB-01 confirmed store to voice \(voiceSlot + 1) on \(destinationName)\(statusSuffix); readback matches."
                 } else if readbackVoice != nil {
@@ -4616,19 +4721,67 @@ final class DocumentModel: ObservableObject {
         }
     }
 
-    func storeVoiceMessages(voice: FB01VoiceData, systemChannel: Int, instrument: Int, voiceSlot: Int) throws -> [[UInt8]] {
-        _ = try voiceRAMBankRequestKind(forVoiceSlot: voiceSlot)
-        let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(
+    private func storeVoiceToDeviceSlotWithReadback(
+        voice: FB01VoiceData,
+        systemChannel: Int,
+        instrument: Int,
+        voiceSlot: Int,
+        sourceIndex: Int,
+        destinationIndex: Int,
+        sendProtectOff: Bool
+    ) async throws -> (status: [[UInt8]], readback: [UInt8]) {
+        let storeMessages = try storeVoiceMessages(
+            voice: voice,
             systemChannel: systemChannel,
-            .off
-        ))
+            instrument: instrument,
+            voiceSlot: voiceSlot,
+            sendProtectOff: sendProtectOff
+        )
+        try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.sendSysEx(
+                storeMessages,
+                destinationIndex: destinationIndex,
+                delayBetweenMessages: 0.35
+            )
+        }.value
+        try await Task.sleep(for: .milliseconds(600))
+
+        let requestKind = try voiceRAMBankRequestKind(forVoiceSlot: voiceSlot)
+        let readback = try await Task.detached(priority: .userInitiated) {
+            try FB01MIDI.request(
+                requestKind,
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                timeout: 15
+            )
+        }.value
+
+        return ([], readback)
+    }
+
+    func storeVoiceMessages(
+        voice: FB01VoiceData,
+        systemChannel: Int,
+        instrument: Int,
+        voiceSlot: Int,
+        sendProtectOff: Bool = true
+    ) throws -> [[UInt8]] {
+        _ = try voiceRAMBankRequestKind(forVoiceSlot: voiceSlot)
         let voiceMessage = try voice.instrumentVoiceArtifact(systemChannel: systemChannel, instrument: instrument).messages[0]
         let storeCommand = FB01SysExMessage.command(.storeCurrentInstrumentVoice(
             systemChannel: systemChannel,
             instrument: instrument,
             voiceNumber: voiceSlot
         ))
-        return try [protectOffCommand.bytes, voiceMessage.bytes, storeCommand.bytes]
+        if sendProtectOff {
+            let protectOffCommand = FB01SysExMessage.command(.setMemoryProtect(
+                systemChannel: systemChannel,
+                .off
+            ))
+            return try [protectOffCommand.bytes, voiceMessage.bytes, storeCommand.bytes]
+        }
+        return try [voiceMessage.bytes, storeCommand.bytes]
     }
 
     func voiceRAMBankRequestKind(forVoiceSlot voiceSlot: Int) throws -> FB01MIDIRequestKind {
