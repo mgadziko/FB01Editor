@@ -146,7 +146,7 @@ enum VoiceDocumentFetchSource: Sendable, Equatable {
         case let .storedSlot(location, voiceNumber):
             return nameLookup.sourceTitle(location: location, voiceNumber: voiceNumber + 1)
         case let .dx100Bank(bank, voiceNumber):
-            return "DX100/27 Bank \(bank) Voice \(voiceNumber + 1)"
+            return "DX100 Bank \(bank) Voice \(voiceNumber + 1)"
         }
     }
 }

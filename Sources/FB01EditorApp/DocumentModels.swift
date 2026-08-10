@@ -44,7 +44,7 @@ enum EditorDeviceSelection: String, CaseIterable, Identifiable, Codable {
         case .fb01:
             return "FB-01"
         case .dx100:
-            return "DX100/27"
+            return "DX100"
         }
     }
 }
@@ -496,7 +496,7 @@ final class DocumentModel: ObservableObject {
     var selectedDeviceVoiceStoreCommandTitle: String {
         switch selectedEditorDevice {
         case .dx100:
-            return "Store Voice to Internal Slot..."
+            return "Store Voice to DX100 Internal Slot..."
         case .fb01, nil:
             return "Store Voice to Device Slot..."
         }
@@ -595,7 +595,7 @@ final class DocumentModel: ObservableObject {
         alert.informativeText = "Choose the Yamaha FM device connected through the selected MIDI input and output."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "DX100/27")
+        alert.addButton(withTitle: "DX100")
         alert.addButton(withTitle: "FB-01")
 
         switch alert.runModal() {
@@ -734,23 +734,23 @@ final class DocumentModel: ObservableObject {
         let destinationName = selectedDestinationName
         let systemChannel = systemChannel
         isFetchingFromDevice = true
-        deviceCacheStatus = "Fetching DX100/27 device cache..."
-        statusMessage = "Fetching DX100/27 voice bank from \(sourceName) -> \(destinationName)..."
+        deviceCacheStatus = "Fetching DX100 device cache..."
+        statusMessage = "Fetching DX100 voice bank from \(sourceName) -> \(destinationName)..."
         errorMessage = nil
         let progressPanel = EditorProgressPanel(
-            title: "Fetching DX100/27 Device Cache",
-            message: "The DX100/27 voice bank is being cached. Please wait."
+            title: "Fetching DX100 Device Cache",
+            message: "The DX100 voice bank is being cached. Please wait."
         )
         progressPanel.show()
 
         Task {
             do {
                 progressPanel.update(
-                    message: "The DX100/27 voice bank is being cached. Please wait.\nFetching 32-voice bulk data...",
+                    message: "The DX100 voice bank is being cached. Please wait.\nFetching 32-voice bulk data...",
                     completed: 0,
                     total: 1
                 )
-                let bank = try await fetchDX100InternalBankWithBluetoothFallback(
+                let fetchResult = try await fetchDX100InternalBankWithBluetoothFallback(
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
                     systemChannel: systemChannel,
@@ -758,20 +758,17 @@ final class DocumentModel: ObservableObject {
                     contextTitle: "Internal"
                 )
                 let voices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
-                    try? bank.voice(atPackedVoiceIndex: index)
+                    try? fetchResult.bank.voice(atPackedVoiceIndex: index)
                 }
                 cacheDX100VoiceBank(voices, bank: 1)
-                if shouldOfferDX100ManualInternalDumpFallback(
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex
-                ) {
+                if fetchResult.usedManualFallback {
                     requestVoiceBankWindowOpen(bank: 1)
                 }
                 deviceCacheStatus = "Loaded 1 item"
-                statusMessage = "DX100/27 voice bank loaded from \(sourceName) -> \(destinationName)."
+                statusMessage = "DX100 voice bank loaded from \(sourceName) -> \(destinationName)."
                 errorMessage = nil
                 progressPanel.update(
-                    message: "The DX100/27 voice bank is being cached. Please wait.\nFinishing cache update...",
+                    message: "The DX100 voice bank is being cached. Please wait.\nFinishing cache update...",
                     completed: 1,
                     total: 1
                 )
@@ -788,8 +785,8 @@ final class DocumentModel: ObservableObject {
 
                     cachedDX100VoiceBanks = [:]
                     deviceCacheStatus = "Current voice reachable"
-                    statusMessage = "DX100/27 current voice responds on \(sourceName) -> \(destinationName), but internal bank cache could not be fetched."
-                    errorMessage = "DX100/27 internal bank fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
+                    statusMessage = "DX100 current voice responds on \(sourceName) -> \(destinationName), but internal bank cache could not be fetched."
+                    errorMessage = "DX100 internal bank fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
                     progressPanel.dismiss()
                     isFetchingFromDevice = false
                     return
@@ -797,12 +794,12 @@ final class DocumentModel: ObservableObject {
                     cachedDX100VoiceBanks = [:]
                     deviceCacheStatus = "Not loaded"
                     statusMessage = nil
-                    errorMessage = "DX100/27 device cache failed: \(error)"
+                    errorMessage = "DX100 device cache failed: \(error)"
                     progressPanel.dismiss()
                     isFetchingFromDevice = false
                     if showsFailureAlert {
                         showEditorError(
-                            title: "No DX100/27 SysEx Response",
+                            title: "No DX100 SysEx Response",
                             message: dx100SysExTroubleshootingMessage()
                         )
                     }
@@ -1029,7 +1026,7 @@ final class DocumentModel: ObservableObject {
                 dxVoice.fourOperatorVoice,
                 translated,
                 systemChannel,
-                "DX100/27 Bank \(bank) Voice \(voiceNumber + 1): \(name)"
+                "DX100 Bank \(bank) Voice \(voiceNumber + 1): \(name)"
             )
         case .currentVoice, .instrument:
             return nil
@@ -1064,7 +1061,7 @@ final class DocumentModel: ObservableObject {
         case .dx100:
             guard DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.isFetchableFromConnectedDevice == true else {
                 errorMessage = """
-                DX100/27 \(selectedDeviceVoiceBankTitle(bank)) device-bank fetch is not connected yet.
+                DX100 \(selectedDeviceVoiceBankTitle(bank)) device-bank fetch is not connected yet.
 
                 Forest can currently fetch:
                 • the current edit voice
@@ -1359,7 +1356,7 @@ final class DocumentModel: ObservableObject {
                 zeroBasedVoiceNumber: index,
                 name: name,
                 source: .dx100Bank(bank: bank, voiceNumber: index),
-                fetchTitleOverride: "DX100/27 \(selectedDeviceVoiceBankTitle(bank)) Voice \(index + 1): \(name)"
+                fetchTitleOverride: "DX100 \(selectedDeviceVoiceBankTitle(bank)) Voice \(index + 1): \(name)"
             )
         }
     }
@@ -1487,19 +1484,19 @@ final class DocumentModel: ObservableObject {
         let systemChannel = systemChannel
 
         isFetchingFromDevice = true
-        deviceCacheStatus = "Fetching DX100/27 Voice Bank \(bank)..."
-        statusMessage = "Fetching DX100/27 Voice Bank \(bank) from \(sourceName) -> \(destinationName)..."
+        deviceCacheStatus = "Fetching DX100 Voice Bank \(bank)..."
+        statusMessage = "Fetching DX100 Voice Bank \(bank) from \(sourceName) -> \(destinationName)..."
         errorMessage = nil
 
         let progressPanel = EditorProgressPanel(
             title: "Fetching Voice Bank \(bank)",
-            message: "The DX100/27 voice bank is being fetched. Please wait."
+            message: "The DX100 voice bank is being fetched. Please wait."
         )
         progressPanel.show()
 
         do {
             guard let kind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank) else {
-                throw FB01MIDIError.timedOut("DX100/27 voice bank")
+                throw FB01MIDIError.timedOut("DX100 voice bank")
             }
             guard kind.isFetchableFromConnectedDevice else {
                 throw DX100VoiceServiceError.unsupportedSysEx
@@ -1507,7 +1504,7 @@ final class DocumentModel: ObservableObject {
 
             let voices: [DX100VoiceData]
             if kind == .internalRAM {
-                let voiceBank = try await fetchDX100InternalBankWithBluetoothFallback(
+                let fetchResult = try await fetchDX100InternalBankWithBluetoothFallback(
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
                     systemChannel: systemChannel,
@@ -1515,7 +1512,7 @@ final class DocumentModel: ObservableObject {
                     contextTitle: selectedDeviceVoiceBankTitle(bank)
                 )
                 voices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
-                    try? voiceBank.voice(atPackedVoiceIndex: index)
+                    try? fetchResult.bank.voice(atPackedVoiceIndex: index)
                 }
             } else if kind.requiresManualBulkCapture {
                 var fetchedVoices: [DX100VoiceData] = []
@@ -1541,7 +1538,7 @@ final class DocumentModel: ObservableObject {
                 fetchedVoices.reserveCapacity(DX100ModuleServices.shared.module.voicesPerBank)
                 for voiceIndex in 0..<DX100ModuleServices.shared.module.voicesPerBank {
                     progressPanel.update(
-                        message: "The DX100/27 voice bank is being fetched. Please wait.\nFetching \(selectedDeviceVoiceBankTitle(bank)) voice \(voiceIndex + 1) of \(DX100ModuleServices.shared.module.voicesPerBank)...",
+                        message: "The DX100 voice bank is being fetched. Please wait.\nFetching \(selectedDeviceVoiceBankTitle(bank)) voice \(voiceIndex + 1) of \(DX100ModuleServices.shared.module.voicesPerBank)...",
                         completed: Double(voiceIndex),
                         total: Double(DX100ModuleServices.shared.module.voicesPerBank)
                     )
@@ -1560,8 +1557,8 @@ final class DocumentModel: ObservableObject {
             }
 
             cacheDX100VoiceBank(voices, bank: bank)
-            deviceCacheStatus = "Loaded DX100/27 voice bank"
-            statusMessage = "Fetched DX100/27 \(selectedDeviceVoiceBankTitle(bank)) from \(sourceName) -> \(destinationName)."
+            deviceCacheStatus = "Loaded DX100 voice bank"
+            statusMessage = "Fetched DX100 \(selectedDeviceVoiceBankTitle(bank)) from \(sourceName) -> \(destinationName)."
             errorMessage = nil
         } catch {
             statusMessage = nil
@@ -1569,16 +1566,16 @@ final class DocumentModel: ObservableObject {
                kind.isFetchableFromConnectedDevice {
                 if kind.requiresManualBulkCapture {
                     if error is CancellationError {
-                        errorMessage = "DX100/27 \(selectedDeviceVoiceBankTitle(bank)) assisted fetch canceled."
+                        errorMessage = "DX100 \(selectedDeviceVoiceBankTitle(bank)) assisted fetch canceled."
                     } else {
-                        errorMessage = "DX100/27 \(selectedDeviceVoiceBankTitle(bank)) fetch failed: \(error)\n\n\(dx100ManualBankCaptureTroubleshootingMessage(bank: bank))"
+                        errorMessage = "DX100 \(selectedDeviceVoiceBankTitle(bank)) fetch failed: \(error)\n\n\(dx100ManualBankCaptureTroubleshootingMessage(bank: bank))"
                     }
                 } else {
-                    errorMessage = "DX100/27 \(selectedDeviceVoiceBankTitle(bank)) fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
+                    errorMessage = "DX100 \(selectedDeviceVoiceBankTitle(bank)) fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
                 }
             } else {
                 errorMessage = """
-                DX100/27 \(selectedDeviceVoiceBankTitle(bank)) device-bank fetch is not connected yet.
+                DX100 \(selectedDeviceVoiceBankTitle(bank)) device-bank fetch is not connected yet.
 
                 Forest can currently fetch:
                 • the current edit voice
@@ -1594,9 +1591,9 @@ final class DocumentModel: ObservableObject {
 
     private func dx100SysExTroubleshootingMessage() -> String {
         """
-        Forest can send notes to the DX100/27, but it did not receive a SysEx dump response.
+        Forest can send notes to the DX100, but it did not receive a SysEx dump response.
 
-        Check these DX100/27 settings and state:
+        Check these DX100 settings and state:
         • MIDI ON/OFF = ON
         • MIDI SYS INFO = ON
         • MIDI R CH matches Forest's System Channel, or OMNI = ON
@@ -1608,9 +1605,9 @@ final class DocumentModel: ObservableObject {
 
     private func dx100ManualInternalDumpInstructions() -> String {
         """
-        Automatic DX100/27 Internal-bank fetch did not reply over this MIDI transport.
+        Automatic DX100 Internal-bank fetch did not reply over this MIDI transport.
 
-        Forest can still capture the Internal bank if you trigger the dump from the DX100/27 front panel now:
+        Forest can still capture the Internal bank if you trigger the dump from the DX100 front panel now:
         • press FUNCTION
         • select 5: SYS INFO
         • confirm SYS INFO = ON
@@ -1622,20 +1619,18 @@ final class DocumentModel: ObservableObject {
     }
 
     private func shouldOfferDX100ManualInternalDumpFallback(
-        sourceIndex: Int,
-        destinationIndex: Int
+        sourceIndex _: Int,
+        destinationIndex _: Int
     ) -> Bool {
-        let sourceName = midiSources.first(where: { $0.index == sourceIndex })?.displayName.lowercased() ?? ""
-        let destinationName = midiDestinations.first(where: { $0.index == destinationIndex })?.displayName.lowercased() ?? ""
-        return sourceName.contains("bluetooth")
-            || destinationName.contains("bluetooth")
-            || sourceName.contains("bt-")
-            || destinationName.contains("bt-")
+        // If the DX100 can receive notes but automatic SysEx bank capture times out,
+        // a front-panel manual dump is still a useful recovery path on either wired
+        // or Bluetooth transports.
+        true
     }
 
     private func confirmDX100ManualInternalDumpCapture(contextTitle: String) -> Bool {
         let alert = NSAlert()
-        alert.messageText = "Manual DX100/27 \(contextTitle) Capture"
+        alert.messageText = "Manual DX100 \(contextTitle) Capture"
         alert.informativeText = dx100ManualInternalDumpInstructions()
         alert.addButton(withTitle: "Listen")
         alert.addButton(withTitle: "Cancel")
@@ -1648,9 +1643,9 @@ final class DocumentModel: ObservableObject {
         systemChannel: Int,
         progressPanel: EditorProgressPanel,
         contextTitle: String
-    ) async throws -> DX100VoiceBankData {
+    ) async throws -> (bank: DX100VoiceBankData, usedManualFallback: Bool) {
         do {
-            return try await Task.detached(priority: .userInitiated) {
+            let bank = try await Task.detached(priority: .userInitiated) {
                 try EditorVoiceDocumentService.fetchDX100InternalBank(
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
@@ -1658,6 +1653,7 @@ final class DocumentModel: ObservableObject {
                     timeout: 8
                 )
             }.value
+            return (bank, false)
         } catch {
             guard shouldOfferDX100ManualInternalDumpFallback(
                 sourceIndex: sourceIndex,
@@ -1670,17 +1666,18 @@ final class DocumentModel: ObservableObject {
             }
 
             progressPanel.update(
-                message: "The DX100/27 \(contextTitle) is being fetched. Please wait.\nListening for a manual Internal bank dump...",
+                message: "The DX100 \(contextTitle) is being fetched. Please wait.\nListening for a manual Internal bank dump...",
                 completed: 0,
                 total: 1
             )
 
-            return try await Task.detached(priority: .userInitiated) {
+            let bank = try await Task.detached(priority: .userInitiated) {
                 try EditorVoiceDocumentService.receiveDX100InternalBankManually(
                     sourceIndex: sourceIndex,
                     timeout: 25
                 )
             }.value
+            return (bank, true)
         }
     }
 
@@ -1704,24 +1701,24 @@ final class DocumentModel: ObservableObject {
         }
 
         return """
-        DX100/27 replied with a Yamaha 32-voice bank-style SysEx message, but it was \(bytes.count) bytes instead of the expected \(expectedCount).
+        DX100 replied with a Yamaha 32-voice bank-style SysEx message, but it was \(bytes.count) bytes instead of the expected \(expectedCount).
 
         This usually means the MIDI transport returned a shortened or incomplete bulk dump. Forest has seen this with Bluetooth MIDI adapters that handle current-voice SysEx correctly but do not carry the full bank dump cleanly.
 
-        For full DX100/27 bank capture, prefer a wired MIDI interface. Live editing and current-voice fetch can still work over the same transport.
+        For full DX100 bank capture, prefer a wired MIDI interface. Live editing and current-voice fetch can still work over the same transport.
         """
     }
 
     private func dx100ManualBankCaptureTroubleshootingMessage(bank: Int) -> String {
         """
-        Forest could not complete the assisted DX100/27 fetch for \(selectedDeviceVoiceBankTitle(bank)).
+        Forest could not complete the assisted DX100 fetch for \(selectedDeviceVoiceBankTitle(bank)).
 
         Forest currently builds \(selectedDeviceVoiceBankTitle(bank)) one voice at a time:
         • Forest remotely selects the displayed bank and voice
         • you press the matching front-panel voice number once
         • Forest requests the current voice dump
 
-        Check these DX100/27 settings and state:
+        Check these DX100 settings and state:
         • MIDI ON/OFF = ON
         • MIDI SYS INFO = ON
         • MIDI R CH matches Forest's System Channel, or OMNI = ON
@@ -1744,7 +1741,7 @@ final class DocumentModel: ObservableObject {
 
         for attempt in 1...maxAttempts {
             progressPanel.update(
-                message: "The DX100/27 voice bank is being fetched. Please wait.\nSelecting \(bankTitle) voice \(voiceIndex + 1) on the synth (attempt \(attempt) of \(maxAttempts))...",
+                message: "The DX100 voice bank is being fetched. Please wait.\nSelecting \(bankTitle) voice \(voiceIndex + 1) on the synth (attempt \(attempt) of \(maxAttempts))...",
                 completed: Double(voiceIndex),
                 total: Double(DX100ModuleServices.shared.module.voicesPerBank)
             )
@@ -1758,7 +1755,7 @@ final class DocumentModel: ObservableObject {
             }.value
 
             progressPanel.update(
-                message: "The DX100/27 voice bank is being fetched. Please wait.\nWaiting for front-panel confirmation of \(bankTitle) voice \(voiceIndex + 1) (attempt \(attempt) of \(maxAttempts))...",
+                message: "The DX100 voice bank is being fetched. Please wait.\nWaiting for front-panel confirmation of \(bankTitle) voice \(voiceIndex + 1) (attempt \(attempt) of \(maxAttempts))...",
                 completed: Double(voiceIndex),
                 total: Double(DX100ModuleServices.shared.module.voicesPerBank)
             )
@@ -1772,7 +1769,7 @@ final class DocumentModel: ObservableObject {
             }
 
             progressPanel.update(
-                message: "The DX100/27 voice bank is being fetched. Please wait.\nFetching \(bankTitle) voice \(voiceIndex + 1) of \(DX100ModuleServices.shared.module.voicesPerBank) (attempt \(attempt) of \(maxAttempts))...",
+                message: "The DX100 voice bank is being fetched. Please wait.\nFetching \(bankTitle) voice \(voiceIndex + 1) of \(DX100ModuleServices.shared.module.voicesPerBank) (attempt \(attempt) of \(maxAttempts))...",
                 completed: Double(voiceIndex),
                 total: Double(DX100ModuleServices.shared.module.voicesPerBank)
             )
@@ -1791,7 +1788,7 @@ final class DocumentModel: ObservableObject {
                 lastError = error
                 if attempt < maxAttempts {
                     progressPanel.update(
-                        message: "The DX100/27 voice bank is being fetched. Please wait.\n\(bankTitle) voice \(voiceIndex + 1) timed out. Retrying...",
+                        message: "The DX100 voice bank is being fetched. Please wait.\n\(bankTitle) voice \(voiceIndex + 1) timed out. Retrying...",
                         completed: Double(voiceIndex),
                         total: Double(DX100ModuleServices.shared.module.voicesPerBank)
                     )
@@ -1839,6 +1836,14 @@ final class DocumentModel: ObservableObject {
         pendingVoiceBankWindowOpenRevision += 1
     }
 
+    func prepareVoiceBankWindow(bank: Int) async {
+        let items = await ensureVoiceBankSelectorItems(bank: bank)
+        guard !items.isEmpty else {
+            return
+        }
+        requestVoiceBankWindowOpen(bank: bank)
+    }
+
     func consumePendingVoiceBankWindowOpen() -> Int? {
         defer { pendingVoiceBankWindowToOpen = nil }
         return pendingVoiceBankWindowToOpen
@@ -1851,6 +1856,10 @@ final class DocumentModel: ObservableObject {
         }
         let name = voices[slotIndex].name
         return name.isEmpty ? "Voice \(slotIndex + 1)" : name
+    }
+
+    func cachedDX100Voices(inBank bank: Int) -> [DX100VoiceData]? {
+        cachedDX100VoiceBanks[bank]
     }
 
     func cacheConfiguration(_ configuration: FB01ConfigurationData, slot: Int) {
@@ -3257,7 +3266,7 @@ final class DocumentModel: ObservableObject {
         panel.allowedContentTypes = UTType.dx100VoiceBankFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeFileName(selectedDeviceVoiceBankTitle(bank))).\(DX100SynthModule.shared.fileProfile.voiceBankExtension)"
-        panel.message = "Save the displayed DX100/27 bank as a voice bank file."
+        panel.message = "Save the displayed DX100 bank as a voice bank file."
         panel.prompt = "Save Bank to File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
@@ -3398,7 +3407,7 @@ final class DocumentModel: ObservableObject {
         panel.allowedContentTypes = UTType.dx100VoiceBankFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeFileName(selector.title)).\(DX100SynthModule.shared.fileProfile.voiceBankExtension)"
-        panel.message = "Save the displayed DX100/27 bank file as a voice bank file."
+        panel.message = "Save the displayed DX100 bank file as a voice bank file."
         panel.prompt = "Save Bank to File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
@@ -4893,9 +4902,9 @@ final class DocumentModel: ObservableObject {
 
         if shouldSuppressExternalKeyboardEchoBackToDevice(for: message) {
             if isNoteOn, message.count > 1 {
-                externalKeyboardStatus = "DX100/27 local keyboard direct; not echoed back."
+                externalKeyboardStatus = "DX100 local keyboard direct; not echoed back."
             } else if isVolumeControl, message.count > 2 {
-                externalKeyboardStatus = "DX100/27 local control \(message[1]) = \(message[2]); not echoed back."
+                externalKeyboardStatus = "DX100 local control \(message[1]) = \(message[2]); not echoed back."
             }
             updateExternalKeyboardPressedNotes(from: message)
             return
@@ -4972,7 +4981,7 @@ final class DocumentModel: ObservableObject {
 
         if shouldSuppressExternalKeyboardEchoBackToDevice(for: message) {
             if event == 0x90, message.count > 2, message[2] > 0 {
-                externalKeyboardStatus = "DX100/27 local keyboard direct; not echoed back."
+                externalKeyboardStatus = "DX100 local keyboard direct; not echoed back."
             }
             updateExternalKeyboardPressedNotes(from: message)
             return true
@@ -5059,6 +5068,45 @@ final class DocumentModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self?.errorMessage = "All Notes Off failed: \(error)"
+                    self?.statusMessage = nil
+                }
+            }
+        }
+    }
+
+    func sendLiveKeyboardReset() {
+        guard !isBusy else {
+            statusMessage = "Reset paused while the current device operation finishes."
+            return
+        }
+
+        guard selectedEditorDevice == .dx100 else {
+            statusMessage = "Reset is currently available for DX100 only."
+            return
+        }
+
+        let destinationIndex = selectedDestinationIndex
+        let destinationName = selectedDestinationName
+        let channel = min(max(systemChannel, 0), 15)
+
+        Task(priority: .high) { [weak self] in
+            do {
+                let press = try DX100.switchModeMessage(channel: channel, switchNumber: 27, value: 127)
+                let release = try DX100.switchModeMessage(channel: channel, switchNumber: 27, value: 0)
+
+                try await LiveMIDIPlaybackController.shared.sendImmediate(press, destinationIndex: destinationIndex)
+                try await Task.sleep(nanoseconds: 100_000_000)
+                try await LiveMIDIPlaybackController.shared.sendImmediate(release, destinationIndex: destinationIndex)
+
+                await MainActor.run {
+                    self?.liveKeyboardDisplay.status = "DX100 reset sent"
+                    self?.externalKeyboardStatus = "DX100 reset sent to \(destinationName)"
+                    self?.statusMessage = "Sent DX100 reset/play command to \(destinationName)."
+                    self?.errorMessage = nil
+                }
+            } catch {
+                await MainActor.run {
+                    self?.errorMessage = "DX100 reset failed: \(error)"
                     self?.statusMessage = nil
                 }
             }

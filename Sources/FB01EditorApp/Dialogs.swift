@@ -315,9 +315,9 @@ func showEditorError(title: String, message: String) {
 @MainActor
 func confirmDX100AssistedVoiceRecall(bankTitle: String, voiceNumber: Int) -> Bool {
     let alert = NSAlert()
-    alert.messageText = "Confirm DX100/27 Voice \(voiceNumber)"
+    alert.messageText = "Confirm DX100 Voice \(voiceNumber)"
     alert.informativeText = """
-    Forest selected \(bankTitle) Voice \(voiceNumber) on the DX100/27.
+    Forest selected \(bankTitle) Voice \(voiceNumber) on the DX100.
 
     Press front-panel Voice \(voiceNumber) on the synth once, then click Continue.
     """

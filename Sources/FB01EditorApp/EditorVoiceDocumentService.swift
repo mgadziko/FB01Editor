@@ -10,6 +10,12 @@ struct EditorFetchedVoiceDocument: Sendable {
 }
 
 enum EditorVoiceDocumentService {
+    enum DX100InternalStoreProgress: Sendable {
+        case preparingBank
+        case sendingBank(slotIndex: Int)
+        case verifying(slotIndex: Int)
+    }
+
     static func prepareDX100AssistedDeviceVoiceRecall(
         bank: Int,
         voiceNumber: Int,
@@ -97,7 +103,7 @@ enum EditorVoiceDocumentService {
                     delayBetweenMessages: 0
                 )
                 guard let response = responseMessages.first else {
-                    throw FB01MIDIError.timedOut("DX100/27 Internal bank")
+                    throw FB01MIDIError.timedOut("DX100 Internal bank")
                 }
                 return try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
             } catch {
@@ -106,7 +112,7 @@ enum EditorVoiceDocumentService {
             }
         }
 
-        throw lastError ?? FB01MIDIError.timedOut("DX100/27 Internal bank")
+        throw lastError ?? FB01MIDIError.timedOut("DX100 Internal bank")
     }
 
     static func receiveDX100InternalBankManually(
@@ -119,7 +125,7 @@ enum EditorVoiceDocumentService {
             maxMessages: 1
         )
         guard let response = responseMessages.first else {
-            throw FB01MIDIError.timedOut("manual DX100/27 Internal bank")
+            throw FB01MIDIError.timedOut("manual DX100 Internal bank")
         }
         return try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
     }
@@ -174,7 +180,7 @@ enum EditorVoiceDocumentService {
             }
         }
 
-        throw lastError ?? FB01MIDIError.timedOut("DX100/27 bank voice")
+        throw lastError ?? FB01MIDIError.timedOut("DX100 bank voice")
     }
 
     static func fetchVoiceDocument(
@@ -232,7 +238,7 @@ enum EditorVoiceDocumentService {
                     neutralVoice: dxVoice.fourOperatorVoice,
                     voice: try dxVoice.fb01EditableVoice(),
                     systemChannel: fetched.channel,
-                    title: recentTitle ?? "DX100/27 \(bankTitle) Voice \(voiceNumber + 1): \(voiceName)",
+                    title: recentTitle ?? "DX100 \(bankTitle) Voice \(voiceNumber + 1): \(voiceName)",
                     sourceDevice: .dx100
                 )
             case .some(.storedSlot):
@@ -265,12 +271,49 @@ enum EditorVoiceDocumentService {
         }
     }
 
+    static func writeDX100VoiceInInternalBank(
+        _ voice: FourOperatorVoiceData,
+        slotIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        currentDisplayedVoices: [DX100VoiceData],
+        settleDelay: TimeInterval = 0.4,
+        progress: (@Sendable (DX100InternalStoreProgress) -> Void)? = nil
+    ) throws {
+        progress?(.preparingBank)
+        guard currentDisplayedVoices.count == DX100VoiceBankData.dx100DisplayedVoiceCount else {
+            throw FB01AppError.message(
+                "DX100 Internal bank fetch returned \(currentDisplayedVoices.count) displayed voices; expected \(DX100VoiceBankData.dx100DisplayedVoiceCount)."
+            )
+        }
+
+        let translatedVoice = try voice.dx100Voice()
+        let currentBank = try DX100ModuleServices.shared.documentService.voiceBank(
+            fromDisplayedVoices: currentDisplayedVoices,
+            channel: systemChannel
+        )
+        let updatedBank = try currentBank.replacingVoice(atPackedVoiceIndex: slotIndex, with: translatedVoice)
+        let messages = try DX100ModuleServices.shared.voiceService.voiceBankMessages(
+            for: updatedBank,
+            channel: systemChannel
+        )
+        guard let loadMessage = messages.first else {
+            throw FB01AppError.message("Forest could not build a DX100 Internal bank store message.")
+        }
+
+        progress?(.sendingBank(slotIndex: slotIndex))
+        try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+        if settleDelay > 0 {
+            Thread.sleep(forTimeInterval: settleDelay)
+        }
+    }
+
     private static func dx100ProgramChangeMessage(channel: Int, programNumber: Int) throws -> [UInt8] {
         guard (0...15).contains(channel) else {
             throw DX100SysExError.invalidChannel(channel)
         }
         guard (0...127).contains(programNumber) else {
-            throw FB01MIDIError.timedOut("DX100/27 program selection")
+            throw FB01MIDIError.timedOut("DX100 program selection")
         }
         return [0xC0 | UInt8(channel), UInt8(programNumber)]
     }

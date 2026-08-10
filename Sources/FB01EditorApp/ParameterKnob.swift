@@ -79,7 +79,7 @@ enum ControlHoverText {
         case "Sustain", "Sustain Level":
             return "Sets the held level after the decay stages."
         case "Decay 1 Level":
-            return "DX100/27 held level after the first decay stage. Higher values keep more body in the note."
+            return "DX100 held level after the first decay stage. Higher values keep more body in the note."
         case "Release", "Release Rate":
             return "Controls how quickly the sound fades after you release a key."
         case "Level":

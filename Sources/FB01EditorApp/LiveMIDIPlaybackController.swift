@@ -51,7 +51,7 @@ actor ExternalKeyboardRealtimeState {
 
         if snapshot.suppressEcho {
             return ExternalKeyboardFastPathResult(
-                outcome: .suppressed(status: "DX100/27 local keyboard direct; not echoed back.")
+                outcome: .suppressed(status: "DX100 local keyboard direct; not echoed back.")
             )
         }
 

@@ -424,7 +424,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     var linkedBankWindowStoreTitle: String? {
-        "Store Voice to Open Bank Window..."
+        "Store Voice to Open Bank Window (Forest Only)..."
     }
 
     func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
@@ -530,8 +530,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
         if preferredDevice == .dx100 {
-            panel.message = "Load a DX100/27 voice bank file from disk, then choose one of its 24 displayed voices to open in a new voice document window."
-            panel.prompt = "Load DX100/27 Voice Bank File"
+            panel.message = "Load a DX100 voice bank file from disk, then choose one of its 24 displayed voices to open in a new voice document window."
+            panel.prompt = "Load DX100 Voice Bank File"
         } else {
             panel.message = "Load a voice bank file and choose one voice to open in a new voice document window."
             panel.prompt = "Load Voice Bank from File"
@@ -557,8 +557,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
-        panel.message = "Load a DX100/27 voice bank file from disk and open it as a bank window."
-        panel.prompt = "Load DX100/27 Voice Bank File"
+        panel.message = "Load a DX100 voice bank file from disk and open it as a bank window."
+        panel.prompt = "Load DX100 Voice Bank File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil
@@ -573,7 +573,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             rememberEditorLoadDirectory(for: url)
             return LoadedDX100VoiceBankFile(fileURL: url, candidates: candidates)
         } catch {
-            showEditorError(title: "Load DX100/27 Voice Bank Failed", message: "\(error)")
+            showEditorError(title: "Load DX100 Voice Bank Failed", message: "\(error)")
             return nil
         }
     }
@@ -723,7 +723,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
             if mode == .manualAssist {
                 guard case let .dx100Bank(bank, voiceNumber) = source else {
-                    errorMessage = "Manual fetch is available only for DX100/27 bank voices."
+                    errorMessage = "Manual fetch is available only for DX100 bank voices."
                     statusMessage = nil
                     isBusy = false
                     return
@@ -731,18 +731,18 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
                 guard let bankKind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank),
                       bankKind.requiresManualBulkCapture else {
-                    errorMessage = "Manual fetch is available only for DX100/27 Bank A-D voices."
+                    errorMessage = "Manual fetch is available only for DX100 Bank A-D voices."
                     statusMessage = nil
                     isBusy = false
                     return
                 }
 
                 let bankTitle = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)"
-                let fetchTitle = recentTitle ?? "DX100/27 \(bankTitle) Voice \(voiceNumber + 1)"
+                let fetchTitle = recentTitle ?? "DX100 \(bankTitle) Voice \(voiceNumber + 1)"
                 statusMessage = "Preparing manual fetch for \(fetchTitle) on \(systemChannelName)..."
                 let fetchProgressPanel = EditorProgressPanel(
                     title: "Fetching Voice",
-                    message: "The voice is being fetched. Please wait.\nSelecting \(fetchTitle) on the DX100/27..."
+                    message: "The voice is being fetched. Please wait.\nSelecting \(fetchTitle) on the DX100..."
                 )
                 fetchProgressPanel.show()
 
@@ -813,7 +813,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 return
             }
 
-            let fetchTitle = recentTitle ?? "DX100/27 Current Edit Voice"
+            let fetchTitle = recentTitle ?? "DX100 Current Edit Voice"
             statusMessage = "Fetching \(fetchTitle) on \(systemChannelName)..."
             let fetchProgressPanel = EditorProgressPanel(
                 title: "Fetching Voice",
@@ -1078,75 +1078,124 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func storeToDevice(device: DocumentModel) {
         guard !isBusy else { return }
-        guard let options = Self.chooseStoreOptions(defaultVoiceName: neutralVoice.name) else {
-            return
-        }
-
         let voiceToStore = voice
         let neutralVoiceToStore = neutralVoice
         let destinationIndex = device.selectedDestinationIndex
         let sourceIndex = device.selectedSourceIndex
         let systemChannel = device.systemChannel
         let destinationName = device.selectedDestinationName
+        let voiceDisplayName = displayName
 
         if device.selectedEditorDevice == .dx100 {
             guard let target = chooseDX100InternalStoreTarget(device: device) else {
                 return
             }
             isBusy = true
-            statusMessage = "Sending voice to DX100/27 current buffer before internal store..."
+            statusMessage = "Fetching the DX100 Internal bank before storing \(displayName)..."
             errorMessage = nil
             let progressPanel = EditorProgressPanel(
                 title: "Store Voice",
-                message: "The voice is being stored. Please wait.\nSending the current editable voice to the DX100/27 current buffer..."
+                message: "The voice is being stored. Please wait.\nFetching the current DX100 Internal bank..."
             )
             progressPanel.show()
             Task {
                 do {
-                    try await Task.detached(priority: .userInitiated) {
-                        try EditorVoiceDocumentService.storeVoiceDocument(
-                            neutralVoiceToStore,
-                            to: .dx100,
-                            sourceIndex: sourceIndex,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel
-                        )
-                    }.value
-                    progressPanel.dismiss()
-
-                    let confirmed = confirmDX100InternalStoreStep(
-                        slotIndex: target.slotIndex,
-                        voiceName: displayName
-                    )
-                    guard confirmed else {
-                        statusMessage = "DX100/27 current edit buffer updated on \(destinationName). Internal store was canceled before verification."
-                        errorMessage = nil
-                        isBusy = false
-                        return
+                    let currentInternalVoices: [DX100VoiceData]
+                    if let cached = device.cachedDX100Voices(inBank: 1),
+                       cached.count == DX100VoiceBankData.dx100DisplayedVoiceCount {
+                        currentInternalVoices = cached
+                    } else {
+                        currentInternalVoices = try await Task.detached(priority: .userInitiated) {
+                            try Self.fetchDX100InternalBankVoices(
+                                sourceIndex: sourceIndex,
+                                destinationIndex: destinationIndex,
+                                systemChannel: systemChannel
+                            )
+                        }.value
                     }
 
-                    progressPanel.show()
                     progressPanel.update(
-                        message: "The voice is being stored. Please wait.\nFetching the DX100/27 Internal bank to verify slot \(target.slotIndex + 1)..."
+                        message: "The voice is being stored. Please wait.\nWriting \(voiceDisplayName) into DX100 Internal slot \(target.slotIndex + 1)..."
                     )
 
                     let storedVoice = try neutralVoiceToStore.dx100Voice()
-                    let refreshedInternalVoices = try await Task.detached(priority: .userInitiated) {
-                        try Self.fetchDX100InternalBankVoices(
-                            sourceIndex: sourceIndex,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel
+                    let shouldAllowUnconfirmedBluetoothSend = shouldOfferDX100ManualInternalDumpFallback(device: device)
+                    do {
+                        try await Task.detached(priority: .userInitiated) {
+                            try EditorVoiceDocumentService.writeDX100VoiceInInternalBank(
+                                neutralVoiceToStore,
+                                slotIndex: target.slotIndex,
+                                destinationIndex: destinationIndex,
+                                systemChannel: systemChannel,
+                                currentDisplayedVoices: currentInternalVoices,
+                                progress: { event in
+                                    switch event {
+                                    case .preparingBank:
+                                        break
+                                    case .sendingBank(let slotIndex):
+                                        Task { @MainActor in
+                                            progressPanel.update(
+                                                message: "The voice is being stored. Please wait.\nWriting \(voiceDisplayName) into DX100 Internal slot \(slotIndex + 1)..."
+                                            )
+                                        }
+                                    case .verifying(let slotIndex):
+                                        Task { @MainActor in
+                                            progressPanel.update(
+                                                message: "The voice is being stored. Please wait.\nVerifying DX100 Internal slot \(slotIndex + 1) by refetching the Internal bank..."
+                                            )
+                                        }
+                                    }
+                                }
+                            )
+                        }.value
+                    } catch let error as FB01MIDIError {
+                        if case .timedOut(let request) = error,
+                           request == "long SysEx send",
+                           shouldAllowUnconfirmedBluetoothSend {
+                            progressPanel.update(
+                                message: "The voice is being stored. Please wait.\nDX100 write send did not confirm over Bluetooth. Forest is verifying the Internal bank now..."
+                            )
+                        } else {
+                            throw error
+                        }
+                    }
+
+                    progressPanel.update(
+                        message: "The voice is being stored. Please wait.\nVerifying DX100 Internal slot \(target.slotIndex + 1) by refetching the Internal bank..."
+                    )
+
+                    let refreshedInternalVoices: [DX100VoiceData]
+                    do {
+                        refreshedInternalVoices = try await Task.detached(priority: .userInitiated) {
+                            try Self.fetchDX100InternalBankVoices(
+                                sourceIndex: sourceIndex,
+                                destinationIndex: destinationIndex,
+                                systemChannel: systemChannel
+                            )
+                        }.value
+                    } catch {
+                        guard shouldOfferDX100ManualInternalDumpFallback(device: device),
+                              confirmDX100ManualInternalDumpVerify(slotIndex: target.slotIndex, voiceName: voiceDisplayName) else {
+                            throw error
+                        }
+
+                        progressPanel.update(
+                            message: "The voice is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to verify slot \(target.slotIndex + 1)..."
                         )
-                    }.value
+
+                        refreshedInternalVoices = try await Task.detached(priority: .userInitiated) {
+                            try Self.receiveDX100InternalBankVoicesManually(sourceIndex: sourceIndex)
+                        }.value
+                    }
 
                     device.cacheDX100VoiceBank(refreshedInternalVoices, bank: 1)
                     guard refreshedInternalVoices.indices.contains(target.slotIndex) else {
-                        throw FB01AppError.message("DX100/27 Internal slot \(target.slotIndex + 1) was not present in the refreshed bank.")
+                        throw FB01AppError.message("DX100 Internal slot \(target.slotIndex + 1) was not present in the refreshed bank.")
                     }
 
                     let verifiedVoice = refreshedInternalVoices[target.slotIndex]
                     guard verifiedVoice == storedVoice else {
-                        throw FB01AppError.message("DX100/27 Internal slot \(target.slotIndex + 1) did not match the edited voice after storing.")
+                        throw FB01AppError.message("DX100 Internal slot \(target.slotIndex + 1) did not match the edited voice after storing.")
                     }
 
                     sourceDevice = .dx100
@@ -1156,15 +1205,32 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                         bankTitle: "Internal"
                     )
                     markCurrentStateSaved()
-                    statusMessage = "Stored \(displayName) in DX100/27 Internal slot \(target.slotIndex + 1) on \(destinationName)."
+                    statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName)."
                     errorMessage = nil
                 } catch {
                     statusMessage = nil
                     errorMessage = "Store failed: \(error)"
+                    showEditorError(
+                        title: "Store to DX100 Internal Slot Failed",
+                        message: """
+                        \(error)
+
+                        Forest fetched the Internal bank, attempted to rewrite the selected slot, then tried to verify the result by refetching Internal.
+
+                        Notes:
+                        • the DX100 front-panel voice display does not necessarily change immediately after a bank write
+                        • MEMORY PROTECT must be OFF
+                        • if the write succeeded but verify failed, reopening Internal may still show whether the slot changed
+                        """
+                    )
                 }
                 progressPanel.dismiss()
                 isBusy = false
             }
+            return
+        }
+
+        guard let options = Self.chooseStoreOptions(defaultVoiceName: neutralVoice.name) else {
             return
         }
 
@@ -1248,18 +1314,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         switch sourceDevice {
         case .dx100:
             let openDeviceBanks = openDX100DeviceBankWindows()
-            if let origin = dx100DeviceBankOrigin,
-               openDeviceBanks.contains(origin.bank) {
-                storeToDX100DeviceBank(
-                    workspace: workspace,
-                    device: device,
-                    bank: origin.bank,
-                    slotIndex: origin.slotIndex,
-                    bankTitle: origin.bankTitle
-                )
-                return
-            }
-
             if !openDeviceBanks.isEmpty {
                 guard let target = chooseDX100DeviceBankStoreTarget(
                     banks: openDeviceBanks,
@@ -1286,7 +1340,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
             let selectors = workspace.openDX100VoiceBankFileSelectors
             guard !selectors.isEmpty else {
-                errorMessage = "Open a DX100/27 bank window before storing this voice into a bank."
+                errorMessage = "Open a DX100 bank window before storing this voice into a bank."
                 statusMessage = nil
                 return
             }
@@ -1329,17 +1383,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             }
         case .fb01:
             let openDeviceBanks = openFB01DeviceBankWindows()
-            if let origin = fb01DeviceBankOrigin {
-                storeToFB01DeviceBank(
-                    workspace: workspace,
-                    device: device,
-                    bank: origin.bank,
-                    slotIndex: origin.slotIndex,
-                    bankTitle: origin.bankTitle
-                )
-                return
-            }
-
             if !openDeviceBanks.isEmpty {
                 guard let target = chooseFB01DeviceBankStoreTarget(
                     banks: openDeviceBanks,
@@ -1490,7 +1533,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Store Voice to Open Bank Window"
-        alert.informativeText = "Choose which open DX100/27 bank window and which slot should receive this voice."
+        alert.informativeText = "Choose which open DX100 bank window and which slot should receive this voice."
         alert.addButton(withTitle: "Store")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
@@ -1594,7 +1637,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Store Voice to Open Bank Window"
-        alert.informativeText = "Choose which open DX100/27 bank window and which slot should receive this voice."
+        alert.informativeText = "Choose which open DX100 bank window and which slot should receive this voice."
         alert.addButton(withTitle: "Store")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
@@ -1764,7 +1807,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 try Task.checkCancellation()
                 await MainActor.run {
                     self?.lastDX100LiveSentSignature = signature
-                    self?.statusMessage = "Live DX100/27 edit sent to \(destinationName)."
+                    self?.statusMessage = "Live DX100 edit sent to \(destinationName)."
                     self?.errorMessage = nil
                 }
             } catch is CancellationError {
@@ -1846,7 +1889,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         if device.shouldSuppressExternalKeyboardEchoBackToDevice(for: message) {
             if isNoteOn {
-                device.externalKeyboardStatus = "DX100/27 local keyboard direct; not echoed back."
+                device.externalKeyboardStatus = "DX100 local keyboard direct; not echoed back."
             }
             return true
         }
@@ -2034,7 +2077,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             do {
                 return try readDX100VoiceDocument(from: url, context: context, extensionHint: extensionHint)
             } catch {
-                throw FB01AppError.message("This file appears to be a DX100/27 voice file, but it could not be read: \(error)")
+                throw FB01AppError.message("This file appears to be a DX100 voice file, but it could not be read: \(error)")
             }
         }
 
@@ -2054,7 +2097,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return loaded
         }
 
-        throw FB01AppError.message("The file does not contain a readable FB-01 or DX100/27 voice.")
+        throw FB01AppError.message("The file does not contain a readable FB-01 or DX100 voice.")
     }
 
     private static func readFB01VoiceDocument(from url: URL) throws -> LoadedVoiceDocument {
@@ -2073,10 +2116,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private static func readDX100VoiceDocument(from url: URL, context: VoiceDocumentLoadContext, extensionHint: String) throws -> LoadedVoiceDocument {
         let candidates = try DX100DocumentService.shared.readVoiceCandidates(from: url)
         let isBankFile = context == .bankFile || extensionHint == DX100SynthModule.shared.fileProfile.voiceBankExtension || (extensionHint == DX100SynthModule.shared.fileProfile.genericSysExExtension && candidates.count > 1)
-        let title = isBankFile ? "Choose Voice from DX100/27 Voice Bank File" : "Choose DX100/27 Voice Document"
+        let title = isBankFile ? "Choose Voice from DX100 Voice Bank File" : "Choose DX100 Voice Document"
         let informativeText = isBankFile
-            ? "This DX100/27 voice bank file contains the 24 displayed voices extracted from a 32-voice bulk dump. Choose one voice to open in this document window."
-            : "This DX100/27 SysEx file contains multiple voices. Choose the one to open in this document window."
+            ? "This DX100 voice bank file contains the 24 displayed voices extracted from a 32-voice bulk dump. Choose one voice to open in this document window."
+            : "This DX100 SysEx file contains multiple voices. Choose the one to open in this document window."
         guard let candidate = chooseDX100VoiceCandidate(candidates, title: title, informativeText: informativeText) else {
             throw FB01AppError.noVoiceSource
         }
@@ -2365,8 +2408,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @MainActor
     private func chooseDX100InternalStoreTarget(device: DocumentModel) -> DX100DeviceBankVoiceOrigin? {
         let alert = NSAlert()
-        alert.messageText = "Store Voice to DX100/27 Internal Slot"
-        alert.informativeText = "Choose which Internal slot should permanently store \(displayName). Forest will first send the voice to the DX100/27 current edit buffer, then ask you to complete the front-panel STORE step."
+        alert.messageText = "Store Voice to DX100 Internal Slot"
+        alert.informativeText = "Choose which Internal slot should permanently store \(displayName). Forest will fetch the current Internal bank, replace the selected slot, write the rebuilt bank back to the DX100, and verify the result."
         alert.addButton(withTitle: "Continue")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
@@ -2388,7 +2431,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         stack.addArrangedSubview(labelledEditorPopup(label: "Internal slot:", popup: slotPopup))
-        stack.addArrangedSubview(makeWarningLabel("MEMORY PROTECT must be OFF on the DX100/27. Forest will verify the result by refetching the Internal bank after you complete the STORE step."))
+        stack.addArrangedSubview(makeWarningLabel("MEMORY PROTECT must be OFF on the DX100. Forest will verify the result by refetching the Internal bank after the write completes."))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -2402,23 +2445,28 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         )
     }
 
+    private func shouldOfferDX100ManualInternalDumpFallback(device: DocumentModel) -> Bool {
+        device.selectedEditorDevice == .dx100
+    }
+
     @MainActor
-    private func confirmDX100InternalStoreStep(slotIndex: Int, voiceName: String) -> Bool {
+    private func confirmDX100ManualInternalDumpVerify(slotIndex: Int, voiceName: String) -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Complete DX100/27 Store"
+        alert.messageText = "Manual DX100 Verify"
         alert.informativeText = """
-        \(voiceName) is now in the DX100/27 current edit buffer.
+        Forest wrote \(voiceName) to DX100 Internal slot \(slotIndex + 1), but the automatic verify fetch did not reply.
 
-        On the synth:
-        1. Be sure MEMORY PROTECT is OFF.
-        2. Return to PLAY mode if needed.
-        3. Hold STORE (EG COPY).
-        4. Press voice \(slotIndex + 1) to store into Internal slot \(slotIndex + 1).
+        Please trigger a manual Internal bank dump on the DX100 now:
+        1. Press FUNCTION
+        2. Select 5: SYS INFO
+        3. Confirm SYS INFO = ON
+        4. Press SYS INFO again to show “MIDI Transmit?”
+        5. Press YES
 
-        Click Stored after the synth finishes, and Forest will verify the Internal bank.
+        Forest will listen for the manual Internal dump and use it to verify the store.
         """
-        alert.addButton(withTitle: "Stored")
+        alert.addButton(withTitle: "Listen")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
         return alert.runModal() == .alertFirstButtonReturn
@@ -2433,6 +2481,18 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
             systemChannel: systemChannel
+        )
+        return (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
+            try? voiceBank.voice(atPackedVoiceIndex: index)
+        }
+    }
+
+    nonisolated private static func receiveDX100InternalBankVoicesManually(
+        sourceIndex: Int
+    ) throws -> [DX100VoiceData] {
+        let voiceBank = try EditorVoiceDocumentService.receiveDX100InternalBankManually(
+            sourceIndex: sourceIndex,
+            timeout: 25
         )
         return (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
             try? voiceBank.voice(atPackedVoiceIndex: index)

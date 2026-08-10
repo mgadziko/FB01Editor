@@ -1161,7 +1161,7 @@ struct FMPatchOperatorModule: View {
     private var frequencyRatioHelpText: String {
         switch editingDevice {
         case .dx100:
-            return "DX100/27 oscillator frequency ratio. Lower ratios sound foundational; higher or unusual ratios add brighter or more metallic harmonics."
+            return "DX100 oscillator frequency ratio. Lower ratios sound foundational; higher or unusual ratios add brighter or more metallic harmonics."
         case .fb01:
             return "FB-01 ratio control. It behaves like a multiplier-style oscillator ratio for setting harmonic relationships."
         }
@@ -1189,7 +1189,7 @@ struct FMPatchOperatorModule: View {
 
     private var sustainLikeHelpText: String {
         editingDevice == .dx100
-            ? "DX100/27 Decay 1 Level. Sets the level the envelope settles toward after its first decay."
+            ? "DX100 Decay 1 Level. Sets the level the envelope settles toward after its first decay."
             : "Sets the held level after the decay stages."
     }
 

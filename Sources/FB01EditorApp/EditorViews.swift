@@ -169,7 +169,9 @@ struct VoiceSelectorCommands: View {
                 Button(document.selectedDeviceVoiceBankTitle(bank)) {
                     let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank)
                     if !workspace.bringWindowToFront(identifier: identifier) {
-                        openWindow(id: "voice-bank-selector", value: bank)
+                        Task { @MainActor in
+                            await document.prepareVoiceBankWindow(bank: bank)
+                        }
                     }
                 }
                 .disabled(document.isBusy)
@@ -330,7 +332,7 @@ struct DX100VoiceBankFileSelectorWindow: View {
         let layout = document.selectedDeviceVoiceBankSelectorLayout
         SelectorWindowLayout(
             title: selector.title,
-            subtitle: "Select a voice from this DX100/27 bank file to open it in a new Voice Document.",
+            subtitle: "Select a voice from this DX100 bank file to open it in a new Voice Document.",
             isLoading: false,
             errorMessage: nil,
             layout: layout,
@@ -341,7 +343,7 @@ struct DX100VoiceBankFileSelectorWindow: View {
                     openVoiceDocument(item)
                 }
                 .disabled(document.isBusy)
-                .forestHoverHelp("Opens DX100/27 voice \(item.displayNumber) from \(selector.fileURL.lastPathComponent) in a new Voice Document.")
+                .forestHoverHelp("Opens DX100 voice \(item.displayNumber) from \(selector.fileURL.lastPathComponent) in a new Voice Document.")
             }
         }
         .background(WindowIdentifierSetter(
@@ -878,13 +880,22 @@ struct LiveKeyboardPaletteControlsView: View {
                         .padding(.top, 18)
                         .forestHoverHelp("Chooses the external MIDI source that can play the current Forest audition voice.")
 
-                        Button("All Notes Off") {
-                            document.sendAllNotesOff()
+                        VStack(alignment: .leading, spacing: 6) {
+                            Button("All Notes Off") {
+                                document.sendAllNotesOff()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(document.isBusy || document.midiDestinations.isEmpty)
+                            .forestHoverHelp("Sends MIDI All Notes Off on the current live-keyboard channel and clears any held-note state in Forest.")
+
+                            Button("DX PLAY") {
+                                document.sendLiveKeyboardReset()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(document.isBusy || document.midiDestinations.isEmpty)
+                            .forestHoverHelp("Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens.")
                         }
-                        .buttonStyle(.bordered)
-                        .disabled(document.isBusy || document.midiDestinations.isEmpty)
                         .padding(.top, 18)
-                        .forestHoverHelp("Sends MIDI All Notes Off on the current live-keyboard channel and clears any held-note state in Forest.")
                     }
                 }
             }
@@ -976,12 +987,21 @@ struct LiveKeyboardMIDIControlsView: View {
                 .disabled(document.midiSources.isEmpty || !document.externalKeyboardEnabled)
                 .forestHoverHelp("Chooses the external MIDI source that can play the current Forest audition voice.")
 
-                Button("All Notes Off") {
-                    document.sendAllNotesOff()
+                VStack(alignment: .leading, spacing: 6) {
+                    Button("All Notes Off") {
+                        document.sendAllNotesOff()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(document.isBusy || document.midiDestinations.isEmpty)
+                    .forestHoverHelp("Sends MIDI All Notes Off on the current live-keyboard channel and clears any held-note state in Forest.")
+
+                    Button("DX PLAY") {
+                        document.sendLiveKeyboardReset()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(document.isBusy || document.midiDestinations.isEmpty)
+                    .forestHoverHelp("Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens.")
                 }
-                .buttonStyle(.bordered)
-                .disabled(document.isBusy || document.midiDestinations.isEmpty)
-                .forestHoverHelp("Sends MIDI All Notes Off on the current live-keyboard channel and clears any held-note state in Forest.")
             }
             .font(.caption)
 

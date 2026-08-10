@@ -106,7 +106,7 @@ struct EditorDocumentCommands: View {
     private var loadVoiceBankFromFileTitle: String {
         switch document.selectedEditorDevice {
         case .dx100:
-            return "Load DX100/27 Voice Bank File..."
+            return "Load DX100 Voice Bank File..."
         default:
             return "Load Bank from File..."
         }
@@ -665,10 +665,10 @@ final class EditorDocumentWorkspace: ObservableObject {
 
     func replaceVoice(inDX100VoiceBankFileSelector id: UUID, slotIndex: Int, with voice: DX100VoiceData) throws {
         guard var selector = dx100VoiceBankFileSelectors[id] else {
-            throw FB01AppError.message("The open DX100/27 bank window is no longer available.")
+            throw FB01AppError.message("The open DX100 bank window is no longer available.")
         }
         guard let itemIndex = selector.items.firstIndex(where: { $0.slotIndex == slotIndex }) else {
-            throw FB01AppError.message("The selected DX100/27 bank slot is no longer available.")
+            throw FB01AppError.message("The selected DX100 bank slot is no longer available.")
         }
 
         var item = selector.items[itemIndex]
@@ -772,7 +772,7 @@ final class EditorDocumentWorkspace: ObservableObject {
             insertVoiceDocument(document)
             return document.id
         } catch {
-            showEditorError(title: "Open DX100/27 Voice Failed", message: "\(error)")
+            showEditorError(title: "Open DX100 Voice Failed", message: "\(error)")
             return nil
         }
     }
