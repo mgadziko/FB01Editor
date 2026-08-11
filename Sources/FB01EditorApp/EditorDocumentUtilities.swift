@@ -121,6 +121,29 @@ struct VoiceBankDragPayload: Codable, Equatable {
     var slotIndex: Int
 }
 
+enum VoiceBankDragSession {
+    @MainActor static var currentPayload: VoiceBankDragPayload?
+}
+
+extension VoiceBankDragPayload {
+    var itemProvider: NSItemProvider {
+        let provider = NSItemProvider()
+        MainActor.assumeIsolated {
+            VoiceBankDragSession.currentPayload = self
+        }
+        if let data = try? JSONEncoder().encode(self) {
+            provider.registerDataRepresentation(
+                forTypeIdentifier: ForestDragTypes.voiceBankSlot.identifier,
+                visibility: .all
+            ) { completion in
+                completion(data, nil)
+                return nil
+            }
+        }
+        return provider
+    }
+}
+
 extension VoiceBankDragPayload: Transferable {
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: ForestDragTypes.voiceBankSlot)

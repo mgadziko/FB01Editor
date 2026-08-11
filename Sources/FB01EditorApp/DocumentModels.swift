@@ -104,6 +104,7 @@ final class DocumentModel: ObservableObject {
     @Published private var cachedCurrentConfiguration: FB01ConfigurationData?
     @Published private var cachedDX100VoiceBanks: [Int: [DX100VoiceData]] = [:]
     @Published private var cachedDX100RawVoiceBanks: [Int: DX100VoiceBankData] = [:]
+    @Published private var editedVoiceBankSelections: Set<DeviceVoiceBankWindowSelection> = []
     @Published var selectedEditorDevice: EditorDeviceSelection?
     @Published var deviceCacheStatus = "Not loaded"
     @Published private(set) var voiceBankSelectorRevision = 0
@@ -2013,6 +2014,7 @@ final class DocumentModel: ObservableObject {
                 summary.voice.name.isEmpty ? "Untitled" : summary.voice.name
             }
         }
+        clearEditedVoiceBankSelection(DeviceVoiceBankWindowSelection(device: .fb01, bank: userBankNumber))
         voiceBankSelectorRevision += 1
         deviceCacheStatus = "Updated Voice Bank \(userBankNumber)"
     }
@@ -2031,8 +2033,17 @@ final class DocumentModel: ObservableObject {
             rawBank = try rawBank.replacingVoice(atPackedVoiceIndex: slotIndex, with: voice)
             cachedDX100RawVoiceBanks[bank] = rawBank
         }
+        markEditedVoiceBankSelection(DeviceVoiceBankWindowSelection(device: .dx100, bank: bank))
         voiceBankSelectorRevision += 1
         deviceCacheStatus = "Updated \(selectedDeviceVoiceBankTitle(bank))"
+    }
+
+    func cachedDX100Voice(inBank bank: Int, slotIndex: Int) -> DX100VoiceData? {
+        guard let voices = cachedDX100VoiceBanks[bank],
+              voices.indices.contains(slotIndex) else {
+            return nil
+        }
+        return voices[slotIndex]
     }
 
     func swapCachedDX100Voices(inBank bank: Int, slotIndex: Int, with otherSlotIndex: Int) throws {
@@ -2061,6 +2072,7 @@ final class DocumentModel: ObservableObject {
         }
 
         voiceBankSelectorRevision += 1
+        markEditedVoiceBankSelection(DeviceVoiceBankWindowSelection(device: .dx100, bank: bank))
         deviceCacheStatus = "Reordered \(selectedDeviceVoiceBankTitle(bank))"
     }
 
@@ -2069,6 +2081,7 @@ final class DocumentModel: ObservableObject {
         if let rawBank {
             cachedDX100RawVoiceBanks[bank] = rawBank
         }
+        clearEditedVoiceBankSelection(DeviceVoiceBankWindowSelection(device: .dx100, bank: bank))
         voiceBankSelectorRevision += 1
         deviceCacheStatus = "Updated \(selectedDeviceVoiceBankTitle(bank))"
     }
@@ -3525,6 +3538,7 @@ final class DocumentModel: ObservableObject {
             let voiceBank = try DX100DocumentService.shared.voiceBank(fromDisplayedVoices: voices, channel: systemChannel)
             try DX100DocumentService.shared.writeVoiceBank(voiceBank, channel: systemChannel, to: url)
             rememberSaveDirectory(for: url)
+            clearEditedVoiceBankSelection(DeviceVoiceBankWindowSelection(device: .dx100, bank: bank))
             statusMessage = "Saved \(selectedDeviceVoiceBankTitle(bank)) to \(url.lastPathComponent)."
             errorMessage = nil
         } catch {
@@ -3574,6 +3588,7 @@ final class DocumentModel: ObservableObject {
                 }
                 try artifact.writeSysEx(to: url)
                 self.rememberSaveDirectory(for: url)
+                self.clearEditedVoiceBankSelection(DeviceVoiceBankWindowSelection(device: .fb01, bank: bank))
                 self.statusMessage = "Saved Voice Bank \(bank) to \(url.lastPathComponent)."
                 self.errorMessage = nil
             } catch {
@@ -3728,6 +3743,19 @@ final class DocumentModel: ObservableObject {
 
         let updatedBank = try cachedBank.replacingVoices([slotIndex + 1: voice])
         cacheVoiceBank(updatedBank, userBankNumber: bank)
+        markEditedVoiceBankSelection(DeviceVoiceBankWindowSelection(device: .fb01, bank: bank))
+    }
+
+    func isVoiceBankSelectionEdited(_ selection: DeviceVoiceBankWindowSelection) -> Bool {
+        editedVoiceBankSelections.contains(selection)
+    }
+
+    func clearEditedVoiceBankSelection(_ selection: DeviceVoiceBankWindowSelection) {
+        editedVoiceBankSelections.remove(selection)
+    }
+
+    private func markEditedVoiceBankSelection(_ selection: DeviceVoiceBankWindowSelection) {
+        editedVoiceBankSelections.insert(selection)
     }
 
     func cachedVoiceName(inBank bank: Int, slotIndex: Int) -> String? {

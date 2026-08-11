@@ -268,7 +268,6 @@ struct VoiceBankSelectorWindow: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var windowTitle: String = ""
-    @State private var activeDropTargetID: String?
 
     var body: some View {
         let bank = selection.bank
@@ -280,6 +279,10 @@ struct VoiceBankSelectorWindow: View {
             isLoading: isLoading,
             errorMessage: errorMessage,
             layout: layout,
+            statusBadgeText: bankRoleBadgeText,
+            statusBadgeColor: bankRoleBadgeColor,
+            trailingStatusText: document.isVoiceBankSelectionEdited(selection) ? "Edited" : nil,
+            trailingStatusColor: .orange,
             showsTitle: false
         ) {
             if allowsInternalDXSwapReorder {
@@ -391,42 +394,67 @@ struct VoiceBankSelectorWindow: View {
         }
         .disabled(document.isBusy)
         .forestHoverHelp("Fetches \(item.fetchTitle) into a new Voice Document.")
+        .modifier(DXCrossBankDragModifier(
+            enabled: selection.device == .dx100 && selection.bank != 1,
+            payload: VoiceBankDragPayload(
+                device: selection.device,
+                bank: selection.bank,
+                slotIndex: item.zeroBasedVoiceNumber
+            )
+        ))
     }
 
-    private func dropTargetBinding(for item: VoiceBankSelectorItem) -> Binding<Bool>? {
-        guard allowsInternalDXSwapReorder else {
-            return nil
+    private var bankRoleBadgeText: String? {
+        switch selection.device {
+        case .dx100:
+            return selection.bank == 1 ? "Writable Bank" : "Fetch Only"
+        case .fb01:
+            return EditorSynthModule.module.isWritableVoiceBank(selection.bank) ? "Writable Bank" : "Fetch Only"
         }
-        return Binding(
-            get: { activeDropTargetID == item.id },
-            set: { isTargeted in
-                activeDropTargetID = isTargeted ? item.id : nil
-            }
-        )
+    }
+
+    private var bankRoleBadgeColor: Color {
+        switch selection.device {
+        case .dx100:
+            return selection.bank == 1 ? .green : .blue
+        case .fb01:
+            return EditorSynthModule.module.isWritableVoiceBank(selection.bank) ? .green : .blue
+        }
     }
 
     private func handleVoiceBankDrop(payload: VoiceBankDragPayload, targetItem: VoiceBankSelectorItem) -> Bool {
         guard allowsInternalDXSwapReorder else {
             return false
         }
-        guard payload.device == .dx100,
-              payload.bank == selection.bank,
-              payload.slotIndex != targetItem.zeroBasedVoiceNumber else {
-            activeDropTargetID = nil
+        guard payload.device == .dx100 else {
             return false
         }
 
         do {
-            try document.swapCachedDX100Voices(
-                inBank: selection.bank,
-                slotIndex: payload.slotIndex,
-                with: targetItem.zeroBasedVoiceNumber
-            )
-            activeDropTargetID = nil
-            errorMessage = nil
-            document.statusMessage = "Swapped DX100 Internal voices \(payload.slotIndex + 1) and \(targetItem.displayNumber) in Forest."
+            if payload.bank == selection.bank {
+                guard payload.slotIndex != targetItem.zeroBasedVoiceNumber else {
+                    return false
+                }
+                try document.swapCachedDX100Voices(
+                    inBank: selection.bank,
+                    slotIndex: payload.slotIndex,
+                    with: targetItem.zeroBasedVoiceNumber
+                )
+                errorMessage = nil
+                document.statusMessage = "Swapped DX100 Internal voices \(payload.slotIndex + 1) and \(targetItem.displayNumber) in Forest."
+            } else {
+                guard let sourceVoice = document.cachedDX100Voice(inBank: payload.bank, slotIndex: payload.slotIndex) else {
+                    throw FB01AppError.message("\(document.voiceBankTitle(device: .dx100, bank: payload.bank)) voice \(payload.slotIndex + 1) is not loaded yet.")
+                }
+                try document.replaceCachedDX100Voice(
+                    inBank: selection.bank,
+                    slotIndex: targetItem.zeroBasedVoiceNumber,
+                    with: sourceVoice
+                )
+                errorMessage = nil
+                document.statusMessage = "Placed DX100 \(document.voiceBankTitle(device: .dx100, bank: payload.bank)) voice \(payload.slotIndex + 1) into Internal slot \(targetItem.displayNumber) in Forest."
+            }
         } catch {
-            activeDropTargetID = nil
             errorMessage = "DX100 Internal rearrange failed: \(error)"
         }
 
@@ -488,7 +516,7 @@ private struct DXInternalVoiceBankReorderGrid: View {
     }
 
     private func tile(_ item: VoiceBankSelectorItem) -> some View {
-        SelectorGridButton(
+        let tile = SelectorGridButton(
             number: item.displayNumber,
             title: item.title,
             buttonWidth: layout.buttonWidth,
@@ -499,8 +527,21 @@ private struct DXInternalVoiceBankReorderGrid: View {
             openVoiceDocument(item)
         }
         .forestHoverHelp("Fetches \(item.fetchTitle) into a new Voice Document.")
-        .gesture(dragGesture(for: item))
         .allowsHitTesting(!isBusy)
+
+        return tile
+            .gesture(dragGesture(for: item))
+            .modifier(DXInternalExternalSlotDropModifier(
+                isTargeted: Binding(
+                    get: { activeDropTargetID == item.id },
+                    set: { isTargeted in
+                        activeDropTargetID = isTargeted ? item.id : nil
+                    }
+                ),
+                onDrop: { payload in
+                    handleDrop(payload, item)
+                }
+            ))
     }
 
     private func dragGesture(for item: VoiceBankSelectorItem) -> some Gesture {
@@ -541,6 +582,110 @@ private struct DXInternalVoiceBankReorderGrid: View {
         slotFrames.first { id, frame in
             id != sourceID && frame.contains(location)
         }?.key
+    }
+}
+
+private struct DXCrossBankDragModifier: ViewModifier {
+    var enabled: Bool
+    var payload: VoiceBankDragPayload
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content.onDrag { payload.itemProvider }
+        } else {
+            content
+        }
+    }
+}
+
+private struct DXInternalExternalSlotDropModifier: ViewModifier {
+    var isTargeted: Binding<Bool>
+    var onDrop: (VoiceBankDragPayload) -> Bool
+
+    func body(content: Content) -> some View {
+        content.overlay(
+            DXInternalExternalSlotDropReceiver(
+                isTargeted: isTargeted,
+                onDrop: onDrop
+            )
+        )
+    }
+}
+
+private struct DXInternalExternalSlotDropReceiver: NSViewRepresentable {
+    var isTargeted: Binding<Bool>
+    var onDrop: (VoiceBankDragPayload) -> Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isTargeted: isTargeted, onDrop: onDrop)
+    }
+
+    func makeNSView(context: Context) -> ExternalDropNSView {
+        let view = ExternalDropNSView()
+        view.coordinator = context.coordinator
+        view.registerForDraggedTypes([NSPasteboard.PasteboardType(ForestDragTypes.voiceBankSlot.identifier)])
+        return view
+    }
+
+    func updateNSView(_ nsView: ExternalDropNSView, context: Context) {
+        context.coordinator.isTargeted = isTargeted
+        context.coordinator.onDrop = onDrop
+        nsView.coordinator = context.coordinator
+    }
+
+    final class Coordinator: NSObject {
+        var isTargeted: Binding<Bool>
+        var onDrop: (VoiceBankDragPayload) -> Bool
+
+        init(isTargeted: Binding<Bool>, onDrop: @escaping (VoiceBankDragPayload) -> Bool) {
+            self.isTargeted = isTargeted
+            self.onDrop = onDrop
+        }
+    }
+}
+
+private final class ExternalDropNSView: NSView {
+    weak var coordinator: DXInternalExternalSlotDropReceiver.Coordinator?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        coordinator?.isTargeted.wrappedValue = true
+        return .move
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        coordinator?.isTargeted.wrappedValue = false
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        true
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let fallbackPayload = MainActor.assumeIsolated {
+            VoiceBankDragSession.currentPayload
+        }
+        defer {
+            coordinator?.isTargeted.wrappedValue = false
+            MainActor.assumeIsolated {
+                VoiceBankDragSession.currentPayload = nil
+            }
+        }
+
+        if let item = sender.draggingPasteboard.pasteboardItems?.first,
+           let data = item.data(forType: NSPasteboard.PasteboardType(ForestDragTypes.voiceBankSlot.identifier)),
+           let payload = try? JSONDecoder().decode(VoiceBankDragPayload.self, from: data) {
+            return coordinator?.onDrop(payload) ?? false
+        }
+
+        if let payload = fallbackPayload {
+            return coordinator?.onDrop(payload) ?? false
+        }
+
+        return false
     }
 }
 
@@ -754,6 +899,10 @@ private struct SelectorWindowLayout<Content: View>: View {
     var isLoading: Bool
     var errorMessage: String?
     var layout: SynthSelectorGridLayout
+    var statusBadgeText: String? = nil
+    var statusBadgeColor: Color = .secondary
+    var trailingStatusText: String? = nil
+    var trailingStatusColor: Color = .secondary
     var showsTitle = true
     @ViewBuilder var content: () -> Content
 
@@ -765,14 +914,31 @@ private struct SelectorWindowLayout<Content: View>: View {
                         Text(title)
                             .font(.title2.weight(.semibold))
                     }
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if let statusBadgeText {
+                            Text(statusBadgeText)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(statusBadgeColor)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(statusBadgeColor.opacity(0.12), in: Capsule())
+                        }
+                    }
                 }
                 Spacer()
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
+                HStack(spacing: 8) {
+                    if let trailingStatusText {
+                        Text(trailingStatusText)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(trailingStatusColor)
+                    }
+                    if isLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
                 }
             }
 
@@ -1148,8 +1314,18 @@ struct LiveKeyboardPaletteControlsView: View {
                                 document.sendLiveKeyboardReset()
                             }
                             .buttonStyle(.bordered)
-                            .disabled(document.isBusy || document.midiDestinations.isEmpty)
-                            .forestHoverHelp("Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens.")
+                            .disabled(document.isBusy || document.midiDestinations.isEmpty || document.selectedEditorDevice != .dx100)
+                            .forestHoverHelp(
+                                document.selectedEditorDevice == .dx100
+                                ? "Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens."
+                                : "DX100 only. Sends the proven remote PLAY command to recover a DX100 that is stuck in programming screens."
+                            )
+
+                            if document.selectedEditorDevice != .dx100 {
+                                Text("DX100 only")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         .padding(.top, 18)
                     }
@@ -1255,8 +1431,18 @@ struct LiveKeyboardMIDIControlsView: View {
                         document.sendLiveKeyboardReset()
                     }
                     .buttonStyle(.bordered)
-                    .disabled(document.isBusy || document.midiDestinations.isEmpty)
-                    .forestHoverHelp("Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens.")
+                    .disabled(document.isBusy || document.midiDestinations.isEmpty || document.selectedEditorDevice != .dx100)
+                    .forestHoverHelp(
+                        document.selectedEditorDevice == .dx100
+                        ? "Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens."
+                        : "DX100 only. Sends the proven remote PLAY command to recover a DX100 that is stuck in programming screens."
+                    )
+
+                    if document.selectedEditorDevice != .dx100 {
+                        Text("DX100 only")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             .font(.caption)
@@ -1897,11 +2083,27 @@ struct SystemSettingsView: View {
                             get: { document.systemMemoryProtectEnabled },
                             set: { document.setMemoryProtect($0) }
                         ))
+                        .disabled(document.selectedEditorDevice == .dx100)
+                        .forestHoverHelp(
+                            document.selectedEditorDevice == .dx100
+                            ? "DX100 memory protect is not controlled from Forest yet. Use the synth front panel before permanent stores."
+                            : "Turns FB-01 memory protection on or off. Protect must be off before stored voices or configurations can be written."
+                        )
 
-                        Text("Protect ON blocks stored voices and configurations. Store operations set Protect OFF before storing.")
+                        Text(
+                            document.selectedEditorDevice == .dx100
+                            ? "DX100 memory protect is currently front-panel only. Forest does not change it yet."
+                            : "Protect ON blocks stored voices and configurations. Store operations set Protect OFF before storing."
+                        )
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+
+                        if document.selectedEditorDevice == .dx100 {
+                            Text("FB-01 only")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(.top, 4)
                 } label: {
