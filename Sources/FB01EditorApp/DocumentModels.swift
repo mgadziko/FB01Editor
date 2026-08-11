@@ -1717,6 +1717,12 @@ final class DocumentModel: ObservableObject {
                     timeout: 40
                 )
             }.value
+            try? await Task.detached(priority: .userInitiated) {
+                try EditorVoiceDocumentService.recoverDX100PlayMode(
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel
+                )
+            }.value
             return (bank, true)
         }
     }

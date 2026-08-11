@@ -82,9 +82,11 @@ enum EditorVoiceDocumentService {
         preflightDelay: TimeInterval = 0.35
     ) throws -> DX100VoiceBankData {
         let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
+        let currentVoiceRequest = try DX100ModuleServices.shared.voiceService.singleVoiceDumpRequest(channel: systemChannel)
         var lastError: Error?
+        let preflightDelays: [TimeInterval] = [preflightDelay, max(preflightDelay, 0.6), max(preflightDelay, 1.0)]
 
-        for _ in 1...max(1, attempts) {
+        for attemptIndex in 0..<max(1, attempts) {
             do {
                 try sendDX100SwitchPress(
                     switchNumber: 27,
@@ -92,7 +94,20 @@ enum EditorVoiceDocumentService {
                     systemChannel: systemChannel,
                     releaseDelay: 0.1
                 )
-                Thread.sleep(forTimeInterval: preflightDelay)
+                let attemptDelay = attemptIndex < preflightDelays.count ? preflightDelays[attemptIndex] : preflightDelays.last!
+                Thread.sleep(forTimeInterval: attemptDelay)
+
+                // A successful single-voice SysEx round trip often "primes" the DX100's
+                // receive/transmit state before asking for the larger 32-voice bulk dump.
+                _ = try? FB01MIDI.sendAndReceive(
+                    [currentVoiceRequest],
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    timeout: min(timeout, 2.0),
+                    maxMessages: 1,
+                    delayBetweenMessages: 0
+                )
+                Thread.sleep(forTimeInterval: 0.12)
 
                 let responseMessages = try FB01MIDI.sendAndReceive(
                     [request],
@@ -108,6 +123,11 @@ enum EditorVoiceDocumentService {
                 return try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
             } catch {
                 lastError = error
+                try? recoverDX100PlayMode(
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    settleDelay: 0.1
+                )
                 Thread.sleep(forTimeInterval: 0.25)
             }
         }
