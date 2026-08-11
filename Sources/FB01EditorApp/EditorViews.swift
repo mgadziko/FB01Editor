@@ -162,6 +162,7 @@ struct VoiceSelectorCommands: View {
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.activeVoiceBankSelector) private var activeVoiceBankSelector
     @FocusedValue(\.activeFB01VoiceBankFileSelector) private var activeFB01VoiceBankFileSelector
+    @FocusedValue(\.activeDX100VoiceBankFileSelector) private var activeDX100VoiceBankFileSelector
 
     var body: some View {
         Menu(document.selectedDeviceCommandTitle(.showVoiceBank, fallback: "Show Voice Bank")) {
@@ -185,35 +186,59 @@ struct VoiceSelectorCommands: View {
 
         if document.supportsSelectedDeviceCommand(.storeVoiceBank) {
             Menu(document.selectedDeviceCommandTitle(.storeVoiceBank, fallback: "Store Bank")) {
-                ForEach(document.selectedDeviceWritableVoiceBanks, id: \.self) { targetBank in
-                    Button(document.selectedDeviceVoiceBankTitle(targetBank)) {
-                        if let selectorID = activeFB01VoiceBankFileSelector,
-                           let selector = workspace.fb01VoiceBankFileSelector(id: selectorID) {
-                            document.storeFB01VoiceBankFileSelectorToDevice(selector, targetBank: targetBank)
-                        } else if workspace.openFB01VoiceBankFileSelectors.count == 1,
-                                  let selector = workspace.openFB01VoiceBankFileSelectors.first {
-                            document.storeFB01VoiceBankFileSelectorToDevice(selector, targetBank: targetBank)
-                        } else if let sourceBank = activeVoiceBankSelector, sourceBank.device == .fb01 {
-                            document.storeVoiceBankFromSelector(sourceBank: sourceBank.bank, targetBank: targetBank)
+                if document.selectedEditorDevice == .dx100 {
+                    Button(document.selectedDeviceVoiceBankTitle(1)) {
+                        if let selectorID = activeDX100VoiceBankFileSelector,
+                           let selector = workspace.dx100VoiceBankFileSelector(id: selectorID) {
+                            document.storeDX100VoiceBankFileSelectorToDevice(selector)
+                        } else if workspace.openDX100VoiceBankFileSelectors.count == 1,
+                                  let selector = workspace.openDX100VoiceBankFileSelectors.first {
+                            document.storeDX100VoiceBankFileSelectorToDevice(selector)
+                        } else if let sourceBank = activeVoiceBankSelector, sourceBank.device == .dx100 {
+                            document.storeDX100VoiceBankFromSelector(sourceBank: sourceBank.bank)
                         }
                     }
                     .disabled(
                         document.isBusy ||
                         (
-                            activeVoiceBankSelector == nil &&
-                            activeFB01VoiceBankFileSelector == nil &&
-                            workspace.openFB01VoiceBankFileSelectors.count != 1
+                            ((activeVoiceBankSelector == nil || activeVoiceBankSelector?.device != .dx100) &&
+                             activeDX100VoiceBankFileSelector == nil &&
+                             workspace.openDX100VoiceBankFileSelectors.count != 1)
                         )
                     )
+                } else {
+                    ForEach(document.selectedDeviceWritableVoiceBanks, id: \.self) { targetBank in
+                        Button(document.selectedDeviceVoiceBankTitle(targetBank)) {
+                            if let selectorID = activeFB01VoiceBankFileSelector,
+                               let selector = workspace.fb01VoiceBankFileSelector(id: selectorID) {
+                                document.storeFB01VoiceBankFileSelectorToDevice(selector, targetBank: targetBank)
+                            } else if workspace.openFB01VoiceBankFileSelectors.count == 1,
+                                      let selector = workspace.openFB01VoiceBankFileSelectors.first {
+                                document.storeFB01VoiceBankFileSelectorToDevice(selector, targetBank: targetBank)
+                            } else if let sourceBank = activeVoiceBankSelector, sourceBank.device == .fb01 {
+                                document.storeVoiceBankFromSelector(sourceBank: sourceBank.bank, targetBank: targetBank)
+                            }
+                        }
+                        .disabled(
+                            document.isBusy ||
+                            (
+                                activeVoiceBankSelector == nil &&
+                                activeFB01VoiceBankFileSelector == nil &&
+                                workspace.openFB01VoiceBankFileSelectors.count != 1
+                            )
+                        )
+                    }
                 }
             }
             .disabled(
                 document.isBusy ||
-                (
-                    activeVoiceBankSelector == nil &&
-                    activeFB01VoiceBankFileSelector == nil &&
-                    workspace.openFB01VoiceBankFileSelectors.count != 1
-                )
+                (document.selectedEditorDevice == .dx100
+                    ? (((activeVoiceBankSelector == nil || activeVoiceBankSelector?.device != .dx100) &&
+                        activeDX100VoiceBankFileSelector == nil &&
+                        workspace.openDX100VoiceBankFileSelectors.count != 1))
+                    : (activeVoiceBankSelector == nil &&
+                       activeFB01VoiceBankFileSelector == nil &&
+                       workspace.openFB01VoiceBankFileSelectors.count != 1))
             )
         }
     }
@@ -281,6 +306,9 @@ struct VoiceBankSelectorWindow: View {
         .background(WindowIdentifierSetter(
             identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: selection),
             title: bankTitle
+        ))
+        .background(ContentSizedWindowConfigurator(
+            contentSize: CGSize(width: layout.windowWidth, height: layout.minimumWindowHeight)
         ))
         .focusedSceneValue(\.activeVoiceBankSelector, selection)
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
@@ -360,6 +388,9 @@ struct DX100VoiceBankFileSelectorWindow: View {
         .background(WindowIdentifierSetter(
             identifier: EditorDocumentWorkspace.dx100VoiceBankFileSelectorWindowIdentifier(for: selector.id),
             title: selector.title
+        ))
+        .background(ContentSizedWindowConfigurator(
+            contentSize: CGSize(width: layout.windowWidth, height: layout.minimumWindowHeight)
         ))
         .focusedSceneValue(\.activeDX100VoiceBankFileSelector, selector.id)
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
@@ -2169,6 +2200,43 @@ struct MainWindowSizeConfigurator: NSViewRepresentable {
         frame.origin.x = min(max(frame.origin.x, visibleFrame.minX + 8), visibleFrame.maxX - frame.width - 8)
         frame.origin.y = min(max(frame.origin.y, visibleFrame.minY + 8), visibleFrame.maxY - frame.height - 8)
         window.setFrame(frame, display: true)
+    }
+}
+
+struct ContentSizedWindowConfigurator: NSViewRepresentable {
+    var contentSize: CGSize
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            configure(window: view.window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            configure(window: nsView.window)
+        }
+    }
+
+    private func configure(window: NSWindow?) {
+        guard let window else {
+            return
+        }
+
+        let screenVisibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame
+        let visibleContentSize = screenVisibleFrame.map {
+            CGSize(width: max(420, $0.width - 32), height: max(240, $0.height - 32))
+        } ?? contentSize
+        let clampedContentSize = CGSize(
+            width: min(contentSize.width, visibleContentSize.width),
+            height: min(contentSize.height, visibleContentSize.height)
+        )
+
+        window.contentMinSize = clampedContentSize
+        window.contentMaxSize = clampedContentSize
+        window.setContentSize(clampedContentSize)
     }
 }
 

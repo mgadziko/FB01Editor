@@ -55,6 +55,33 @@ enum EditorVoiceDocumentService {
         Thread.sleep(forTimeInterval: selectionDelay)
     }
 
+    static func prepareDX100AssistedCurrentBankVoiceRecall(
+        voiceNumber: Int,
+        destinationIndex: Int,
+        systemChannel: Int,
+        playFirst: Bool = true,
+        selectionDelay: TimeInterval = 0.35,
+        releaseDelay: TimeInterval = 0.1
+    ) throws {
+        if playFirst {
+            try sendDX100SwitchPress(
+                switchNumber: 27,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel,
+                releaseDelay: releaseDelay
+            )
+            Thread.sleep(forTimeInterval: selectionDelay)
+        }
+
+        try sendDX100SwitchPress(
+            switchNumber: voiceNumber,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            releaseDelay: releaseDelay
+        )
+        Thread.sleep(forTimeInterval: selectionDelay)
+    }
+
     static func fetchDX100CurrentVoice(
         sourceIndex: Int,
         destinationIndex: Int,
@@ -320,6 +347,34 @@ enum EditorVoiceDocumentService {
         Thread.sleep(forTimeInterval: 0.35)
 
         progress?(.sendingBank(slotIndex: slotIndex))
+        try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+        if settleDelay > 0 {
+            Thread.sleep(forTimeInterval: settleDelay)
+        }
+    }
+
+    static func writeDX100InternalBank(
+        _ bank: DX100VoiceBankData,
+        destinationIndex: Int,
+        systemChannel: Int,
+        settleDelay: TimeInterval = 0.4
+    ) throws {
+        let messages = try DX100ModuleServices.shared.voiceService.voiceBankMessages(
+            for: bank,
+            channel: systemChannel
+        )
+        guard let loadMessage = messages.first else {
+            throw FB01AppError.message("Forest could not build a DX100 Internal bank store message.")
+        }
+
+        try sendDX100SwitchPress(
+            switchNumber: 27,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            releaseDelay: 0.1
+        )
+        Thread.sleep(forTimeInterval: 0.35)
+
         try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
         if settleDelay > 0 {
             Thread.sleep(forTimeInterval: settleDelay)

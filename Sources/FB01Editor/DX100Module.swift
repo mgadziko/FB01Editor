@@ -160,7 +160,7 @@ public struct DX100SynthModule: SynthModule {
             supportsLoadFromFile: true,
             supportsSaveToFile: true,
             supportsFetchFromDevice: true,
-            supportsStoreToDevice: false
+            supportsStoreToDevice: true
         ),
     ]
 
@@ -169,6 +169,11 @@ public struct DX100SynthModule: SynthModule {
             kind: .showVoiceBank,
             menu: .voice,
             displayName: "Show Voice Bank"
+        ),
+        SynthModuleCommandDescriptor(
+            kind: .storeVoiceBank,
+            menu: .voice,
+            displayName: "Store Bank"
         ),
         SynthModuleCommandDescriptor(
             kind: .refreshDeviceCache,
@@ -238,7 +243,7 @@ public struct DX100SynthModule: SynthModule {
         columns: 4,
         rowsPerColumn: 6,
         buttonWidth: 136,
-        minimumWindowHeight: 390
+        minimumWindowHeight: 328
     )
     public let configurationBankSelectorLayout: SynthSelectorGridLayout? = nil
     public let fullDeviceCacheScope = SynthDeviceCacheScope(

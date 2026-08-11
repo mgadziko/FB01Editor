@@ -317,9 +317,24 @@ func confirmDX100AssistedVoiceRecall(bankTitle: String, voiceNumber: Int) -> Boo
     let alert = NSAlert()
     alert.messageText = "Confirm DX100 Voice \(voiceNumber)"
     alert.informativeText = """
-    Forest selected \(bankTitle) Voice \(voiceNumber) on the DX100.
+    Forest is capturing \(bankTitle) one voice at a time.
 
-    Press front-panel Voice \(voiceNumber) on the synth once, then click Continue.
+    Press PLAY if needed, then select \(bankTitle) Voice \(voiceNumber) on the DX100 front panel, then click Continue.
+    """
+    alert.alertStyle = .informational
+    alert.addButton(withTitle: "Continue")
+    alert.addButton(withTitle: "Cancel")
+    return alert.runModal() == .alertFirstButtonReturn
+}
+
+@MainActor
+func confirmDX100AssistedBankCaptureStart(bankTitle: String) -> Bool {
+    let alert = NSAlert()
+    alert.messageText = "Prepare DX100 \(bankTitle)"
+    alert.informativeText = """
+    Forest will capture \(bankTitle) manually, one voice at a time.
+
+    Make sure the DX100 stays in PLAY mode. Forest will prompt you for Voice 1 through Voice 24 in order and capture each current-voice dump after you confirm the front-panel selection.
     """
     alert.alertStyle = .informational
     alert.addButton(withTitle: "Continue")
