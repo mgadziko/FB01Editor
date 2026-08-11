@@ -1,6 +1,8 @@
 import AppKit
+import CoreTransferable
 import FB01Editor
 import Foundation
+import UniformTypeIdentifiers
 
 enum EditorDocumentTemplates {
     static func voicePayload(systemChannel: Int = 0) -> SynthVoiceDocumentPayload<FB01VoiceData> {
@@ -111,6 +113,22 @@ struct RecentVoiceFetch: Codable, Identifiable, Equatable {
 struct DeviceVoiceBankWindowSelection: Hashable, Codable {
     var device: EditorDeviceSelection
     var bank: Int
+}
+
+struct VoiceBankDragPayload: Codable, Equatable {
+    var device: EditorDeviceSelection
+    var bank: Int
+    var slotIndex: Int
+}
+
+extension VoiceBankDragPayload: Transferable {
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: ForestDragTypes.voiceBankSlot)
+    }
+}
+
+enum ForestDragTypes {
+    static let voiceBankSlot = UTType(exportedAs: "com.quantumpenguin.forest-editor.voice-bank-slot")
 }
 
 struct RecentConfigurationFetch: Codable, Identifiable, Equatable {

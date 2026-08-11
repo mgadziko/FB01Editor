@@ -143,6 +143,9 @@ for single-voice documents, Internal-bank browsing, bank-file load/save, and
 live current-buffer editing, while broader DX bank recall/dump behavior remains
 under hardware investigation.
 
+For the current breakdown of shared 4-op voice parameters versus FB-01-only and
+DX100/27-only areas, see `Docs/FourOpCapabilityMatrix.md`.
+
 ## Files And Document Types
 
 The app supports module-owned document types and Finder icons for:

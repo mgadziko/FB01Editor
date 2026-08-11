@@ -2035,6 +2035,35 @@ final class DocumentModel: ObservableObject {
         deviceCacheStatus = "Updated \(selectedDeviceVoiceBankTitle(bank))"
     }
 
+    func swapCachedDX100Voices(inBank bank: Int, slotIndex: Int, with otherSlotIndex: Int) throws {
+        guard var voices = cachedDX100VoiceBanks[bank] else {
+            throw FB01AppError.message("\(selectedDeviceVoiceBankTitle(bank)) is not loaded yet.")
+        }
+        guard voices.indices.contains(slotIndex) else {
+            throw FB01AppError.message("Voice slot \(slotIndex + 1) is not available.")
+        }
+        guard voices.indices.contains(otherSlotIndex) else {
+            throw FB01AppError.message("Voice slot \(otherSlotIndex + 1) is not available.")
+        }
+        guard slotIndex != otherSlotIndex else {
+            return
+        }
+
+        voices.swapAt(slotIndex, otherSlotIndex)
+        cachedDX100VoiceBanks[bank] = voices
+
+        if var rawBank = cachedDX100RawVoiceBanks[bank] {
+            let firstVoice = voices[slotIndex]
+            let secondVoice = voices[otherSlotIndex]
+            rawBank = try rawBank.replacingVoice(atPackedVoiceIndex: slotIndex, with: firstVoice)
+            rawBank = try rawBank.replacingVoice(atPackedVoiceIndex: otherSlotIndex, with: secondVoice)
+            cachedDX100RawVoiceBanks[bank] = rawBank
+        }
+
+        voiceBankSelectorRevision += 1
+        deviceCacheStatus = "Reordered \(selectedDeviceVoiceBankTitle(bank))"
+    }
+
     func cacheDX100VoiceBank(_ voices: [DX100VoiceData], bank: Int, rawBank: DX100VoiceBankData? = nil) {
         cachedDX100VoiceBanks[bank] = voices
         if let rawBank {

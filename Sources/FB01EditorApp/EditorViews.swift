@@ -268,6 +268,7 @@ struct VoiceBankSelectorWindow: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var windowTitle: String = ""
+    @State private var activeDropTargetID: String?
 
     var body: some View {
         let bank = selection.bank
@@ -281,12 +282,27 @@ struct VoiceBankSelectorWindow: View {
             layout: layout,
             showsTitle: false
         ) {
-            selectorGrid(items: items, layout: layout) { item in
-                SelectorGridButton(number: item.displayNumber, title: item.title, buttonWidth: layout.buttonWidth) {
-                    openVoiceDocument(item)
+            if allowsInternalDXSwapReorder {
+                DXInternalVoiceBankReorderGrid(
+                    items: items,
+                    layout: layout,
+                    isBusy: document.isBusy,
+                    openVoiceDocument: openVoiceDocument,
+                    payloadForItem: { item in
+                        VoiceBankDragPayload(
+                            device: selection.device,
+                            bank: selection.bank,
+                            slotIndex: item.zeroBasedVoiceNumber
+                        )
+                    },
+                    handleDrop: { payload, targetItem in
+                        handleVoiceBankDrop(payload: payload, targetItem: targetItem)
+                    }
+                )
+            } else {
+                selectorGrid(items: items, layout: layout) { item in
+                    voiceBankTile(item: item, layout: layout)
                 }
-                .disabled(document.isBusy)
-                .forestHoverHelp("Fetches \(item.fetchTitle) into a new Voice Document.")
             }
         }
         .task(id: bank) {
@@ -357,6 +373,187 @@ struct VoiceBankSelectorWindow: View {
                 recentTitle: item.fetchTitle
             )
         }
+    }
+
+    private var allowsInternalDXSwapReorder: Bool {
+        selection.device == .dx100 && selection.bank == 1
+    }
+
+    @ViewBuilder
+    private func voiceBankTile(item: VoiceBankSelectorItem, layout: SynthSelectorGridLayout) -> some View {
+        SelectorGridButton(
+            number: item.displayNumber,
+            title: item.title,
+            buttonWidth: layout.buttonWidth,
+            interactionStyle: .button
+        ) {
+            openVoiceDocument(item)
+        }
+        .disabled(document.isBusy)
+        .forestHoverHelp("Fetches \(item.fetchTitle) into a new Voice Document.")
+    }
+
+    private func dropTargetBinding(for item: VoiceBankSelectorItem) -> Binding<Bool>? {
+        guard allowsInternalDXSwapReorder else {
+            return nil
+        }
+        return Binding(
+            get: { activeDropTargetID == item.id },
+            set: { isTargeted in
+                activeDropTargetID = isTargeted ? item.id : nil
+            }
+        )
+    }
+
+    private func handleVoiceBankDrop(payload: VoiceBankDragPayload, targetItem: VoiceBankSelectorItem) -> Bool {
+        guard allowsInternalDXSwapReorder else {
+            return false
+        }
+        guard payload.device == .dx100,
+              payload.bank == selection.bank,
+              payload.slotIndex != targetItem.zeroBasedVoiceNumber else {
+            activeDropTargetID = nil
+            return false
+        }
+
+        do {
+            try document.swapCachedDX100Voices(
+                inBank: selection.bank,
+                slotIndex: payload.slotIndex,
+                with: targetItem.zeroBasedVoiceNumber
+            )
+            activeDropTargetID = nil
+            errorMessage = nil
+            document.statusMessage = "Swapped DX100 Internal voices \(payload.slotIndex + 1) and \(targetItem.displayNumber) in Forest."
+        } catch {
+            activeDropTargetID = nil
+            errorMessage = "DX100 Internal rearrange failed: \(error)"
+        }
+
+        return true
+    }
+}
+
+private struct DXInternalVoiceBankReorderGrid: View {
+    var items: [VoiceBankSelectorItem]
+    var layout: SynthSelectorGridLayout
+    var isBusy: Bool
+    var openVoiceDocument: (VoiceBankSelectorItem) -> Void
+    var payloadForItem: (VoiceBankSelectorItem) -> VoiceBankDragPayload
+    var handleDrop: (VoiceBankDragPayload, VoiceBankSelectorItem) -> Bool
+
+    @State private var slotFrames: [String: CGRect] = [:]
+    @State private var dragState: DXInternalVoiceBankDragState?
+    @State private var activeDropTargetID: String?
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            selectorGrid(items: items, layout: layout) { item in
+                tile(item)
+                    .opacity(dragState?.itemID == item.id ? 0.18 : 1)
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.preference(
+                                key: DXInternalVoiceBankSlotFramePreferenceKey.self,
+                                value: [item.id: proxy.frame(in: .named("DXInternalVoiceBankGrid"))]
+                            )
+                        }
+                    )
+            }
+
+            if let dragState,
+               let item = items.first(where: { $0.id == dragState.itemID }),
+               let frame = slotFrames[item.id] {
+                SelectorGridButton(
+                    number: item.displayNumber,
+                    title: item.title,
+                    buttonWidth: layout.buttonWidth,
+                    isDropTarget: false,
+                    interactionStyle: .gesture
+                ) { }
+                .allowsHitTesting(false)
+                .frame(width: frame.width, height: frame.height)
+                .position(
+                    x: frame.midX + dragState.translation.width,
+                    y: frame.midY + dragState.translation.height
+                )
+                .shadow(radius: 6, y: 3)
+                .zIndex(10)
+            }
+        }
+        .coordinateSpace(name: "DXInternalVoiceBankGrid")
+        .onPreferenceChange(DXInternalVoiceBankSlotFramePreferenceKey.self) { slotFrames = $0 }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, 18)
+    }
+
+    private func tile(_ item: VoiceBankSelectorItem) -> some View {
+        SelectorGridButton(
+            number: item.displayNumber,
+            title: item.title,
+            buttonWidth: layout.buttonWidth,
+            isDropTarget: activeDropTargetID == item.id,
+            interactionStyle: .gesture
+        ) {
+            guard !isBusy else { return }
+            openVoiceDocument(item)
+        }
+        .forestHoverHelp("Fetches \(item.fetchTitle) into a new Voice Document.")
+        .gesture(dragGesture(for: item))
+        .allowsHitTesting(!isBusy)
+    }
+
+    private func dragGesture(for item: VoiceBankSelectorItem) -> some Gesture {
+        DragGesture(minimumDistance: 4, coordinateSpace: .named("DXInternalVoiceBankGrid"))
+            .onChanged { value in
+                guard let origin = slotFrames[item.id], !isBusy else { return }
+                dragState = DXInternalVoiceBankDragState(
+                    itemID: item.id,
+                    translation: value.translation
+                )
+                activeDropTargetID = dropTargetID(
+                    for: CGPoint(
+                        x: origin.midX + value.translation.width,
+                        y: origin.midY + value.translation.height
+                    ),
+                    excluding: item.id
+                )
+            }
+            .onEnded { value in
+                defer {
+                    dragState = nil
+                    activeDropTargetID = nil
+                }
+                guard let origin = slotFrames[item.id], !isBusy else { return }
+                let location = CGPoint(
+                    x: origin.midX + value.translation.width,
+                    y: origin.midY + value.translation.height
+                )
+                guard let targetID = dropTargetID(for: location, excluding: item.id),
+                      let targetItem = items.first(where: { $0.id == targetID }) else {
+                    return
+                }
+                _ = handleDrop(payloadForItem(item), targetItem)
+            }
+    }
+
+    private func dropTargetID(for location: CGPoint, excluding sourceID: String) -> String? {
+        slotFrames.first { id, frame in
+            id != sourceID && frame.contains(location)
+        }?.key
+    }
+}
+
+private struct DXInternalVoiceBankDragState {
+    var itemID: String
+    var translation: CGSize
+}
+
+private struct DXInternalVoiceBankSlotFramePreferenceKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 
@@ -595,35 +792,52 @@ private struct SelectorWindowLayout<Content: View>: View {
 }
 
 private struct SelectorGridButton: View {
+    enum InteractionStyle {
+        case button
+        case gesture
+    }
+
     var number: Int
     var title: String
     var buttonWidth: Double
+    var isDropTarget: Bool = false
+    var interactionStyle: InteractionStyle = .button
     var action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Text("\(number)")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24, alignment: .trailing)
-                Text(title)
-                    .font(.body.weight(.semibold))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .frame(width: CGFloat(buttonWidth), alignment: .leading)
-            .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 6))
+        let tileContent = HStack(spacing: 8) {
+            Text("\(number)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 24, alignment: .trailing)
+            Text(title)
+                .font(.body.weight(.semibold))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .frame(width: CGFloat(buttonWidth), alignment: .leading)
+        .background(Color.secondary.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isDropTarget ? Color.accentColor.opacity(0.9) : Color.secondary.opacity(0.18), lineWidth: isDropTarget ? 2 : 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 6))
+
+        Group {
+            switch interactionStyle {
+            case .button:
+                Button(action: action) {
+                    tileContent
+                }
+                .buttonStyle(.plain)
+            case .gesture:
+                tileContent
+                    .onTapGesture(perform: action)
+            }
+        }
     }
 }
 
