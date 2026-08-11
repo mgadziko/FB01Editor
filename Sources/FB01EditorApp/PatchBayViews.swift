@@ -582,7 +582,7 @@ private struct FMPatchBayLayout {
     let outputPoint: CGPoint
     let feedbackControlCenter: CGPoint
 
-    static let moduleSize = CGSize(width: 390, height: 1240)
+    static let moduleSize = CGSize(width: 390, height: 1264)
     static let margin: CGFloat = 170
     static let horizontalGap: CGFloat = 96
     static let verticalGap: CGFloat = 120
@@ -1127,7 +1127,7 @@ struct FMPatchOperatorModule: View {
                 Spacer()
             }
             .padding(.top, 8)
-            .padding(.bottom, 20)
+            .padding(.bottom, 32)
         }
         .padding(12)
         .frame(
