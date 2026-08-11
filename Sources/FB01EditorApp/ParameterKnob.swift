@@ -179,6 +179,7 @@ enum ControlHoverText {
 }
 
 struct ParameterKnob: View {
+    @Environment(\.isEnabled) private var isEnabled
     var label: String
     @Binding var value: Int
     var range: ClosedRange<Int>
@@ -187,15 +188,16 @@ struct ParameterKnob: View {
     var displayTextProvider: ((Int) -> String)?
     var helpText: String?
     var isModified: Bool = false
+    var disabledCaption: String?
 
     @State private var dragStartValue: Int?
 
     var body: some View {
         VStack(spacing: 5) {
-            SevenSegmentDisplay(text: formattedDisplayText)
+            SevenSegmentDisplay(text: formattedDisplayText, isEnabled: isEnabled)
                 .frame(width: width, height: 24)
 
-            KnobFace(normalizedValue: normalizedValue)
+            KnobFace(normalizedValue: normalizedValue, isEnabled: isEnabled)
                 .frame(width: knobSize, height: knobSize)
                 .gesture(
                     DragGesture(minimumDistance: 0)
@@ -221,16 +223,30 @@ struct ParameterKnob: View {
                 .accessibilityLabel(label)
                 .accessibilityValue("\(value)")
 
-            Text(label)
+            Text(displayLabel)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(isModified ? Color.orange : Color.primary)
+                .foregroundStyle(labelColor)
                 .multilineTextAlignment(.center)
-                .lineLimit(2)
+                .lineLimit(3)
                 .minimumScaleFactor(0.75)
-                .frame(width: width, height: 28, alignment: .top)
+                .frame(width: width, height: 40, alignment: .top)
         }
         .frame(width: width)
         .forestHoverHelp(helpText ?? ControlHoverText.knob(label: label))
+    }
+
+    private var labelColor: Color {
+        if !isEnabled {
+            return .gray
+        }
+        return isModified ? .orange : .primary
+    }
+
+    private var displayLabel: String {
+        guard !isEnabled, let disabledCaption, !disabledCaption.isEmpty else {
+            return label
+        }
+        return "\(label)\n\(disabledCaption)"
     }
 
     private var normalizedValue: Double {
@@ -304,30 +320,32 @@ struct ReadOnlyLEDValue: View {
 }
 
 struct RockerSwitch: View {
+    @Environment(\.isEnabled) private var isEnabled
     var label: String
     @Binding var isOn: Bool
     var width: CGFloat = 58
     var height: CGFloat = 68
     var helpText: String?
     var isModified: Bool = false
+    var disabledCaption: String?
 
     var body: some View {
         Button {
             isOn.toggle()
         } label: {
             VStack(spacing: 5) {
-                RockerSwitchFace(isOn: isOn)
+                RockerSwitchFace(isOn: isOn, isEnabled: isEnabled)
                     .frame(width: width * 0.72, height: height)
 
-                Text(label)
+                Text(displayLabel)
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(isModified ? Color.orange : Color.primary)
+                    .foregroundStyle(labelColor)
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .minimumScaleFactor(0.75)
-                    .frame(width: width, height: 28, alignment: .top)
+                    .frame(width: width, height: 40, alignment: .top)
             }
-            .frame(width: width, height: height + 33, alignment: .top)
+            .frame(width: width, height: height + 45, alignment: .top)
             .fixedSize()
             .contentShape(Rectangle())
         }
@@ -336,10 +354,25 @@ struct RockerSwitch: View {
         .accessibilityValue(isOn ? "On" : "Off")
         .forestHoverHelp(helpText ?? ControlHoverText.toggle(label: label))
     }
+
+    private var labelColor: Color {
+        if !isEnabled {
+            return .gray
+        }
+        return isModified ? .orange : .primary
+    }
+
+    private var displayLabel: String {
+        guard !isEnabled, let disabledCaption, !disabledCaption.isEmpty else {
+            return label
+        }
+        return "\(label)\n\(disabledCaption)"
+    }
 }
 
 private struct RockerSwitchFace: View {
     var isOn: Bool
+    var isEnabled: Bool
 
     var body: some View {
         GeometryReader { proxy in
@@ -350,30 +383,43 @@ private struct RockerSwitchFace: View {
 
             ZStack {
                 bezel
-                    .fill(Color(red: 0.05, green: 0.06, blue: 0.06))
-                    .overlay(bezel.stroke(Color.white.opacity(0.16), lineWidth: 1))
+                    .fill(isEnabled ? Color(red: 0.05, green: 0.06, blue: 0.06) : Color(red: 0.08, green: 0.08, blue: 0.08))
+                    .overlay(bezel.stroke(Color.white.opacity(isEnabled ? 0.16 : 0.08), lineWidth: 1))
                     .shadow(color: .black.opacity(0.65), radius: 3, x: 0, y: 2)
 
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(isOn ? Color(red: 0.03, green: 0.56, blue: 0.24) : Color(red: 0.07, green: 0.13, blue: 0.09))
+                    .fill(
+                        isEnabled
+                        ? (isOn ? Color(red: 0.03, green: 0.56, blue: 0.24) : Color(red: 0.07, green: 0.13, blue: 0.09))
+                        : Color(red: 0.10, green: 0.12, blue: 0.11)
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 5)
-                            .stroke(isOn ? Color.green.opacity(0.75) : Color.white.opacity(0.08), lineWidth: 1)
+                            .stroke(
+                                isEnabled
+                                ? (isOn ? Color.green.opacity(0.75) : Color.white.opacity(0.08))
+                                : Color.white.opacity(0.08),
+                                lineWidth: 1
+                            )
                     )
-                    .shadow(color: isOn ? Color.green.opacity(0.70) : .clear, radius: 7)
+                    .shadow(color: isEnabled && isOn ? Color.green.opacity(0.70) : .clear, radius: 7)
                     .frame(width: upperRect.width, height: upperRect.height)
                     .position(x: upperRect.midX, y: upperRect.midY)
 
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(isOn ? Color(red: 0.02, green: 0.08, blue: 0.04) : Color(red: 0.04, green: 0.05, blue: 0.05))
+                    .fill(
+                        isEnabled
+                        ? (isOn ? Color(red: 0.02, green: 0.08, blue: 0.04) : Color(red: 0.04, green: 0.05, blue: 0.05))
+                        : Color(red: 0.05, green: 0.05, blue: 0.05)
+                    )
                     .overlay(
                         RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color.white.opacity(isOn ? 0.05 : 0.15), lineWidth: 1)
+                            .stroke(Color.white.opacity(isEnabled ? (isOn ? 0.05 : 0.15) : 0.10), lineWidth: 1)
                     )
                     .frame(width: lowerRect.width, height: lowerRect.height)
                     .position(x: lowerRect.midX, y: lowerRect.midY)
 
-                if isOn {
+                if isEnabled && isOn {
                     Circle()
                         .stroke(Color.white.opacity(0.76), lineWidth: 2)
                         .frame(width: size.width * 0.22, height: size.width * 0.22)
@@ -386,7 +432,7 @@ private struct RockerSwitchFace: View {
                 }
 
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.white.opacity(isOn ? 0.12 : 0.22))
+                    .fill(Color.white.opacity(isEnabled ? (isOn ? 0.12 : 0.22) : 0.14))
                     .frame(width: lowerRect.width * 0.48, height: 3)
                     .position(x: lowerRect.midX, y: lowerRect.midY - lowerRect.height * 0.10)
             }
@@ -396,6 +442,7 @@ private struct RockerSwitchFace: View {
 
 private struct KnobFace: View {
     var normalizedValue: Double
+    var isEnabled: Bool
 
     var body: some View {
         GeometryReader { proxy in
@@ -413,31 +460,31 @@ private struct KnobFace: View {
                     .fill(
                         RadialGradient(
                             colors: [
-                                Color(red: 0.33, green: 0.37, blue: 0.39),
-                                Color(red: 0.14, green: 0.16, blue: 0.18),
+                                isEnabled ? Color(red: 0.33, green: 0.37, blue: 0.39) : Color(red: 0.25, green: 0.27, blue: 0.28),
+                                isEnabled ? Color(red: 0.14, green: 0.16, blue: 0.18) : Color(red: 0.12, green: 0.13, blue: 0.14),
                             ],
                             center: .topLeading,
                             startRadius: 2,
                             endRadius: size * 0.62
                         )
                     )
-                    .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 1.2))
+                    .overlay(Circle().stroke(Color.white.opacity(isEnabled ? 0.18 : 0.10), lineWidth: 1.2))
                     .shadow(color: .black.opacity(0.55), radius: 3, x: 0, y: 2)
 
                 Circle()
                     .trim(from: 0.125, to: 0.875)
-                    .stroke(Color.white.opacity(0.18), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .stroke(Color.white.opacity(isEnabled ? 0.18 : 0.08), style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(90))
                     .frame(width: size * 0.92, height: size * 0.92)
 
                 Rectangle()
-                    .fill(Color.white.opacity(0.76))
+                    .fill(Color.white.opacity(isEnabled ? 0.76 : 0.35))
                     .frame(width: 2.5, height: size * 0.35)
                     .offset(y: -size * 0.18)
                     .rotationEffect(angle)
 
                 Circle()
-                    .fill(Color.white.opacity(0.06))
+                    .fill(Color.white.opacity(isEnabled ? 0.06 : 0.03))
                     .frame(width: size * 0.58, height: size * 0.58)
             }
             .frame(width: rect.width, height: rect.height)
@@ -448,21 +495,22 @@ private struct KnobFace: View {
 
 private struct SevenSegmentDisplay: View {
     var text: String
+    var isEnabled: Bool = true
 
     var body: some View {
         HStack(spacing: 3) {
             ForEach(Array(displayCharacters.enumerated()), id: \.offset) { _, character in
-                SevenSegmentCharacter(character: character)
+                SevenSegmentCharacter(character: character, isEnabled: isEnabled)
             }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 4)
-                .fill(Color(red: 0.03, green: 0.05, blue: 0.04))
+                .fill(isEnabled ? Color(red: 0.03, green: 0.05, blue: 0.04) : Color(red: 0.06, green: 0.06, blue: 0.06))
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(Color.green.opacity(0.22), lineWidth: 1)
+                        .stroke(isEnabled ? Color.green.opacity(0.22) : Color.gray.opacity(0.35), lineWidth: 1)
                 )
         )
     }
@@ -474,18 +522,19 @@ private struct SevenSegmentDisplay: View {
 
 private struct SevenSegmentCharacter: View {
     var character: Character
+    var isEnabled: Bool
 
     var body: some View {
         GeometryReader { proxy in
             let segments = activeSegments(for: character)
-            let inactiveColor = Color.green.opacity(0.10)
-            let activeColor = Color(red: 0.43, green: 1.0, blue: 0.12)
+            let inactiveColor = isEnabled ? Color.green.opacity(0.10) : Color.gray.opacity(0.10)
+            let activeColor = isEnabled ? Color(red: 0.43, green: 1.0, blue: 0.12) : Color.gray.opacity(0.60)
 
             ZStack {
                 ForEach(SevenSegment.allCases, id: \.self) { segment in
                     segment.path(in: proxy.size)
                         .fill(segments.contains(segment) ? activeColor : inactiveColor)
-                        .shadow(color: segments.contains(segment) ? activeColor.opacity(0.45) : .clear, radius: 2)
+                        .shadow(color: segments.contains(segment) && isEnabled ? activeColor.opacity(0.45) : .clear, radius: 2)
                 }
             }
         }

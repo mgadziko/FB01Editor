@@ -428,7 +428,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     var linkedBankWindowStoreTitle: String? {
-        "Store Voice to Open Bank Window (Forest Only)..."
+        sourceDevice == .dx100
+            ? "Store Voice to Internal Bank Document..."
+            : "Store Voice to Open Bank Window (Forest Only)..."
     }
 
     func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
@@ -480,7 +482,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.directoryURL = preferredEditorSaveDirectoryURL()
         panel.nameFieldStringValue = "\(safeEditorFileName(displayName, fallback: "voice")).\(defaultVoiceFileExtension)"
         panel.message = "Save this voice document to a voice file."
-        panel.prompt = "Save Voice to File"
+        panel.prompt = "Save Current Voice Document to Voice File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return
@@ -500,7 +502,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
         panel.message = "Load a voice file into a new voice document window."
-        panel.prompt = "Load Voice from File"
+        panel.prompt = "Load Voice Document from Voice File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil
@@ -535,10 +537,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.directoryURL = preferredEditorLoadDirectoryURL()
         if preferredDevice == .dx100 {
             panel.message = "Load a DX100 voice bank file from disk, then choose one of its 24 displayed voices to open in a new voice document window."
-            panel.prompt = "Load DX100 Voice Bank File"
+            panel.prompt = "Load Voice Bank Document from Voice Bank File"
         } else {
             panel.message = "Load a voice bank file and choose one voice to open in a new voice document window."
-            panel.prompt = "Load Voice Bank from File"
+            panel.prompt = "Load Voice Bank Document from Voice Bank File"
         }
 
         guard panel.runModal() == .OK, let url = panel.url else {
@@ -589,7 +591,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         panel.canChooseDirectories = false
         panel.directoryURL = preferredEditorLoadDirectoryURL()
         panel.message = "Load an FB-01 voice bank file from disk and open it as a bank window."
-        panel.prompt = "Load Voice Bank from File"
+        panel.prompt = "Load Voice Bank Document from Voice Bank File"
 
         guard panel.runModal() == .OK, let url = panel.url else {
             return nil
@@ -1171,60 +1173,40 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     try? await Task.detached(priority: .userInitiated) {
                         try EditorVoiceDocumentService.recoverDX100PlayMode(
                             destinationIndex: destinationIndex,
-                            systemChannel: systemChannel
+                            systemChannel: systemChannel,
+                            settleDelay: 0.45
                         )
                     }.value
 
                     progressPanel.update(
-                        message: "The voice is being stored. Please wait.\nVerifying DX100 Internal slot \(target.slotIndex + 1) by refetching the Internal bank..."
+                        message: "The voice is being stored. Please wait.\nReady to verify DX100 Internal slot \(target.slotIndex + 1) from a manual Internal bank dump..."
                     )
 
-                    try await Task.detached(priority: .userInitiated) {
-                        try EditorVoiceDocumentService.prepareDX100AssistedDeviceVoiceRecall(
-                            bank: 1,
-                            voiceNumber: target.slotIndex + 1,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel,
-                            selectionDelay: 0.15,
-                            releaseDelay: 0.08
-                        )
-                    }.value
-
                     let refreshedInternalBank: DX100VoiceBankData
-                    do {
-                        refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
-                            try EditorVoiceDocumentService.fetchDX100InternalBank(
-                                sourceIndex: sourceIndex,
-                                destinationIndex: destinationIndex,
-                                systemChannel: systemChannel
-                            )
-                        }.value
-                    } catch {
-                        guard shouldOfferDX100ManualInternalDumpFallback(device: device),
-                              confirmDX100ManualInternalDumpVerify(slotIndex: target.slotIndex, voiceName: voiceDisplayName) else {
-                            throw error
-                        }
-
-                        progressPanel.update(
-                            message: "The voice is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to verify slot \(target.slotIndex + 1)..."
-                        )
-
-                        refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
-                            try EditorVoiceDocumentService.receiveDX100InternalBankManually(sourceIndex: sourceIndex)
-                        }.value
+                    guard shouldOfferDX100ManualInternalDumpFallback(device: device),
+                          confirmDX100ManualInternalDumpVerify(slotIndex: target.slotIndex, voiceName: voiceDisplayName) else {
+                        throw FB01AppError.message("Manual DX100 verify was cancelled.")
                     }
+
+                    progressPanel.update(
+                        message: "The voice is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to verify slot \(target.slotIndex + 1)..."
+                    )
+
+                    refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.receiveDX100InternalBankManually(sourceIndex: sourceIndex)
+                    }.value
 
                     try? await Task.detached(priority: .userInitiated) {
                         try EditorVoiceDocumentService.recoverDX100PlayMode(
                             destinationIndex: destinationIndex,
-                            systemChannel: systemChannel
+                            systemChannel: systemChannel,
+                            settleDelay: 0.35
                         )
                     }.value
 
-                    let refreshedInternalVoices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
+                    var refreshedInternalVoices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
                         try? refreshedInternalBank.voice(atPackedVoiceIndex: index)
                     }
-                    device.cacheDX100VoiceBank(refreshedInternalVoices, bank: 1, rawBank: refreshedInternalBank)
                     guard refreshedInternalVoices.indices.contains(target.slotIndex) else {
                         throw FB01AppError.message("DX100 Internal slot \(target.slotIndex + 1) was not present in the refreshed bank.")
                     }
@@ -1232,11 +1214,32 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     let verifiedVoice = refreshedInternalVoices[target.slotIndex]
                     let exactMatch = translatedDXVoice.map { verifiedVoice == $0 } ?? false
                     let neutralMatch = verifiedVoice.fourOperatorVoice == neutralVoiceToStore
+                    let parameterMatchExcludingName = translatedDXVoice.map { expectedVoice in
+                        var verifiedBytes = verifiedVoice.bytes
+                        var expectedBytes = expectedVoice.bytes
+                        verifiedBytes.replaceSubrange(77..<87, with: Array(repeating: 0x20, count: DX100VoiceData.nameLength))
+                        expectedBytes.replaceSubrange(77..<87, with: Array(repeating: 0x20, count: DX100VoiceData.nameLength))
+                        return verifiedBytes == expectedBytes
+                    } ?? false
                     let nameMatch = translatedDXVoice.map {
                         verifiedVoice.name.trimmingCharacters(in: .whitespacesAndNewlines)
                         == $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
                     } ?? false
-                    guard exactMatch || neutralMatch || nameMatch else {
+                    let truncatedPrefixNameMatch = translatedDXVoice.map { expectedVoice in
+                        let verifiedName = verifiedVoice.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let expectedName = expectedVoice.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        return !verifiedName.isEmpty
+                            && !expectedName.isEmpty
+                            && (expectedName.hasPrefix(verifiedName) || verifiedName.hasPrefix(expectedName))
+                    } ?? false
+                    if let translatedDXVoice,
+                       parameterMatchExcludingName,
+                       truncatedPrefixNameMatch,
+                       refreshedInternalVoices.indices.contains(target.slotIndex) {
+                        refreshedInternalVoices[target.slotIndex] = translatedDXVoice
+                    }
+                    device.cacheDX100VoiceBank(refreshedInternalVoices, bank: 1, rawBank: refreshedInternalBank)
+                    guard exactMatch || neutralMatch || nameMatch || parameterMatchExcludingName || truncatedPrefixNameMatch else {
                         throw FB01AppError.message("DX100 Internal slot \(target.slotIndex + 1) did not match the edited voice after storing.")
                     }
 
@@ -1712,30 +1715,70 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     ) -> DX100DeviceBankStoreTarget? {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Store Voice to Open Bank Window"
-        alert.informativeText = "Choose which open DX100 bank window and which slot should receive this voice."
+        alert.messageText = "Store Voice to Internal Bank Document"
+        alert.informativeText = "Choose which slot in the open DX100 Internal Bank document should receive this voice."
         alert.addButton(withTitle: "Store")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
 
-        let accessory = FB01DeviceBankStoreAccessory(
-            banks: banks,
-            preferredOrigin: preferredOrigin.map {
-                FB01DeviceBankVoiceOrigin(bank: $0.bank, slotIndex: $0.slotIndex, bankTitle: $0.bankTitle)
-            },
-            voiceNameProvider: voiceNameProvider
-        )
-        alert.accessoryView = accessory
+        guard let bank = banks.first else {
+            return nil
+        }
 
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let selection = accessory.selection else {
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        stack.frame = NSRect(x: 0, y: 0, width: 520, height: 96)
+
+        let bankRow = NSStackView()
+        bankRow.orientation = .horizontal
+        bankRow.spacing = 8
+        bankRow.alignment = .centerY
+
+        let bankLabelTitle = NSTextField(labelWithString: "Bank window:")
+        bankLabelTitle.font = .systemFont(ofSize: NSFont.systemFontSize)
+        bankLabelTitle.alignment = .right
+        bankLabelTitle.frame.size.width = 92
+        bankLabelTitle.translatesAutoresizingMaskIntoConstraints = false
+        bankLabelTitle.widthAnchor.constraint(equalToConstant: 92).isActive = true
+
+        let bankLabel = NSTextField(labelWithString: bankTitleProvider(bank))
+        bankLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+
+        bankRow.addArrangedSubview(bankLabelTitle)
+        bankRow.addArrangedSubview(bankLabel)
+        stack.addArrangedSubview(bankRow)
+
+        let slotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        for slotIndex in 0..<DX100VoiceBankData.dx100DisplayedVoiceCount {
+            let name = voiceNameProvider(bank, slotIndex) ?? "Voice \(slotIndex + 1)"
+            slotPopup.addItem(withTitle: "\(slotIndex + 1) \(name)")
+        }
+        if let preferredOrigin, preferredOrigin.bank == bank {
+            slotPopup.selectItem(at: preferredOrigin.slotIndex)
+        } else {
+            slotPopup.selectItem(at: 0)
+        }
+        stack.addArrangedSubview(labelledEditorPopup(label: "Slot:", popup: slotPopup))
+
+        let note = NSTextField(wrappingLabelWithString: "If this voice came from the Internal Bank document, the original slot is preselected.")
+        note.textColor = .secondaryLabelColor
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        note.maximumNumberOfLines = 3
+        note.preferredMaxLayoutWidth = 500
+        stack.addArrangedSubview(note)
+
+        alert.accessoryView = stack
+
+        guard alert.runModal() == .alertFirstButtonReturn else {
             return nil
         }
 
         return DX100DeviceBankStoreTarget(
-            bank: selection.bank,
-            bankTitle: bankTitleProvider(selection.bank),
-            slotIndex: selection.slotIndex
+            bank: bank,
+            bankTitle: bankTitleProvider(bank),
+            slotIndex: slotPopup.indexOfSelectedItem
         )
     }
 

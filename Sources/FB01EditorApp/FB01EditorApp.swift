@@ -82,7 +82,7 @@ struct FB01EditorApplication: App {
     }
 
     var body: some Scene {
-        WindowGroup(AppStrings.editorDisplayName) {
+        WindowGroup("Forest Main View") {
             ContentView(document: document, workspace: documentWorkspace)
                 .frame(minWidth: 1080, minHeight: 760)
                 .onAppear {

@@ -3186,9 +3186,9 @@ struct VoiceDocumentWindow: View {
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
             kind: .voice,
             save: { document.save() },
-            saveTitle: "Save Voice to File",
+            saveTitle: "Save Current Voice Document to Voice File",
             saveAs: { document.saveAs() },
-            saveAsTitle: "Save Voice to File As...",
+            saveAsTitle: "Save Current Voice Document to Voice File",
             reset: { document.reset() },
             importFromDisk: { document.importFromDisk() },
             importFromDiskTitle: "Import Voice from File into Current Document...",

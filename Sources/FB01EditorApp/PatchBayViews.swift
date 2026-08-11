@@ -72,21 +72,19 @@ struct FMRoutingPatchBayView: View {
                     }
 
                     HStack(alignment: .top, spacing: 14) {
-                        if supportsUserCode {
-                            ParameterKnob(label: "User Code", value: $userCode, range: 0...255, isModified: userCode != savedVoice.userCode)
-                        }
+                        ParameterKnob(label: "User Code", value: $userCode, range: 0...255, isModified: userCode != savedVoice.userCode, disabledCaption: "FB-01 only")
+                            .disabled(!supportsUserCode)
                         ParameterKnob(label: "Transpose", value: $transpose, range: -128...127, isModified: transpose != savedNeutralVoice.transpose)
                     }
                 }
                 .frame(width: 238, alignment: .topLeading)
 
-                if supportsStereoOutputs {
-                    HStack(alignment: .top, spacing: 12) {
-                        RockerSwitch(label: "Left Output", isOn: $leftOutputEnabled, width: 70, height: 62, isModified: leftOutputEnabled != savedVoice.leftOutputEnabled)
-                        RockerSwitch(label: "Right Output", isOn: $rightOutputEnabled, width: 74, height: 62, isModified: rightOutputEnabled != savedVoice.rightOutputEnabled)
-                    }
-                    .padding(.top, 49)
+                HStack(alignment: .top, spacing: 12) {
+                    RockerSwitch(label: "Left Output", isOn: $leftOutputEnabled, width: 70, height: 62, isModified: leftOutputEnabled != savedVoice.leftOutputEnabled, disabledCaption: "FB-01 only")
+                    RockerSwitch(label: "Right Output", isOn: $rightOutputEnabled, width: 74, height: 62, isModified: rightOutputEnabled != savedVoice.rightOutputEnabled, disabledCaption: "FB-01 only")
                 }
+                .padding(.top, 49)
+                .disabled(!supportsStereoOutputs)
             }
         }
         .frame(minWidth: 430, maxWidth: 520, alignment: .topLeading)
@@ -113,9 +111,8 @@ struct FMRoutingPatchBayView: View {
                 WaveformPicker(selection: $lfoWaveform, isModified: lfoWaveform != savedNeutralVoice.lfoWaveform)
                     .frame(width: 342)
 
-                if supportsLoadLFOData {
-                    RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58, isModified: loadLFODataEnabled != savedVoice.loadLFODataEnabled)
-                }
+                RockerSwitch(label: "Load LFO Data", isOn: $loadLFODataEnabled, width: 76, height: 58, isModified: loadLFODataEnabled != savedVoice.loadLFODataEnabled, disabledCaption: "FB-01 only")
+                    .disabled(!supportsLoadLFOData)
                 RockerSwitch(label: "LFO Sync", isOn: $lfoSyncEnabled, width: 62, height: 58, isModified: lfoSyncEnabled != savedNeutralVoice.lfoSyncEnabled)
             }
         }
@@ -1032,6 +1029,7 @@ struct FMPatchOperatorModule: View {
     var select: () -> Void
     var updateNeutralOperator: ((Int, (inout FourOperatorVoiceOperatorData) -> Void) -> Void)? = nil
     var updateOperator: (FB01VoiceOperatorData) -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     private var operatorNumber: Int {
         FB01VoiceData.operatorNumber(forDataIndex: operatorData.index)
@@ -1068,9 +1066,8 @@ struct FMPatchOperatorModule: View {
                 LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                     ParameterKnob(label: frequencyRatioLabel, value: sharedOperatorBinding(neutralValue: { $0.oscillatorFrequencyControl }, projectedValue: { $0.multiple }, projectedUpdate: { try $0.settingMultiple($1) }, neutralUpdate: { $0.oscillatorFrequencyControl = $1 }), range: 0...15, helpText: frequencyRatioHelpText, isModified: sharedIsModified(neutral: { $0.oscillatorFrequencyControl }, projected: { $0.multiple }))
                     ParameterKnob(label: "Detune 1", value: sharedOperatorBinding(neutralValue: { $0.detune }, projectedValue: { $0.detune1 }, projectedUpdate: { try $0.settingDetune1($1) }, neutralUpdate: { $0.detune = $1 }), range: 0...7, isModified: sharedIsModified(neutral: { $0.detune }, projected: { $0.detune1 }))
-                    if supportsDetune2 {
-                        ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3, helpText: "FB-01 only. Adds a second detune stage for extra shimmer and thickness.", isModified: isModified(\.detune2))
-                    }
+                    ParameterKnob(label: "Detune 2", value: operatorBinding({ $0.detune2 }, update: { try $0.settingDetune2($1) }), range: 0...3, helpText: "FB-01 only. Adds a second detune stage for extra shimmer and thickness.", isModified: isModified(\.detune2), disabledCaption: "FB-01 only")
+                        .disabled(!supportsDetune2)
                 }
             }
 
@@ -1081,9 +1078,8 @@ struct FMPatchOperatorModule: View {
                 VStack(alignment: .leading, spacing: 10) {
                     LazyVGrid(columns: controlColumns, alignment: .leading, spacing: 10) {
                         ParameterKnob(label: "Total Level", value: sharedOperatorBinding(neutralValue: { $0.totalLevel }, projectedValue: { $0.totalLevel }, projectedUpdate: { try $0.settingTotalLevel($1) }, neutralUpdate: { $0.totalLevel = $1 }), range: 0...127, helpText: totalLevelHelpText, isModified: sharedIsModified(neutral: { $0.totalLevel }, projected: { $0.totalLevel }))
-                        if supportsTLAdjust {
-                            ParameterKnob(label: "Level Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, helpText: "FB-01 only. Adds a fine level trim for balancing this operator against the others.", isModified: isModified(\.totalLevelAdjust))
-                        }
+                        ParameterKnob(label: "Level Adjust", value: operatorBinding({ $0.totalLevelAdjust }, update: { try $0.settingTotalLevelAdjust($1) }), range: 0...15, helpText: "FB-01 only. Adds a fine level trim for balancing this operator against the others.", isModified: isModified(\.totalLevelAdjust), disabledCaption: "FB-01 only")
+                            .disabled(!supportsTLAdjust)
                         ParameterKnob(label: keyVelocityToLevelLabel, value: sharedOperatorBinding(neutralValue: { $0.keyVelocityLevelSensitivity }, projectedValue: { $0.velocitySensitivityForTotalLevel }, projectedUpdate: { try $0.settingVelocitySensitivityForTotalLevel($1) }, neutralUpdate: { $0.keyVelocityLevelSensitivity = $1 }), range: 0...7, helpText: keyVelocityToLevelHelpText, isModified: sharedIsModified(neutral: { $0.keyVelocityLevelSensitivity }, projected: { $0.velocitySensitivityForTotalLevel }))
                     }
 
@@ -1300,7 +1296,10 @@ struct FMPatchOperatorModule: View {
     }
 
     private var moduleFill: Color {
-        neutralOperatorData.isCarrier
+        if colorScheme == .light {
+            return Color.secondary.opacity(0.07)
+        }
+        return neutralOperatorData.isCarrier
             ? Color(red: 0.06, green: 0.20, blue: 0.09).opacity(0.75)
             : Color(red: 0.06, green: 0.11, blue: 0.22).opacity(0.75)
     }
@@ -1308,6 +1307,9 @@ struct FMPatchOperatorModule: View {
     private var moduleStroke: Color {
         if operatorEnabled {
             return Color.green.opacity(0.90)
+        }
+        if colorScheme == .light {
+            return Color.secondary.opacity(0.18)
         }
         return neutralOperatorData.isCarrier ? Color.green.opacity(0.24) : Color.blue.opacity(0.24)
     }

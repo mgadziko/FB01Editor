@@ -392,6 +392,8 @@ final class EditorProgressPanel {
         cancelButton.bezelStyle = .rounded
         cancelButton.target = self
         cancelButton.action = #selector(cancel)
+        cancelButton.keyEquivalent = "."
+        cancelButton.keyEquivalentModifierMask = [.command]
         cancelButton.isHidden = !showsCancelButton
         content.addSubview(cancelButton)
     }

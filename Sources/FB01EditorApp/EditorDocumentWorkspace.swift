@@ -104,12 +104,7 @@ struct EditorDocumentCommands: View {
     }
 
     private var loadVoiceBankFromFileTitle: String {
-        switch document.selectedEditorDevice {
-        case .dx100:
-            return "Load DX100 Voice Bank File..."
-        default:
-            return "Load Bank from File..."
-        }
+        "Load Voice Bank Document from Voice Bank File..."
     }
 
     private var selectedDeviceSupportsConfigurations: Bool {
@@ -168,7 +163,7 @@ struct EditorDocumentCommands: View {
 
         Divider()
 
-        Button("Load Voice from File...") {
+        Button("Load Voice Document from Voice File...") {
             if let id = workspace.loadVoiceDocument(preferredDevice: document.selectedEditorDevice) {
                 if let url = workspace.voiceDocument(id: id)?.fileURL {
                     document.rememberRecentLoadedVoiceFile(url)
@@ -214,7 +209,7 @@ struct EditorDocumentCommands: View {
             }
         }
 
-        Button("Save Bank to File...") {
+        Button("Save Current Voice Bank Document to Voice Bank File...") {
             if let selectorID = activeDX100VoiceBankFileSelector,
                let selector = workspace.dx100VoiceBankFileSelector(id: selectorID) {
                 document.saveDX100VoiceBankFile(selector)
@@ -241,7 +236,7 @@ struct EditorDocumentCommands: View {
         if selectedDeviceSupportsConfigurations {
             Divider()
 
-            Button("Load Configuration from File...") {
+            Button("Load Configuration Document from Configuration File...") {
                 if let id = workspace.loadConfigurationDocument() {
                     if let configurationDocument = workspace.configurationDocument(id: id),
                        let url = configurationDocument.fileURL {
@@ -296,16 +291,6 @@ struct EditorDocumentCommands: View {
         }
         .keyboardShortcut("s", modifiers: .command)
         .disabled(!canSaveFocusedDocumentOrLibrary)
-
-        Button(activeDocumentActions?.saveAsTitle ?? "Save Library to File As...") {
-            if let activeDocumentActions {
-                activeDocumentActions.saveAs()
-            } else {
-                document.saveSysEx()
-            }
-        }
-        .keyboardShortcut("s", modifiers: [.command, .shift])
-        .disabled(!canSaveFocusedDocumentOrLibraryAs)
 
         Button("Revert Document") {
             activeDocumentActions?.reset()
