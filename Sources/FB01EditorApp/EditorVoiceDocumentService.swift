@@ -3,7 +3,7 @@ import Foundation
 
 struct EditorFetchedVoiceDocument: Sendable {
     var neutralVoice: FourOperatorVoiceData
-    var voice: FB01VoiceData
+    var projectionOverlay: FB01VoiceProjectionOverlay
     var systemChannel: Int
     var title: String
     var sourceDevice: EditorDeviceSelection
@@ -203,7 +203,7 @@ enum EditorVoiceDocumentService {
             )
             return EditorFetchedVoiceDocument(
                 neutralVoice: result.voice.fourOperatorVoice,
-                voice: result.voice,
+                projectionOverlay: FB01VoiceProjectionOverlay(voice: result.voice),
                 systemChannel: result.systemChannel,
                 title: recentTitle ?? resolvedSource.title(),
                 sourceDevice: .fb01
@@ -218,7 +218,7 @@ enum EditorVoiceDocumentService {
                 )
                 return EditorFetchedVoiceDocument(
                     neutralVoice: fetched.voice.fourOperatorVoice,
-                    voice: try fetched.voice.fb01EditableVoice(),
+                    projectionOverlay: try EditorVoiceProjectionBridge.loadedDocument(from: fetched.voice, channel: fetched.channel).projectionOverlay,
                     systemChannel: fetched.channel,
                     title: recentTitle ?? fetched.title,
                     sourceDevice: .dx100
@@ -236,7 +236,7 @@ enum EditorVoiceDocumentService {
                 let bankTitle = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)"
                 return EditorFetchedVoiceDocument(
                     neutralVoice: dxVoice.fourOperatorVoice,
-                    voice: try dxVoice.fb01EditableVoice(),
+                    projectionOverlay: try EditorVoiceProjectionBridge.loadedDocument(from: dxVoice, channel: fetched.channel).projectionOverlay,
                     systemChannel: fetched.channel,
                     title: recentTitle ?? "DX100 \(bankTitle) Voice \(voiceNumber + 1): \(voiceName)",
                     sourceDevice: .dx100
@@ -276,22 +276,12 @@ enum EditorVoiceDocumentService {
         slotIndex: Int,
         destinationIndex: Int,
         systemChannel: Int,
-        currentDisplayedVoices: [DX100VoiceData],
+        currentBank: DX100VoiceBankData,
         settleDelay: TimeInterval = 0.4,
         progress: (@Sendable (DX100InternalStoreProgress) -> Void)? = nil
     ) throws {
         progress?(.preparingBank)
-        guard currentDisplayedVoices.count == DX100VoiceBankData.dx100DisplayedVoiceCount else {
-            throw FB01AppError.message(
-                "DX100 Internal bank fetch returned \(currentDisplayedVoices.count) displayed voices; expected \(DX100VoiceBankData.dx100DisplayedVoiceCount)."
-            )
-        }
-
         let translatedVoice = try voice.dx100Voice()
-        let currentBank = try DX100ModuleServices.shared.documentService.voiceBank(
-            fromDisplayedVoices: currentDisplayedVoices,
-            channel: systemChannel
-        )
         let updatedBank = try currentBank.replacingVoice(atPackedVoiceIndex: slotIndex, with: translatedVoice)
         let messages = try DX100ModuleServices.shared.voiceService.voiceBankMessages(
             for: updatedBank,
@@ -301,8 +291,32 @@ enum EditorVoiceDocumentService {
             throw FB01AppError.message("Forest could not build a DX100 Internal bank store message.")
         }
 
+        try sendDX100SwitchPress(
+            switchNumber: 27,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            releaseDelay: 0.1
+        )
+        Thread.sleep(forTimeInterval: 0.35)
+
         progress?(.sendingBank(slotIndex: slotIndex))
         try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
+        if settleDelay > 0 {
+            Thread.sleep(forTimeInterval: settleDelay)
+        }
+    }
+
+    static func recoverDX100PlayMode(
+        destinationIndex: Int,
+        systemChannel: Int,
+        settleDelay: TimeInterval = 0.2
+    ) throws {
+        try sendDX100SwitchPress(
+            switchNumber: 27,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            releaseDelay: 0.1
+        )
         if settleDelay > 0 {
             Thread.sleep(forTimeInterval: settleDelay)
         }

@@ -1,6 +1,13 @@
 import FB01Editor
 import Foundation
 
+struct LoadedVoiceDocumentProjection: Sendable {
+    var neutralVoice: FourOperatorVoiceData
+    var projectionOverlay: FB01VoiceProjectionOverlay
+    var systemChannel: Int
+    var sourceDevice: EditorDeviceSelection
+}
+
 struct FB01OperatorProjectionOverlay: Equatable, Sendable {
     var keyboardLevelScalingTypeBit0: Bool
     var totalLevelAdjust: Int
@@ -12,6 +19,36 @@ struct FB01OperatorProjectionOverlay: Equatable, Sendable {
         totalLevelAdjust = operatorData.totalLevelAdjust
         keyboardLevelScalingTypeBit1 = operatorData.keyboardLevelScalingTypeBit1
         detune2 = operatorData.detune2
+    }
+}
+
+enum EditorVoiceProjectionBridge {
+    static func loadedDocument(
+        from voice: FB01VoiceData,
+        systemChannel: Int,
+        sourceDevice: EditorDeviceSelection = .fb01
+    ) -> LoadedVoiceDocumentProjection {
+        LoadedVoiceDocumentProjection(
+            neutralVoice: voice.fourOperatorVoice,
+            projectionOverlay: FB01VoiceProjectionOverlay(voice: voice),
+            systemChannel: systemChannel,
+            sourceDevice: sourceDevice
+        )
+    }
+
+    static func loadedDocument(from voice: DX100VoiceData, channel: Int) throws -> LoadedVoiceDocumentProjection {
+        try loadedDocument(
+            from: voice.fb01EditableVoice(),
+            systemChannel: channel,
+            sourceDevice: .dx100
+        )
+    }
+
+    static func projectedVoice(
+        for neutralVoice: FourOperatorVoiceData,
+        overlay: FB01VoiceProjectionOverlay
+    ) throws -> FB01VoiceData {
+        try overlay.apply(to: neutralVoice)
     }
 }
 

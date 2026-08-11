@@ -40,7 +40,7 @@ private struct ActiveEditorDocumentActionsKey: FocusedValueKey {
 }
 
 private struct ActiveVoiceBankSelectorKey: FocusedValueKey {
-    typealias Value = Int
+    typealias Value = DeviceVoiceBankWindowSelection
 }
 
 private struct ActiveDX100VoiceBankFileSelectorKey: FocusedValueKey {
@@ -57,7 +57,7 @@ extension FocusedValues {
         set { self[ActiveEditorDocumentActionsKey.self] = newValue }
     }
 
-    var activeVoiceBankSelector: Int? {
+    var activeVoiceBankSelector: DeviceVoiceBankWindowSelection? {
         get { self[ActiveVoiceBankSelectorKey.self] }
         set { self[ActiveVoiceBankSelectorKey.self] = newValue }
     }
@@ -227,10 +227,10 @@ struct EditorDocumentCommands: View {
             } else if workspace.openDX100VoiceBankFileSelectors.count == 1,
                       let selector = workspace.openDX100VoiceBankFileSelectors.first {
                 document.saveDX100VoiceBankFile(selector)
-            } else if let sourceBank = activeVoiceBankSelector, document.selectedEditorDevice == .dx100 {
-                document.saveDX100VoiceBankFromSelector(bank: sourceBank)
-            } else if let sourceBank = activeVoiceBankSelector, document.selectedEditorDevice == .fb01 {
-                document.saveFB01VoiceBankFromSelector(bank: sourceBank)
+            } else if let sourceBank = activeVoiceBankSelector, sourceBank.device == .dx100 {
+                document.saveDX100VoiceBankFromSelector(bank: sourceBank.bank)
+            } else if let sourceBank = activeVoiceBankSelector, sourceBank.device == .fb01 {
+                document.saveFB01VoiceBankFromSelector(bank: sourceBank.bank)
             } else {
                 document.errorMessage = "Save Bank failed: bring a bank window to the front first."
                 document.statusMessage = nil
@@ -761,11 +761,12 @@ final class EditorDocumentWorkspace: ObservableObject {
         bankFileOrigin: DX100BankFileVoiceOrigin? = nil
     ) -> UUID? {
         do {
+            let bridge = try EditorVoiceProjectionBridge.loadedDocument(from: candidate.voice, channel: candidate.channel)
             let loaded = LoadedVoiceDocument(
-                projection: try candidate.voice.fb01EditableVoice(),
-                neutralVoice: candidate.voice.fourOperatorVoice,
-                systemChannel: candidate.channel,
-                sourceDevice: .dx100
+                neutralVoice: bridge.neutralVoice,
+                projectionOverlay: bridge.projectionOverlay,
+                systemChannel: bridge.systemChannel,
+                sourceDevice: bridge.sourceDevice
             )
             let document = VoiceDocumentModel(loadedDocument: loaded, fileURL: nil)
             document.dx100BankFileOrigin = bankFileOrigin
@@ -872,8 +873,23 @@ final class EditorDocumentWorkspace: ObservableObject {
         "configuration-document-\(id.uuidString)"
     }
 
-    static func voiceBankSelectorWindowIdentifier(for bank: Int) -> String {
-        "voice-bank-selector-\(bank)"
+    static func voiceBankSelectorWindowIdentifier(for selection: DeviceVoiceBankWindowSelection) -> String {
+        "voice-bank-selector-\(selection.device.rawValue)-\(selection.bank)"
+    }
+
+    static func deviceVoiceBankWindowSelection(fromWindowIdentifier identifier: String) -> DeviceVoiceBankWindowSelection? {
+        let prefix = "voice-bank-selector-"
+        guard identifier.hasPrefix(prefix) else {
+            return nil
+        }
+        let remainder = identifier.dropFirst(prefix.count)
+        let components = remainder.split(separator: "-", maxSplits: 1).map(String.init)
+        guard components.count == 2,
+              let device = EditorDeviceSelection(rawValue: components[0]),
+              let bank = Int(components[1]) else {
+            return nil
+        }
+        return DeviceVoiceBankWindowSelection(device: device, bank: bank)
     }
 
     static func dx100VoiceBankFileSelectorWindowIdentifier(for id: UUID) -> String {

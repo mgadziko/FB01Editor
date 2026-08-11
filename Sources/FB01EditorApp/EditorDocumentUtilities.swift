@@ -108,6 +108,11 @@ struct RecentVoiceFetch: Codable, Identifiable, Equatable {
     }
 }
 
+struct DeviceVoiceBankWindowSelection: Hashable, Codable {
+    var device: EditorDeviceSelection
+    var bank: Int
+}
+
 struct RecentConfigurationFetch: Codable, Identifiable, Equatable {
     var isCurrent: Bool
     var slot: Int

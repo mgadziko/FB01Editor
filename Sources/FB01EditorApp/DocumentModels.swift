@@ -103,11 +103,12 @@ final class DocumentModel: ObservableObject {
     @Published private var cachedConfigurations: [Int: FB01ConfigurationData] = [:]
     @Published private var cachedCurrentConfiguration: FB01ConfigurationData?
     @Published private var cachedDX100VoiceBanks: [Int: [DX100VoiceData]] = [:]
+    @Published private var cachedDX100RawVoiceBanks: [Int: DX100VoiceBankData] = [:]
     @Published var selectedEditorDevice: EditorDeviceSelection?
     @Published var deviceCacheStatus = "Not loaded"
     @Published private(set) var voiceBankSelectorRevision = 0
     @Published private(set) var configurationSelectorRevision = 0
-    @Published private(set) var pendingVoiceBankWindowToOpen: Int?
+    @Published private(set) var pendingVoiceBankWindowToOpen: DeviceVoiceBankWindowSelection?
     @Published private(set) var pendingVoiceBankWindowOpenRevision = 0
     let liveKeyboardDisplay = LiveKeyboardDisplayModel()
 
@@ -507,11 +508,27 @@ final class DocumentModel: ObservableObject {
     }
 
     var selectedDeviceVoiceBankSelectorLayout: SynthSelectorGridLayout {
-        switch selectedEditorDevice {
-        case .fb01, nil:
+        guard let selectedEditorDevice else {
+            return FB01ModuleServices.shared.module.voiceBankSelectorLayout
+        }
+        return voiceBankSelectorLayout(for: selectedEditorDevice)
+    }
+
+    func voiceBankSelectorLayout(for device: EditorDeviceSelection) -> SynthSelectorGridLayout {
+        switch device {
+        case .fb01:
             return FB01ModuleServices.shared.module.voiceBankSelectorLayout
         case .dx100:
             return DX100ModuleServices.shared.module.voiceBankSelectorLayout
+        }
+    }
+
+    func voiceBankTitle(device: EditorDeviceSelection, bank: Int) -> String {
+        switch device {
+        case .dx100:
+            return bank == 1 ? "Internal" : (DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)")
+        case .fb01:
+            return "Bank \(bank)"
         }
     }
 
@@ -567,12 +584,10 @@ final class DocumentModel: ObservableObject {
     }
 
     func selectedDeviceVoiceBankTitle(_ bank: Int) -> String {
-        switch selectedEditorDevice {
-        case .dx100:
-            return bank == 1 ? "Internal" : (DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)")
-        case .fb01, nil:
+        guard let selectedEditorDevice else {
             return "Bank \(bank)"
         }
+        return voiceBankTitle(device: selectedEditorDevice, bank: bank)
     }
 
     func startLaunchDeviceCacheRefreshIfNeeded() {
@@ -755,14 +770,15 @@ final class DocumentModel: ObservableObject {
                     destinationIndex: destinationIndex,
                     systemChannel: systemChannel,
                     progressPanel: progressPanel,
-                    contextTitle: "Internal"
+                    contextTitle: "Internal",
+                    allowManualFallback: false
                 )
                 let voices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
                     try? fetchResult.bank.voice(atPackedVoiceIndex: index)
                 }
-                cacheDX100VoiceBank(voices, bank: 1)
+                cacheDX100VoiceBank(voices, bank: 1, rawBank: fetchResult.bank)
                 if fetchResult.usedManualFallback {
-                    requestVoiceBankWindowOpen(bank: 1)
+                    requestVoiceBankWindowOpen(selection: DeviceVoiceBankWindowSelection(device: .dx100, bank: 1))
                 }
                 deviceCacheStatus = "Loaded 1 item"
                 statusMessage = "DX100 voice bank loaded from \(sourceName) -> \(destinationName)."
@@ -784,6 +800,7 @@ final class DocumentModel: ObservableObject {
                     }.value
 
                     cachedDX100VoiceBanks = [:]
+                    cachedDX100RawVoiceBanks = [:]
                     deviceCacheStatus = "Current voice reachable"
                     statusMessage = "DX100 current voice responds on \(sourceName) -> \(destinationName), but internal bank cache could not be fetched."
                     errorMessage = "DX100 internal bank fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
@@ -792,6 +809,7 @@ final class DocumentModel: ObservableObject {
                     return
                 } catch {
                     cachedDX100VoiceBanks = [:]
+                    cachedDX100RawVoiceBanks = [:]
                     deviceCacheStatus = "Not loaded"
                     statusMessage = nil
                     errorMessage = "DX100 device cache failed: \(error)"
@@ -1056,12 +1074,13 @@ final class DocumentModel: ObservableObject {
         options.isCurrent ? cachedCurrentConfiguration : cachedConfigurations[options.slot + 1]
     }
 
-    func ensureVoiceBankSelectorItems(bank: Int) async -> [VoiceBankSelectorItem] {
-        switch selectedEditorDevice {
+    func ensureVoiceBankSelectorItems(selection: DeviceVoiceBankWindowSelection) async -> [VoiceBankSelectorItem] {
+        switch selection.device {
         case .dx100:
+            let bank = selection.bank
             guard DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.isFetchableFromConnectedDevice == true else {
                 errorMessage = """
-                DX100 \(selectedDeviceVoiceBankTitle(bank)) device-bank fetch is not connected yet.
+                DX100 \(voiceBankTitle(device: .dx100, bank: bank)) device-bank fetch is not connected yet.
 
                 Forest can currently fetch:
                 • the current edit voice
@@ -1075,8 +1094,9 @@ final class DocumentModel: ObservableObject {
             if cachedDX100VoiceBanks[bank] == nil {
                 await fetchDX100SelectorCache(bank: bank)
             }
-            return dx100VoiceBankSelectorItems(bank: bank)
-        case .fb01, nil:
+            return dx100VoiceBankSelectorItems(bank: bank, device: .dx100)
+        case .fb01:
+            let bank = selection.bank
             let module = FB01ModuleServices.shared.module
             guard module.isValidVoiceBank(bank) else {
                 return []
@@ -1096,6 +1116,11 @@ final class DocumentModel: ObservableObject {
 
             return voiceBankSelectorItems(bank: bank)
         }
+    }
+
+    func ensureVoiceBankSelectorItems(bank: Int) async -> [VoiceBankSelectorItem] {
+        let device = selectedEditorDevice ?? .fb01
+        return await ensureVoiceBankSelectorItems(selection: DeviceVoiceBankWindowSelection(device: device, bank: bank))
     }
 
     private func fb01RequestKind(forDisplayBank bank: Int) throws -> FB01MIDIRequestKind {
@@ -1332,7 +1357,11 @@ final class DocumentModel: ObservableObject {
         let location = VoiceDocumentFetchLocation.bank(bank)
         return (0..<FB01VoiceBankData.voiceCount).map { index in
             let cachedVoices = cachedVoiceBanks[bank]?.voices ?? []
-            let cachedName = cachedVoices.indices.contains(index) ? cachedVoices[index].voice.name : nil
+            let cachedNameFromBank = cachedVoices.indices.contains(index) ? cachedVoices[index].voice.name : nil
+            let cachedNameFromRAM = ramVoiceNameCache[bank].flatMap { names in
+                names.indices.contains(index) ? names[index] : nil
+            }
+            let cachedName = cachedNameFromBank ?? cachedNameFromRAM
             let lookupName = VoiceDocumentFetchNameLookup.empty.name(location: location, voiceNumber: index + 1)
             return VoiceBankSelectorItem(
                 bank: bank,
@@ -1344,7 +1373,7 @@ final class DocumentModel: ObservableObject {
         }
     }
 
-    func dx100VoiceBankSelectorItems(bank: Int) -> [VoiceBankSelectorItem] {
+    func dx100VoiceBankSelectorItems(bank: Int, device: EditorDeviceSelection = .dx100) -> [VoiceBankSelectorItem] {
         guard let voices = cachedDX100VoiceBanks[bank] else {
             return []
         }
@@ -1356,7 +1385,7 @@ final class DocumentModel: ObservableObject {
                 zeroBasedVoiceNumber: index,
                 name: name,
                 source: .dx100Bank(bank: bank, voiceNumber: index),
-                fetchTitleOverride: "DX100 \(selectedDeviceVoiceBankTitle(bank)) Voice \(index + 1): \(name)"
+                fetchTitleOverride: "DX100 \(voiceBankTitle(device: device, bank: bank)) Voice \(index + 1): \(name)"
             )
         }
     }
@@ -1482,14 +1511,15 @@ final class DocumentModel: ObservableObject {
         let sourceName = selectedSourceName
         let destinationName = selectedDestinationName
         let systemChannel = systemChannel
+        let bankTitle = voiceBankTitle(device: .dx100, bank: bank)
 
         isFetchingFromDevice = true
-        deviceCacheStatus = "Fetching DX100 Voice Bank \(bank)..."
-        statusMessage = "Fetching DX100 Voice Bank \(bank) from \(sourceName) -> \(destinationName)..."
+        deviceCacheStatus = "Fetching DX100 \(bankTitle)..."
+        statusMessage = "Fetching DX100 \(bankTitle) from \(sourceName) -> \(destinationName)..."
         errorMessage = nil
 
         let progressPanel = EditorProgressPanel(
-            title: "Fetching Voice Bank \(bank)",
+            title: "Fetching \(bankTitle)",
             message: "The DX100 voice bank is being fetched. Please wait."
         )
         progressPanel.show()
@@ -1503,21 +1533,23 @@ final class DocumentModel: ObservableObject {
             }
 
             let voices: [DX100VoiceData]
+            var rawInternalBank: DX100VoiceBankData?
             if kind == .internalRAM {
                 let fetchResult = try await fetchDX100InternalBankWithBluetoothFallback(
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
                     systemChannel: systemChannel,
                     progressPanel: progressPanel,
-                    contextTitle: selectedDeviceVoiceBankTitle(bank)
+                    contextTitle: bankTitle,
+                    allowManualFallback: true
                 )
                 voices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
                     try? fetchResult.bank.voice(atPackedVoiceIndex: index)
                 }
+                rawInternalBank = fetchResult.bank
             } else if kind.requiresManualBulkCapture {
                 var fetchedVoices: [DX100VoiceData] = []
                 fetchedVoices.reserveCapacity(DX100ModuleServices.shared.module.voicesPerBank)
-                let bankTitle = selectedDeviceVoiceBankTitle(bank)
 
                 for voiceIndex in 0..<DX100ModuleServices.shared.module.voicesPerBank {
                     let fetchedVoice = try await fetchDX100AssistedBankVoice(
@@ -1538,7 +1570,7 @@ final class DocumentModel: ObservableObject {
                 fetchedVoices.reserveCapacity(DX100ModuleServices.shared.module.voicesPerBank)
                 for voiceIndex in 0..<DX100ModuleServices.shared.module.voicesPerBank {
                     progressPanel.update(
-                        message: "The DX100 voice bank is being fetched. Please wait.\nFetching \(selectedDeviceVoiceBankTitle(bank)) voice \(voiceIndex + 1) of \(DX100ModuleServices.shared.module.voicesPerBank)...",
+                        message: "The DX100 voice bank is being fetched. Please wait.\nFetching \(bankTitle) voice \(voiceIndex + 1) of \(DX100ModuleServices.shared.module.voicesPerBank)...",
                         completed: Double(voiceIndex),
                         total: Double(DX100ModuleServices.shared.module.voicesPerBank)
                     )
@@ -1556,9 +1588,13 @@ final class DocumentModel: ObservableObject {
                 voices = fetchedVoices
             }
 
-            cacheDX100VoiceBank(voices, bank: bank)
+            if kind == .internalRAM {
+                cacheDX100VoiceBank(voices, bank: bank, rawBank: rawInternalBank)
+            } else {
+                cacheDX100VoiceBank(voices, bank: bank)
+            }
             deviceCacheStatus = "Loaded DX100 voice bank"
-            statusMessage = "Fetched DX100 \(selectedDeviceVoiceBankTitle(bank)) from \(sourceName) -> \(destinationName)."
+            statusMessage = "Fetched DX100 \(bankTitle) from \(sourceName) -> \(destinationName)."
             errorMessage = nil
         } catch {
             statusMessage = nil
@@ -1566,16 +1602,16 @@ final class DocumentModel: ObservableObject {
                kind.isFetchableFromConnectedDevice {
                 if kind.requiresManualBulkCapture {
                     if error is CancellationError {
-                        errorMessage = "DX100 \(selectedDeviceVoiceBankTitle(bank)) assisted fetch canceled."
+                        errorMessage = "DX100 \(bankTitle) assisted fetch canceled."
                     } else {
-                        errorMessage = "DX100 \(selectedDeviceVoiceBankTitle(bank)) fetch failed: \(error)\n\n\(dx100ManualBankCaptureTroubleshootingMessage(bank: bank))"
+                        errorMessage = "DX100 \(bankTitle) fetch failed: \(error)\n\n\(dx100ManualBankCaptureTroubleshootingMessage(bank: bank))"
                     }
                 } else {
-                    errorMessage = "DX100 \(selectedDeviceVoiceBankTitle(bank)) fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
+                    errorMessage = "DX100 \(bankTitle) fetch failed: \(error)\n\n\(dx100SysExTroubleshootingMessage())"
                 }
             } else {
                 errorMessage = """
-                DX100 \(selectedDeviceVoiceBankTitle(bank)) device-bank fetch is not connected yet.
+                DX100 \(bankTitle) device-bank fetch is not connected yet.
 
                 Forest can currently fetch:
                 • the current edit voice
@@ -1642,7 +1678,8 @@ final class DocumentModel: ObservableObject {
         destinationIndex: Int,
         systemChannel: Int,
         progressPanel: EditorProgressPanel,
-        contextTitle: String
+        contextTitle: String,
+        allowManualFallback: Bool
     ) async throws -> (bank: DX100VoiceBankData, usedManualFallback: Bool) {
         do {
             let bank = try await Task.detached(priority: .userInitiated) {
@@ -1655,6 +1692,9 @@ final class DocumentModel: ObservableObject {
             }.value
             return (bank, false)
         } catch {
+            guard allowManualFallback else {
+                throw error
+            }
             guard shouldOfferDX100ManualInternalDumpFallback(
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex
@@ -1674,7 +1714,7 @@ final class DocumentModel: ObservableObject {
             let bank = try await Task.detached(priority: .userInitiated) {
                 try EditorVoiceDocumentService.receiveDX100InternalBankManually(
                     sourceIndex: sourceIndex,
-                    timeout: 25
+                    timeout: 40
                 )
             }.value
             return (bank, true)
@@ -1821,30 +1861,39 @@ final class DocumentModel: ObservableObject {
 
         voices[slotIndex] = voice
         cachedDX100VoiceBanks[bank] = voices
+        if var rawBank = cachedDX100RawVoiceBanks[bank] {
+            rawBank = try rawBank.replacingVoice(atPackedVoiceIndex: slotIndex, with: voice)
+            cachedDX100RawVoiceBanks[bank] = rawBank
+        }
         voiceBankSelectorRevision += 1
         deviceCacheStatus = "Updated \(selectedDeviceVoiceBankTitle(bank))"
     }
 
-    func cacheDX100VoiceBank(_ voices: [DX100VoiceData], bank: Int) {
+    func cacheDX100VoiceBank(_ voices: [DX100VoiceData], bank: Int, rawBank: DX100VoiceBankData? = nil) {
         cachedDX100VoiceBanks[bank] = voices
+        if let rawBank {
+            cachedDX100RawVoiceBanks[bank] = rawBank
+        }
         voiceBankSelectorRevision += 1
         deviceCacheStatus = "Updated \(selectedDeviceVoiceBankTitle(bank))"
     }
 
-    func requestVoiceBankWindowOpen(bank: Int) {
-        pendingVoiceBankWindowToOpen = bank
+    func requestVoiceBankWindowOpen(selection: DeviceVoiceBankWindowSelection) {
+        pendingVoiceBankWindowToOpen = selection
         pendingVoiceBankWindowOpenRevision += 1
     }
 
     func prepareVoiceBankWindow(bank: Int) async {
-        let items = await ensureVoiceBankSelectorItems(bank: bank)
+        let device = selectedEditorDevice ?? .fb01
+        let selection = DeviceVoiceBankWindowSelection(device: device, bank: bank)
+        let items = await ensureVoiceBankSelectorItems(selection: selection)
         guard !items.isEmpty else {
             return
         }
-        requestVoiceBankWindowOpen(bank: bank)
+        requestVoiceBankWindowOpen(selection: selection)
     }
 
-    func consumePendingVoiceBankWindowOpen() -> Int? {
+    func consumePendingVoiceBankWindowOpen() -> DeviceVoiceBankWindowSelection? {
         defer { pendingVoiceBankWindowToOpen = nil }
         return pendingVoiceBankWindowToOpen
     }
@@ -1860,6 +1909,10 @@ final class DocumentModel: ObservableObject {
 
     func cachedDX100Voices(inBank bank: Int) -> [DX100VoiceData]? {
         cachedDX100VoiceBanks[bank]
+    }
+
+    func cachedDX100RawVoiceBank(inBank bank: Int) -> DX100VoiceBankData? {
+        cachedDX100RawVoiceBanks[bank]
     }
 
     func cacheConfiguration(_ configuration: FB01ConfigurationData, slot: Int) {
@@ -3483,12 +3536,21 @@ final class DocumentModel: ObservableObject {
     }
 
     func cachedVoiceName(inBank bank: Int, slotIndex: Int) -> String? {
-        guard let bankData = cachedVoiceBanks[bank],
-              bankData.voices.indices.contains(slotIndex) else {
-            return nil
+        if let bankData = cachedVoiceBanks[bank],
+           bankData.voices.indices.contains(slotIndex) {
+            let name = bankData.voices[slotIndex].voice.name
+            if !name.isEmpty {
+                return name
+            }
         }
-        let name = bankData.voices[slotIndex].voice.name
-        return name.isEmpty ? "Voice \(slotIndex + 1)" : name
+
+        if let names = ramVoiceNameCache[bank],
+           names.indices.contains(slotIndex) {
+            let cachedName = names[slotIndex]
+            return cachedName.isEmpty ? "Voice \(slotIndex + 1)" : cachedName
+        }
+
+        return nil
     }
 
     func cachedVoice(inBank bank: Int, slotIndex: Int) -> FB01VoiceData? {
@@ -5695,11 +5757,17 @@ final class DocumentModel: ObservableObject {
         let bank = slot / module.voicesPerBank
         let number = slot % module.voicesPerBank + 1
 
-        guard let voice = knownVoice(bank: bank, number: number) else {
+        let name: String
+        if let cachedNames = ramVoiceNameCache[bank + 1],
+           cachedNames.indices.contains(number - 1),
+           !cachedNames[number - 1].isEmpty {
+            name = cachedNames[number - 1]
+        } else if let voice = knownVoice(bank: bank, number: number) {
+            name = voice.name.isEmpty ? "Untitled" : voice.name
+        } else {
             return nil
         }
 
-        let name = voice.name.isEmpty ? "Untitled" : voice.name
         return "Voice \(slot + 1) - Bank \(bank + 1) #\(number): \(name)"
     }
 

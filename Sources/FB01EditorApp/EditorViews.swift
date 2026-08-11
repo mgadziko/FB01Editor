@@ -33,12 +33,12 @@ struct ContentView: View {
         .background(MainWindowSizeConfigurator(contentSize: CGSize(width: 1080, height: 920)))
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
         .onChange(of: document.pendingVoiceBankWindowOpenRevision) {
-            guard let bank = document.consumePendingVoiceBankWindowOpen() else {
+            guard let selection = document.consumePendingVoiceBankWindowOpen() else {
                 return
             }
-            let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank)
+            let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: selection)
             if !workspace.bringWindowToFront(identifier: identifier) {
-                openWindow(id: "voice-bank-selector", value: bank)
+                openWindow(id: "voice-bank-selector", value: selection)
             }
         }
     }
@@ -167,7 +167,11 @@ struct VoiceSelectorCommands: View {
         Menu(document.selectedDeviceCommandTitle(.showVoiceBank, fallback: "Show Voice Bank")) {
             ForEach(document.selectedDeviceVoiceBanks, id: \.self) { bank in
                 Button(document.selectedDeviceVoiceBankTitle(bank)) {
-                    let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank)
+                    let selection = DeviceVoiceBankWindowSelection(
+                        device: document.selectedEditorDevice ?? .fb01,
+                        bank: bank
+                    )
+                    let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: selection)
                     if !workspace.bringWindowToFront(identifier: identifier) {
                         Task { @MainActor in
                             await document.prepareVoiceBankWindow(bank: bank)
@@ -189,8 +193,8 @@ struct VoiceSelectorCommands: View {
                         } else if workspace.openFB01VoiceBankFileSelectors.count == 1,
                                   let selector = workspace.openFB01VoiceBankFileSelectors.first {
                             document.storeFB01VoiceBankFileSelectorToDevice(selector, targetBank: targetBank)
-                        } else if let sourceBank = activeVoiceBankSelector {
-                            document.storeVoiceBankFromSelector(sourceBank: sourceBank, targetBank: targetBank)
+                        } else if let sourceBank = activeVoiceBankSelector, sourceBank.device == .fb01 {
+                            document.storeVoiceBankFromSelector(sourceBank: sourceBank.bank, targetBank: targetBank)
                         }
                     }
                     .disabled(
@@ -231,17 +235,19 @@ struct ConfigurationSelectorCommands: View {
 }
 
 struct VoiceBankSelectorWindow: View {
-    var bank: Int
+    var selection: DeviceVoiceBankWindowSelection
     @ObservedObject var document: DocumentModel
     @ObservedObject var workspace: EditorDocumentWorkspace
     @Environment(\.openWindow) private var openWindow
     @State private var items: [VoiceBankSelectorItem] = []
     @State private var isLoading = false
     @State private var errorMessage: String?
+    @State private var windowTitle: String = ""
 
     var body: some View {
-        let layout = document.selectedDeviceVoiceBankSelectorLayout
-        let bankTitle = document.selectedDeviceVoiceBankTitle(bank)
+        let bank = selection.bank
+        let layout = document.voiceBankSelectorLayout(for: selection.device)
+        let bankTitle = windowTitle.isEmpty ? document.voiceBankTitle(device: selection.device, bank: bank) : windowTitle
         SelectorWindowLayout(
             title: bankTitle,
             subtitle: "Select a voice to fetch it into a new Voice Document.",
@@ -263,8 +269,8 @@ struct VoiceBankSelectorWindow: View {
         }
         .onChange(of: document.voiceBankSelectorRevision) {
             guard !isLoading else { return }
-            if document.selectedEditorDevice == .dx100 {
-                items = document.dx100VoiceBankSelectorItems(bank: bank)
+            if selection.device == .dx100 {
+                items = document.dx100VoiceBankSelectorItems(bank: bank, device: selection.device)
             } else {
                 items = document.voiceBankSelectorItems(bank: bank)
             }
@@ -273,19 +279,23 @@ struct VoiceBankSelectorWindow: View {
             }
         }
         .background(WindowIdentifierSetter(
-            identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank),
+            identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: selection),
             title: bankTitle
         ))
-        .focusedSceneValue(\.activeVoiceBankSelector, bank)
+        .focusedSceneValue(\.activeVoiceBankSelector, selection)
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
     }
 
     @MainActor
     private func loadItems() async {
-        let bankTitle = document.selectedDeviceVoiceBankTitle(bank)
+        let bank = selection.bank
+        let bankTitle = document.voiceBankTitle(device: selection.device, bank: bank)
+        if windowTitle.isEmpty {
+            windowTitle = bankTitle
+        }
         isLoading = true
         errorMessage = nil
-        items = await document.ensureVoiceBankSelectorItems(bank: bank)
+        items = await document.ensureVoiceBankSelectorItems(selection: selection)
         if items.isEmpty {
             errorMessage = document.errorMessage ?? "\(bankTitle) is not available right now."
         }
@@ -294,16 +304,17 @@ struct VoiceBankSelectorWindow: View {
 
     @MainActor
     private func openVoiceDocument(_ item: VoiceBankSelectorItem) {
-        let currentBankTitle = document.selectedDeviceVoiceBankTitle(bank)
+        let bank = selection.bank
+        let currentBankTitle = document.voiceBankTitle(device: selection.device, bank: bank)
         let id = workspace.createVoiceDocument(statusMessage: "Fetching \(item.fetchTitle)...")
         openWindow(id: "voice-document", value: id)
-        if document.selectedEditorDevice == .fb01 {
+        if selection.device == .fb01 {
             workspace.voiceDocument(id: id)?.fb01DeviceBankOrigin = FB01DeviceBankVoiceOrigin(
                 bank: bank,
                 slotIndex: item.zeroBasedVoiceNumber,
                 bankTitle: currentBankTitle
             )
-        } else if document.selectedEditorDevice == .dx100 {
+        } else if selection.device == .dx100 {
             workspace.voiceDocument(id: id)?.dx100DeviceBankOrigin = DX100DeviceBankVoiceOrigin(
                 bank: bank,
                 slotIndex: item.zeroBasedVoiceNumber,

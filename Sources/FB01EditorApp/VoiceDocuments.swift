@@ -5,8 +5,8 @@ import Foundation
 import UniformTypeIdentifiers
 
 struct LoadedVoiceDocument: Sendable {
-    var projection: FB01VoiceData
     var neutralVoice: FourOperatorVoiceData
+    var projectionOverlay: FB01VoiceProjectionOverlay
     var systemChannel: Int
     var sourceDevice: EditorDeviceSelection
 }
@@ -366,7 +366,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     convenience init(loadedDocument: LoadedVoiceDocument, fileURL: URL? = nil) {
-        self.init(voice: loadedDocument.projection, systemChannel: loadedDocument.systemChannel, fileURL: fileURL)
+        let projection = (try? EditorVoiceProjectionBridge.projectedVoice(
+            for: loadedDocument.neutralVoice,
+            overlay: loadedDocument.projectionOverlay
+        )) ?? EditorDocumentTemplates.voice()
+        self.init(voice: projection, systemChannel: loadedDocument.systemChannel, fileURL: fileURL)
         sourceDevice = loadedDocument.sourceDevice
         replaceDocument(with: loadedDocument)
     }
@@ -392,11 +396,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     func reset() {
-        applyDocumentVoices(
+        applyDocumentState(
             workingNeutral: savedNeutralVoice,
-            projection: savedVoice,
+            overlay: savedProjectionOverlay,
             savedNeutral: savedNeutralVoice,
-            savedProjection: savedVoice
+            savedOverlay: savedProjectionOverlay
         )
         resetPerformanceMacros()
         noteVoiceReplacement()
@@ -407,11 +411,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     func replaceDocument(with loadedDocument: LoadedVoiceDocument) {
         sourceDevice = loadedDocument.sourceDevice
         systemChannel = loadedDocument.systemChannel
-        applyDocumentVoices(
+        applyDocumentState(
             workingNeutral: loadedDocument.neutralVoice,
-            projection: loadedDocument.projection,
+            overlay: loadedDocument.projectionOverlay,
             savedNeutral: loadedDocument.neutralVoice,
-            savedProjection: loadedDocument.projection
+            savedOverlay: loadedDocument.projectionOverlay
         )
         resetPerformanceMacros()
         noteVoiceReplacement()
@@ -647,11 +651,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         do {
             let imported = try Self.readVoiceDocument(from: url, context: .singleOrGeneric)
-            applyDocumentVoices(
+            applyDocumentState(
                 workingNeutral: imported.neutralVoice,
-                projection: imported.projection,
+                overlay: imported.projectionOverlay,
                 savedNeutral: imported.neutralVoice,
-                savedProjection: imported.projection
+                savedOverlay: imported.projectionOverlay
             )
             resetPerformanceMacros()
             systemChannel = imported.systemChannel
@@ -691,11 +695,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             let source = preselectedSource ?? .currentVoice
             if mode != .manualAssist,
                let cachedResult = device.cachedVoiceFetchResult(source: source, systemChannel: systemChannel) {
-                applyDocumentVoices(
+                applyDocumentState(
                     workingNeutral: cachedResult.neutralVoice,
-                    projection: cachedResult.voice,
+                    overlay: FB01VoiceProjectionOverlay(voice: cachedResult.voice),
                     savedNeutral: cachedResult.neutralVoice,
-                    savedProjection: cachedResult.voice
+                    savedOverlay: FB01VoiceProjectionOverlay(voice: cachedResult.voice)
                 )
                 resetPerformanceMacros()
                 self.systemChannel = cachedResult.systemChannel
@@ -780,12 +784,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                         }.value
 
                         let dxVoice = fetched.voice
-                        let projected = try dxVoice.fb01EditableVoice()
-                        applyDocumentVoices(
-                            workingNeutral: dxVoice.fourOperatorVoice,
-                            projection: projected,
-                            savedNeutral: dxVoice.fourOperatorVoice,
-                            savedProjection: projected
+                        let loaded = try EditorVoiceProjectionBridge.loadedDocument(from: dxVoice, channel: fetched.channel)
+                        applyDocumentState(
+                            workingNeutral: loaded.neutralVoice,
+                            overlay: loaded.projectionOverlay,
+                            savedNeutral: loaded.neutralVoice,
+                            savedOverlay: loaded.projectionOverlay
                         )
                         resetPerformanceMacros()
                         self.systemChannel = fetched.channel
@@ -833,11 +837,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             recentTitle: recentTitle
                         )
                     }.value
-                    applyDocumentVoices(
+                    applyDocumentState(
                         workingNeutral: result.neutralVoice,
-                        projection: result.voice,
+                        overlay: result.projectionOverlay,
                         savedNeutral: result.neutralVoice,
-                        savedProjection: result.voice
+                        savedOverlay: result.projectionOverlay
                     )
                     resetPerformanceMacros()
                     self.systemChannel = result.systemChannel
@@ -913,11 +917,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             }
 
             if let cachedResult = device.cachedVoiceFetchResult(source: source, systemChannel: systemChannel, nameLookup: nameLookup) {
-                applyDocumentVoices(
+                applyDocumentState(
                     workingNeutral: cachedResult.neutralVoice,
-                    projection: cachedResult.voice,
+                    overlay: FB01VoiceProjectionOverlay(voice: cachedResult.voice),
                     savedNeutral: cachedResult.neutralVoice,
-                    savedProjection: cachedResult.voice
+                    savedOverlay: FB01VoiceProjectionOverlay(voice: cachedResult.voice)
                 )
                 resetPerformanceMacros()
                 self.systemChannel = cachedResult.systemChannel
@@ -946,11 +950,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 let result = try await Task.detached(priority: .userInitiated) {
                     try FB01VoiceDocumentService.fetchVoice(source: source, sourceIndex: sourceIndex, destinationIndex: destinationIndex, systemChannel: systemChannel)
                 }.value
-                applyDocumentVoices(
+                applyDocumentState(
                     workingNeutral: result.voice.fourOperatorVoice,
-                    projection: result.voice,
+                    overlay: FB01VoiceProjectionOverlay(voice: result.voice),
                     savedNeutral: result.voice.fourOperatorVoice,
-                    savedProjection: result.voice
+                    savedOverlay: FB01VoiceProjectionOverlay(voice: result.voice)
                 )
                 resetPerformanceMacros()
                 self.systemChannel = result.systemChannel
@@ -981,11 +985,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             statusMessage = nil
             return
         }
-        applyDocumentVoices(
+        applyDocumentState(
             workingNeutral: payload.voice.fourOperatorVoice,
-            projection: payload.voice,
+            overlay: FB01VoiceProjectionOverlay(voice: payload.voice),
             savedNeutral: payload.voice.fourOperatorVoice,
-            savedProjection: payload.voice
+            savedOverlay: FB01VoiceProjectionOverlay(voice: payload.voice)
         )
         resetPerformanceMacros()
         systemChannel = payload.systemChannel
@@ -1078,6 +1082,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func storeToDevice(device: DocumentModel) {
         guard !isBusy else { return }
+        cancelKeyboardVoicePreparation()
+        cancelDX100LiveResend()
         let voiceToStore = voice
         let neutralVoiceToStore = neutralVoice
         let destinationIndex = device.selectedDestinationIndex
@@ -1085,6 +1091,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let systemChannel = device.systemChannel
         let destinationName = device.selectedDestinationName
         let voiceDisplayName = displayName
+        let translatedDXVoice = try? neutralVoiceToStore.dx100Voice()
 
         if device.selectedEditorDevice == .dx100 {
             guard let target = chooseDX100InternalStoreTarget(device: device) else {
@@ -1099,14 +1106,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             )
             progressPanel.show()
             Task {
+                var didWriteToInternalDXSlot = false
                 do {
-                    let currentInternalVoices: [DX100VoiceData]
-                    if let cached = device.cachedDX100Voices(inBank: 1),
-                       cached.count == DX100VoiceBankData.dx100DisplayedVoiceCount {
-                        currentInternalVoices = cached
+                    let currentInternalBank: DX100VoiceBankData
+                    if let cached = device.cachedDX100RawVoiceBank(inBank: 1) {
+                        currentInternalBank = cached
                     } else {
-                        currentInternalVoices = try await Task.detached(priority: .userInitiated) {
-                            try Self.fetchDX100InternalBankVoices(
+                        currentInternalBank = try await Task.detached(priority: .userInitiated) {
+                            try EditorVoiceDocumentService.fetchDX100InternalBank(
                                 sourceIndex: sourceIndex,
                                 destinationIndex: destinationIndex,
                                 systemChannel: systemChannel
@@ -1118,7 +1125,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                         message: "The voice is being stored. Please wait.\nWriting \(voiceDisplayName) into DX100 Internal slot \(target.slotIndex + 1)..."
                     )
 
-                    let storedVoice = try neutralVoiceToStore.dx100Voice()
                     let shouldAllowUnconfirmedBluetoothSend = shouldOfferDX100ManualInternalDumpFallback(device: device)
                     do {
                         try await Task.detached(priority: .userInitiated) {
@@ -1127,7 +1133,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                                 slotIndex: target.slotIndex,
                                 destinationIndex: destinationIndex,
                                 systemChannel: systemChannel,
-                                currentDisplayedVoices: currentInternalVoices,
+                                currentBank: currentInternalBank,
                                 progress: { event in
                                     switch event {
                                     case .preparingBank:
@@ -1148,6 +1154,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                                 }
                             )
                         }.value
+                        didWriteToInternalDXSlot = true
                     } catch let error as FB01MIDIError {
                         if case .timedOut(let request) = error,
                            request == "long SysEx send",
@@ -1155,19 +1162,38 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             progressPanel.update(
                                 message: "The voice is being stored. Please wait.\nDX100 write send did not confirm over Bluetooth. Forest is verifying the Internal bank now..."
                             )
+                            didWriteToInternalDXSlot = true
                         } else {
                             throw error
                         }
                     }
 
+                    try? await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.recoverDX100PlayMode(
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel
+                        )
+                    }.value
+
                     progressPanel.update(
                         message: "The voice is being stored. Please wait.\nVerifying DX100 Internal slot \(target.slotIndex + 1) by refetching the Internal bank..."
                     )
 
-                    let refreshedInternalVoices: [DX100VoiceData]
+                    try await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.prepareDX100AssistedDeviceVoiceRecall(
+                            bank: 1,
+                            voiceNumber: target.slotIndex + 1,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            selectionDelay: 0.15,
+                            releaseDelay: 0.08
+                        )
+                    }.value
+
+                    let refreshedInternalBank: DX100VoiceBankData
                     do {
-                        refreshedInternalVoices = try await Task.detached(priority: .userInitiated) {
-                            try Self.fetchDX100InternalBankVoices(
+                        refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
+                            try EditorVoiceDocumentService.fetchDX100InternalBank(
                                 sourceIndex: sourceIndex,
                                 destinationIndex: destinationIndex,
                                 systemChannel: systemChannel
@@ -1183,18 +1209,34 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             message: "The voice is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to verify slot \(target.slotIndex + 1)..."
                         )
 
-                        refreshedInternalVoices = try await Task.detached(priority: .userInitiated) {
-                            try Self.receiveDX100InternalBankVoicesManually(sourceIndex: sourceIndex)
+                        refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
+                            try EditorVoiceDocumentService.receiveDX100InternalBankManually(sourceIndex: sourceIndex)
                         }.value
                     }
 
-                    device.cacheDX100VoiceBank(refreshedInternalVoices, bank: 1)
+                    try? await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.recoverDX100PlayMode(
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel
+                        )
+                    }.value
+
+                    let refreshedInternalVoices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
+                        try? refreshedInternalBank.voice(atPackedVoiceIndex: index)
+                    }
+                    device.cacheDX100VoiceBank(refreshedInternalVoices, bank: 1, rawBank: refreshedInternalBank)
                     guard refreshedInternalVoices.indices.contains(target.slotIndex) else {
                         throw FB01AppError.message("DX100 Internal slot \(target.slotIndex + 1) was not present in the refreshed bank.")
                     }
 
                     let verifiedVoice = refreshedInternalVoices[target.slotIndex]
-                    guard verifiedVoice == storedVoice else {
+                    let exactMatch = translatedDXVoice.map { verifiedVoice == $0 } ?? false
+                    let neutralMatch = verifiedVoice.fourOperatorVoice == neutralVoiceToStore
+                    let nameMatch = translatedDXVoice.map {
+                        verifiedVoice.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        == $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    } ?? false
+                    guard exactMatch || neutralMatch || nameMatch else {
                         throw FB01AppError.message("DX100 Internal slot \(target.slotIndex + 1) did not match the edited voice after storing.")
                     }
 
@@ -1208,21 +1250,55 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName)."
                     errorMessage = nil
                 } catch {
-                    statusMessage = nil
-                    errorMessage = "Store failed: \(error)"
-                    showEditorError(
-                        title: "Store to DX100 Internal Slot Failed",
-                        message: """
-                        \(error)
+                    if didWriteToInternalDXSlot {
+                        if let translatedDXVoice {
+                            try? device.replaceCachedDX100Voice(inBank: 1, slotIndex: target.slotIndex, with: translatedDXVoice)
+                        }
+                        sourceDevice = .dx100
+                        dx100DeviceBankOrigin = DX100DeviceBankVoiceOrigin(
+                            bank: 1,
+                            slotIndex: target.slotIndex,
+                            bankTitle: "Internal"
+                        )
+                        markCurrentStateSaved()
+                        statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName). Forest could not verify the result automatically."
+                        errorMessage = "DX100 store verify warning: \(error)"
+                        showEditorError(
+                            title: "DX100 Store Sent - Verify Incomplete",
+                            message: """
+                            Forest sent the write for DX100 Internal slot \(target.slotIndex + 1), but the verify step did not confirm it automatically.
 
-                        Forest fetched the Internal bank, attempted to rewrite the selected slot, then tried to verify the result by refetching Internal.
+                            \(error)
 
-                        Notes:
-                        • the DX100 front-panel voice display does not necessarily change immediately after a bank write
-                        • MEMORY PROTECT must be OFF
-                        • if the write succeeded but verify failed, reopening Internal may still show whether the slot changed
-                        """
-                    )
+                            Notes:
+                            • the DX100 front-panel voice display does not necessarily change immediately after a bank write
+                            • MEMORY PROTECT must be OFF
+                            • reopening Internal is a good final confirmation
+                            """
+                        )
+                    } else {
+                        statusMessage = nil
+                        errorMessage = "Store failed: \(error)"
+                        showEditorError(
+                            title: "Store to DX100 Internal Slot Failed",
+                            message: """
+                            \(error)
+
+                            Forest fetched the Internal bank, attempted to rewrite the selected slot, then tried to verify the result by refetching Internal.
+
+                            Notes:
+                            • the DX100 front-panel voice display does not necessarily change immediately after a bank write
+                            • MEMORY PROTECT must be OFF
+                            • if the write succeeded but verify failed, reopening Internal may still show whether the slot changed
+                            """
+                        )
+                    }
+                    try? await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.recoverDX100PlayMode(
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel
+                        )
+                    }.value
                 }
                 progressPanel.dismiss()
                 isBusy = false
@@ -1481,7 +1557,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     bankTitle: bankTitle
                 )
                 markCurrentStateSaved()
-                _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank))
+                _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: DeviceVoiceBankWindowSelection(device: .fb01, bank: bank)))
                 statusMessage = "Stored \(displayName) into \(bankTitle) slot \(slotIndex + 1). Save the bank window to write the updated bank file, or use Store Bank to write it to the FB-01."
                 errorMessage = nil
             } catch {
@@ -1510,7 +1586,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 bankTitle: bankTitle
             )
             markCurrentStateSaved()
-            _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: bank))
+            _ = workspace.bringWindowToFront(identifier: EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: DeviceVoiceBankWindowSelection(device: .dx100, bank: bank)))
             statusMessage = "Stored \(displayName) into \(bankTitle) slot \(slotIndex + 1)."
             errorMessage = nil
         } catch {
@@ -1666,23 +1742,37 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private func openFB01DeviceBankWindows() -> [Int] {
         NSApp.windows.compactMap { window in
             guard let raw = window.identifier?.rawValue,
-                  raw.hasPrefix("voice-bank-selector-"),
-                  let bank = Int(raw.replacingOccurrences(of: "voice-bank-selector-", with: ""))
+                  let selection = EditorDocumentWorkspace.deviceVoiceBankWindowSelection(fromWindowIdentifier: raw),
+                  selection.device == .fb01
             else {
                 return nil
             }
-            return bank
+            return selection.bank
         }
         .sorted()
     }
 
     private func openDX100DeviceBankWindows() -> [Int] {
-        openFB01DeviceBankWindows()
+        NSApp.windows.compactMap { window in
+            guard let raw = window.identifier?.rawValue,
+                  let selection = EditorDocumentWorkspace.deviceVoiceBankWindowSelection(fromWindowIdentifier: raw),
+                  selection.device == .dx100
+            else {
+                return nil
+            }
+            return selection.bank
+        }
+        .sorted()
     }
 
     func sendKeyboardNote(_ note: Int, isOn: Bool, device: DocumentModel) {
         guard !device.isBusy else {
             device.statusMessage = "Keyboard paused while the FB-01 is busy with a device operation."
+            return
+        }
+
+        guard isAuditionCompatible(with: device) else {
+            device.externalKeyboardStatus = auditionDeviceMismatchStatus(selectedDevice: device.selectedEditorDevice)
             return
         }
 
@@ -1719,6 +1809,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func scheduleKeyboardVoicePreparation(device: DocumentModel, delayNanoseconds: UInt64 = 0) {
         keyboardPreparationTask?.cancel()
+        guard isAuditionCompatible(with: device) else {
+            device.externalKeyboardStatus = auditionDeviceMismatchStatus(selectedDevice: device.selectedEditorDevice)
+            return
+        }
 
         let destinationIndex = device.selectedDestinationIndex
         let channel = min(max(device.keyboardChannel, 0), 15)
@@ -1861,6 +1955,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return true
         }
 
+        guard isAuditionCompatible(with: device) else {
+            device.externalKeyboardStatus = auditionDeviceMismatchStatus(selectedDevice: device.selectedEditorDevice)
+            return true
+        }
+
         guard let status = message.first, (0x80...0xEF).contains(status) else {
             return false
         }
@@ -1929,9 +2028,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             }
 
             if savedPayload != voice || savedNeutral != neutralVoice {
-                applyDocumentVoices(
+                applyDocumentState(
                     workingNeutral: savedNeutral,
-                    projection: savedPayload
+                    overlay: FB01VoiceProjectionOverlay(voice: savedPayload)
                 )
                 noteVoiceReplacement()
                 preparedKeyboardVoiceSignature = nil
@@ -1987,6 +2086,19 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     private func keyboardPreparationSignature(midiChannel: Int, portamento: Int) -> String {
         "\(systemChannel)-\(midiChannel)-\(voice.bytes)-portamento-\(portamento)"
+    }
+
+    private func isAuditionCompatible(with device: DocumentModel) -> Bool {
+        guard let selectedDevice = device.selectedEditorDevice else {
+            return false
+        }
+        return selectedDevice == sourceDevice
+    }
+
+    private func auditionDeviceMismatchStatus(selectedDevice: EditorDeviceSelection?) -> String {
+        let documentDevice = sourceDevice.displayName
+        let selectedDeviceName = selectedDevice?.displayName ?? "no selected device"
+        return "This \(documentDevice) voice is open, but Forest is currently pointed at \(selectedDeviceName). Select \(documentDevice) before auditioning it."
     }
 
     private var defaultVoiceFileExtension: String {
@@ -2106,8 +2218,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             throw FB01AppError.noVoiceSource
         }
         return LoadedVoiceDocument(
-            projection: candidate.voice,
             neutralVoice: candidate.voice.fourOperatorVoice,
+            projectionOverlay: FB01VoiceProjectionOverlay(voice: candidate.voice),
             systemChannel: candidate.systemChannel,
             sourceDevice: .fb01
         )
@@ -2123,11 +2235,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         guard let candidate = chooseDX100VoiceCandidate(candidates, title: title, informativeText: informativeText) else {
             throw FB01AppError.noVoiceSource
         }
+        let loaded = try EditorVoiceProjectionBridge.loadedDocument(from: candidate.voice, channel: candidate.channel)
         return LoadedVoiceDocument(
-            projection: try candidate.voice.fb01EditableVoice(),
-            neutralVoice: candidate.voice.fourOperatorVoice,
-            systemChannel: candidate.channel,
-            sourceDevice: .dx100
+            neutralVoice: loaded.neutralVoice,
+            projectionOverlay: loaded.projectionOverlay,
+            systemChannel: loaded.systemChannel,
+            sourceDevice: loaded.sourceDevice
         )
     }
 
@@ -2187,21 +2300,24 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         return candidates[popup.indexOfSelectedItem]
     }
 
-    private func applyDocumentVoices(
+    private func applyDocumentState(
         workingNeutral: FourOperatorVoiceData,
-        projection: FB01VoiceData,
+        overlay: FB01VoiceProjectionOverlay,
         savedNeutral: FourOperatorVoiceData? = nil,
-        savedProjection: FB01VoiceData? = nil
+        savedOverlay: FB01VoiceProjectionOverlay? = nil
     ) {
         neutralVoice = workingNeutral
-        projectionOverlay = FB01VoiceProjectionOverlay(voice: projection)
-        projectedVoiceCache = projection
+        projectionOverlay = overlay
+        projectedVoiceCache = (try? EditorVoiceProjectionBridge.projectedVoice(for: workingNeutral, overlay: overlay)) ?? projectedVoiceCache
         if let savedNeutral {
             savedNeutralVoice = savedNeutral
         }
-        if let savedProjection {
-            savedProjectionOverlay = FB01VoiceProjectionOverlay(voice: savedProjection)
-            savedProjectedVoiceCache = savedProjection
+        if let savedOverlay {
+            savedProjectionOverlay = savedOverlay
+            savedProjectedVoiceCache = (try? EditorVoiceProjectionBridge.projectedVoice(
+                for: savedNeutral ?? workingNeutral,
+                overlay: savedOverlay
+            )) ?? savedProjectedVoiceCache
         }
     }
 

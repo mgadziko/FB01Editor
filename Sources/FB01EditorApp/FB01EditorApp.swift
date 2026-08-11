@@ -114,9 +114,9 @@ struct FB01EditorApplication: App {
                     .frame(width: 420, height: 180)
             }
         }
-        WindowGroup("Voice Bank", id: "voice-bank-selector", for: Int.self) { $bank in
-            if let bank {
-                VoiceBankSelectorWindow(bank: bank, document: document, workspace: documentWorkspace)
+        WindowGroup("Voice Bank", id: "voice-bank-selector", for: DeviceVoiceBankWindowSelection.self) { $selection in
+            if let selection {
+                VoiceBankSelectorWindow(selection: selection, document: document, workspace: documentWorkspace)
             } else {
                 MissingEditorDocumentView()
                     .frame(width: 420, height: 180)
