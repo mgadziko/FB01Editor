@@ -65,48 +65,8 @@ struct MainWindowStatusFooter: View {
 struct ToolbarView: View {
     @ObservedObject var document: DocumentModel
 
-    private var deviceName: String {
-        document.selectedEditorDevice?.displayName ?? "Device"
-    }
-
     var body: some View {
         HStack(spacing: 10) {
-            Text("MIDI In from \(deviceName)")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            Menu {
-                ForEach(document.midiSources, id: \.index) { source in
-                    Button {
-                        document.selectSource(source)
-                    } label: {
-                        endpointLabel(source, selected: source.index == document.selectedSourceIndex)
-                    }
-                }
-            } label: {
-                Label(document.selectedSourceName, systemImage: "arrow.down.circle")
-            }
-            .disabled(document.midiSources.isEmpty || document.isBusy)
-            .forestHoverHelp("Selects the MIDI input that receives replies and dumps from the selected device.")
-
-            Text("MIDI Out to \(deviceName)")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            Menu {
-                ForEach(document.midiDestinations, id: \.index) { destination in
-                    Button {
-                        document.selectDestination(destination)
-                    } label: {
-                        endpointLabel(destination, selected: destination.index == document.selectedDestinationIndex)
-                    }
-                }
-            } label: {
-                Label(document.selectedDestinationName, systemImage: "arrow.up.circle")
-            }
-            .disabled(document.midiDestinations.isEmpty || document.isBusy)
-            .forestHoverHelp("Selects the MIDI output used to send notes, edits, fetch requests, and store commands to the selected device.")
-
             Button {
                 document.refreshMIDIEndpoints()
             } label: {
@@ -132,11 +92,6 @@ struct ToolbarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-    }
-
-    private func endpointLabel(_ endpoint: FB01MIDIEndpoint, selected: Bool) -> some View {
-        let unique = endpoint.uniqueID.map { " id=\($0)" } ?? ""
-        return Label("[\(endpoint.index)] \(endpoint.displayName)\(unique)", systemImage: selected ? "checkmark" : "circle")
     }
 }
 
@@ -329,6 +284,15 @@ struct VoiceBankSelectorWindow: View {
         .background(ContentSizedWindowConfigurator(
             contentSize: CGSize(width: layout.windowWidth, height: layout.minimumWindowHeight)
         ))
+        .background(WindowActivationObserver(
+            onBecomeKey: {
+                document.selectDevice(selection.device)
+            },
+            onResignKey: {}
+        ))
+        .onAppear {
+            document.selectDevice(selection.device)
+        }
         .focusedSceneValue(\.activeVoiceBankSelector, selection)
         .environment(\.forestHoverTextEnabled, document.hoverTextEnabled)
     }
@@ -354,6 +318,7 @@ struct VoiceBankSelectorWindow: View {
         let bank = selection.bank
         let currentBankTitle = document.voiceBankTitle(device: selection.device, bank: bank)
         let id = workspace.createVoiceDocument(statusMessage: "Fetching \(item.fetchTitle)...")
+        workspace.voiceDocument(id: id)?.sourceDevice = selection.device
         openWindow(id: "voice-document", value: id)
         if selection.device == .fb01 {
             workspace.voiceDocument(id: id)?.fb01DeviceBankOrigin = FB01DeviceBankVoiceOrigin(
@@ -1314,18 +1279,8 @@ struct LiveKeyboardPaletteControlsView: View {
                                 document.sendLiveKeyboardReset()
                             }
                             .buttonStyle(.bordered)
-                            .disabled(document.isBusy || document.midiDestinations.isEmpty || document.selectedEditorDevice != .dx100)
-                            .forestHoverHelp(
-                                document.selectedEditorDevice == .dx100
-                                ? "Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens."
-                                : "DX100 only. Sends the proven remote PLAY command to recover a DX100 that is stuck in programming screens."
-                            )
-
-                            if document.selectedEditorDevice != .dx100 {
-                                Text("DX100 only")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
+                            .disabled(document.isBusy || document.midiDestinations.isEmpty)
+                            .forestHoverHelp("Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens.")
                         }
                         .padding(.top, 18)
                     }
@@ -1431,18 +1386,8 @@ struct LiveKeyboardMIDIControlsView: View {
                         document.sendLiveKeyboardReset()
                     }
                     .buttonStyle(.bordered)
-                    .disabled(document.isBusy || document.midiDestinations.isEmpty || document.selectedEditorDevice != .dx100)
-                    .forestHoverHelp(
-                        document.selectedEditorDevice == .dx100
-                        ? "Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens."
-                        : "DX100 only. Sends the proven remote PLAY command to recover a DX100 that is stuck in programming screens."
-                    )
-
-                    if document.selectedEditorDevice != .dx100 {
-                        Text("DX100 only")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
+                    .disabled(document.isBusy || document.midiDestinations.isEmpty)
+                    .forestHoverHelp("Sends the proven DX100 remote PLAY command to kick the synth back to normal play mode when it gets stuck in programming screens.")
                 }
             }
             .font(.caption)
@@ -1920,9 +1865,9 @@ struct GlobalStatusView: View {
                     Text("Select Device")
                         .font(.headline.weight(.semibold))
 
-                    HStack(spacing: 10) {
-                        deviceSelectionButton(.dx100, title: "DX100")
-                        deviceSelectionButton(.fb01, title: "FB-01")
+                    VStack(alignment: .leading, spacing: 10) {
+                        deviceSelectionRow(.dx100, title: "DX100")
+                        deviceSelectionRow(.fb01, title: "FB-01")
                     }
                 }
 
@@ -1991,6 +1936,36 @@ struct GlobalStatusView: View {
         }
         .disabled(document.isBusy)
         .forestHoverHelp("Choose \(device.displayName) as the active device Forest Editor should fetch and cache.")
+    }
+
+    private func deviceSelectionRow(_ device: EditorDeviceSelection, title: String) -> some View {
+        HStack(spacing: 10) {
+            deviceSelectionButton(device, title: title)
+                .frame(width: 78, alignment: .leading)
+
+            Menu {
+                let options = document.midiInterfaceOptions()
+                if options.isEmpty {
+                    Text("No MIDI interfaces")
+                } else {
+                    ForEach(options) { option in
+                        Button {
+                            document.selectMIDIInterface(option, for: device)
+                        } label: {
+                            let isSelected = document.selectedMIDIInterfaceOption(for: device) == option
+                            Label(option.displayName, systemImage: isSelected ? "checkmark" : "circle")
+                        }
+                    }
+                }
+            } label: {
+                let title = document.selectedMIDIInterfaceOption(for: device)?.displayName
+                    ?? document.selectedDestinationName(for: device)
+                Label(title, systemImage: "cable.connector")
+                    .frame(minWidth: 220, alignment: .leading)
+            }
+            .disabled(document.isBusy || document.midiInterfaceOptions().isEmpty)
+            .forestHoverHelp("Chooses which connected MIDI interface Forest Editor should use for the \(device.displayName).")
+        }
     }
 
     private func statusCard(title: String, rows: [KeyValueRow]) -> some View {
@@ -2658,13 +2633,14 @@ struct ContentSizedWindowConfigurator: NSViewRepresentable {
 
 struct DocumentMIDIContextView: View {
     @ObservedObject var device: DocumentModel
+    var editingDevice: EditorDeviceSelection
     var documentSystemChannel: Int
 
     var body: some View {
         HStack(spacing: 14) {
-            Label(device.selectedSourceName, systemImage: "arrow.down.circle")
+            Label(device.selectedSourceName(for: editingDevice), systemImage: "arrow.down.circle")
                 .lineLimit(1)
-            Label(device.selectedDestinationName, systemImage: "arrow.up.circle")
+            Label(device.selectedDestinationName(for: editingDevice), systemImage: "arrow.up.circle")
                 .lineLimit(1)
             Label("System \(device.systemChannel + 1)", systemImage: "number.circle")
             Text("Document SysEx channel \(documentSystemChannel + 1)")
@@ -2899,7 +2875,7 @@ struct VoiceDocumentWindow: View {
                         .foregroundStyle(document.isEdited ? .orange : .secondary)
                 }
 
-                DocumentMIDIContextView(device: device, documentSystemChannel: document.systemChannel)
+                DocumentMIDIContextView(device: device, editingDevice: document.sourceDevice, documentSystemChannel: document.systemChannel)
 
                 SummaryPanel(rows: [
                     KeyValueRow("Source Model", document.neutralVoice.sourceModelName),
@@ -3155,6 +3131,7 @@ struct VoiceDocumentWindow: View {
         ))
         .background(WindowActivationObserver(
             onBecomeKey: {
+                device.selectDevice(document.sourceDevice)
                 registerLiveKeyboardContext()
                 document.scheduleKeyboardVoicePreparation(device: device)
             },
@@ -3163,6 +3140,7 @@ struct VoiceDocumentWindow: View {
             }
         ))
         .onAppear {
+            device.selectDevice(document.sourceDevice)
             registerLiveKeyboardContext()
             document.scheduleKeyboardVoicePreparation(device: device)
         }
@@ -3181,6 +3159,12 @@ struct VoiceDocumentWindow: View {
         }
         .onChange(of: device.selectedDestinationIndex) {
             document.scheduleKeyboardVoicePreparation(device: device)
+            document.scheduleDX100LiveResend(device: device, delayNanoseconds: 0)
+        }
+        .onChange(of: document.sourceDevice) {
+            device.selectDevice(document.sourceDevice)
+            registerLiveKeyboardContext()
+            document.scheduleKeyboardVoicePreparation(device: device, delayNanoseconds: 0)
             document.scheduleDX100LiveResend(device: device, delayNanoseconds: 0)
         }
         .focusedSceneValue(\.activeEditorDocumentActions, ActiveEditorDocumentActions(
@@ -3253,7 +3237,7 @@ struct ConfigurationDocumentWindow: View {
                         .foregroundStyle(document.isEdited ? .orange : .secondary)
                 }
 
-                DocumentMIDIContextView(device: device, documentSystemChannel: document.systemChannel)
+                DocumentMIDIContextView(device: device, editingDevice: .fb01, documentSystemChannel: document.systemChannel)
 
                 ConfigurationEditorControls(
                     name: Binding(
@@ -3357,11 +3341,13 @@ struct ConfigurationDocumentWindow: View {
         ))
         .background(WindowActivationObserver(
             onBecomeKey: {
+                device.selectDevice(.fb01)
                 registerLiveKeyboardContext()
             },
             onResignKey: {}
         ))
         .onAppear {
+            device.selectDevice(.fb01)
             registerLiveKeyboardContext()
         }
         .onDisappear {

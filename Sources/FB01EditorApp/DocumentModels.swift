@@ -49,6 +49,25 @@ enum EditorDeviceSelection: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+struct DeviceMIDIRouteSelection: Equatable {
+    var sourceIndex: Int
+    var destinationIndex: Int
+    var sourceUniqueID: Int32?
+    var destinationUniqueID: Int32?
+}
+
+struct MIDIInterfaceOption: Identifiable, Equatable {
+    var displayName: String
+    var sourceIndex: Int
+    var destinationIndex: Int
+    var sourceUniqueID: Int32?
+    var destinationUniqueID: Int32?
+
+    var id: String {
+        "\(displayName)|\(sourceUniqueID ?? -1)|\(destinationUniqueID ?? -1)|\(sourceIndex)|\(destinationIndex)"
+    }
+}
+
 @MainActor
 final class LiveKeyboardDisplayModel: ObservableObject {
     @Published var status = "Off"
@@ -69,6 +88,7 @@ final class DocumentModel: ObservableObject {
     @Published var midiDestinations: [FB01MIDIEndpoint] = []
     @Published var selectedSourceIndex = 0
     @Published var selectedDestinationIndex = 0
+    @Published private var deviceMIDIRoutes: [EditorDeviceSelection: DeviceMIDIRouteSelection] = [:]
     @Published var selectedKeyboardSourceIndex = 0
     @Published var externalKeyboardEnabled = false
     @Published var externalKeyboardVolume = 127
@@ -164,6 +184,22 @@ final class DocumentModel: ObservableObject {
         static func deviceMemoryProtect(_ index: Int) -> String {
             "FB01Editor.devicePreference.\(index).memoryProtect"
         }
+
+        static func deviceSourceIndex(_ device: EditorDeviceSelection) -> String {
+            "FB01Editor.\(device.rawValue).selectedMIDISourceIndex"
+        }
+
+        static func deviceSourceUniqueID(_ device: EditorDeviceSelection) -> String {
+            "FB01Editor.\(device.rawValue).selectedMIDISourceUniqueID"
+        }
+
+        static func deviceDestinationIndex(_ device: EditorDeviceSelection) -> String {
+            "FB01Editor.\(device.rawValue).selectedMIDIDestinationIndex"
+        }
+
+        static func deviceDestinationUniqueID(_ device: EditorDeviceSelection) -> String {
+            "FB01Editor.\(device.rawValue).selectedMIDIDestinationUniqueID"
+        }
     }
 
     init() {
@@ -216,6 +252,7 @@ final class DocumentModel: ObservableObject {
         let savedDeviceCount = UserDefaults.standard.integer(forKey: DefaultsKey.preferredDeviceCount)
         preferredDeviceCount = (1...4).contains(savedDeviceCount) ? savedDeviceCount : 1
         loadDevicePreferences()
+        loadStoredDeviceMIDIRoutes()
         externalKeyboardVolume = systemMasterOutputLevel
         refreshExternalKeyboardRealtimeState()
         refreshMIDIEndpoints()
@@ -402,6 +439,73 @@ final class DocumentModel: ObservableObject {
 
     var selectedKeyboardSourceName: String {
         midiSources.first { $0.index == selectedKeyboardSourceIndex }?.displayName ?? "Input \(selectedKeyboardSourceIndex)"
+    }
+
+    func selectedSourceName(for device: EditorDeviceSelection) -> String {
+        guard let route = deviceMIDIRoutes[device] else {
+            return selectedSourceName
+        }
+        return midiSources.first { $0.index == route.sourceIndex }?.displayName ?? "Source \(route.sourceIndex)"
+    }
+
+    func selectedDestinationName(for device: EditorDeviceSelection) -> String {
+        guard let route = deviceMIDIRoutes[device] else {
+            return selectedDestinationName
+        }
+        return midiDestinations.first { $0.index == route.destinationIndex }?.displayName ?? "Destination \(route.destinationIndex)"
+    }
+
+    func selectedSourceIndex(for device: EditorDeviceSelection) -> Int {
+        deviceMIDIRoutes[device]?.sourceIndex ?? selectedSourceIndex
+    }
+
+    func selectedDestinationIndex(for device: EditorDeviceSelection) -> Int {
+        deviceMIDIRoutes[device]?.destinationIndex ?? selectedDestinationIndex
+    }
+
+    func currentMIDIRoute(for device: EditorDeviceSelection) -> DeviceMIDIRouteSelection {
+        deviceMIDIRoutes[device] ?? DeviceMIDIRouteSelection(
+            sourceIndex: selectedSourceIndex,
+            destinationIndex: selectedDestinationIndex,
+            sourceUniqueID: midiSources.first(where: { $0.index == selectedSourceIndex })?.uniqueID,
+            destinationUniqueID: midiDestinations.first(where: { $0.index == selectedDestinationIndex })?.uniqueID
+        )
+    }
+
+    func midiInterfaceOptions() -> [MIDIInterfaceOption] {
+        let destinationsByName = Dictionary(grouping: midiDestinations, by: \.displayName)
+        return midiSources.compactMap { source in
+            guard let destination = destinationsByName[source.displayName]?.first else {
+                return nil
+            }
+            return MIDIInterfaceOption(
+                displayName: source.displayName,
+                sourceIndex: source.index,
+                destinationIndex: destination.index,
+                sourceUniqueID: source.uniqueID,
+                destinationUniqueID: destination.uniqueID
+            )
+        }
+    }
+
+    func selectedMIDIInterfaceOption(for device: EditorDeviceSelection) -> MIDIInterfaceOption? {
+        let route = currentMIDIRoute(for: device)
+        return midiInterfaceOptions().first {
+            $0.sourceIndex == route.sourceIndex && $0.destinationIndex == route.destinationIndex
+        }
+    }
+
+    func selectMIDIInterface(_ option: MIDIInterfaceOption, for device: EditorDeviceSelection) {
+        setMIDIRoute(
+            DeviceMIDIRouteSelection(
+                sourceIndex: option.sourceIndex,
+                destinationIndex: option.destinationIndex,
+                sourceUniqueID: option.sourceUniqueID,
+                destinationUniqueID: option.destinationUniqueID
+            ),
+            for: device,
+            activateIfSelected: true
+        )
     }
 
     var deviceCacheSummaryRows: [KeyValueRow] {
@@ -633,31 +737,24 @@ final class DocumentModel: ObservableObject {
         }
 
         if selectedEditorDevice == device {
-            switch device {
-            case .fb01:
-                refreshExternalKeyboardRealtimeState()
-                return
-            case .dx100:
-                refreshExternalKeyboardRealtimeState()
-                if cachedDX100VoiceBanks[1] != nil {
-                    deviceCacheStatus = "Loaded 1 item"
-                    statusMessage = "Using cached DX100 Internal bank."
-                    errorMessage = nil
-                    return
-                }
+            applyMIDIRouteForSelectedDevice()
+            refreshExternalKeyboardRealtimeState()
+            if device == .dx100, cachedDX100VoiceBanks[1] != nil {
+                deviceCacheStatus = "Loaded 1 item"
+                statusMessage = "Using cached DX100 Internal bank."
+                errorMessage = nil
             }
+            return
         }
 
         selectedEditorDevice = device
+        applyMIDIRouteForSelectedDevice()
         refreshExternalKeyboardRealtimeState()
         switch device {
         case .fb01:
-            refreshDeviceCache(
-                reason: "Fetching FB-01 device cache",
-                voiceBanksToFetch: FB01ModuleServices.shared.module.fullDeviceCacheScope.voiceBanks,
-                fetchConfigurations: true,
-                showsDeviceNotFoundAlert: true
-            )
+            deviceCacheStatus = cachedVoiceBanks.isEmpty && cachedConfigurations.isEmpty ? "On-demand fetch" : "Loaded on demand"
+            statusMessage = "FB-01 selected. Voices and configurations will be fetched on demand."
+            errorMessage = nil
         case .dx100:
             if cachedDX100VoiceBanks[1] != nil {
                 deviceCacheStatus = "Loaded 1 item"
@@ -2419,13 +2516,6 @@ final class DocumentModel: ObservableObject {
         midiSources = FB01MIDI.availableSources()
         midiDestinations = FB01MIDI.availableDestinations()
 
-        if let storedSource = storedUniqueID(for: DefaultsKey.sourceUniqueID),
-           let source = midiSources.first(where: { $0.uniqueID == storedSource }) {
-            selectedSourceIndex = source.index
-        } else if !midiSources.contains(where: { $0.index == selectedSourceIndex }) {
-            selectedSourceIndex = midiSources.first?.index ?? 0
-        }
-
         if let storedKeyboardSource = storedUniqueID(for: DefaultsKey.keyboardSourceUniqueID),
            let source = midiSources.first(where: { $0.uniqueID == storedKeyboardSource }) {
             selectedKeyboardSourceIndex = source.index
@@ -2433,12 +2523,8 @@ final class DocumentModel: ObservableObject {
             selectedKeyboardSourceIndex = midiSources.first?.index ?? 0
         }
 
-        if let storedDestination = storedUniqueID(for: DefaultsKey.destinationUniqueID),
-           let destination = midiDestinations.first(where: { $0.uniqueID == storedDestination }) {
-            selectedDestinationIndex = destination.index
-        } else if !midiDestinations.contains(where: { $0.index == selectedDestinationIndex }) {
-            selectedDestinationIndex = midiDestinations.first?.index ?? 0
-        }
+        restoreDeviceMIDIRoutes()
+        applyMIDIRouteForSelectedDevice()
 
         if selectedDestinationIndex != previousDestinationIndex {
             invalidateKeyboardPreparation()
@@ -2450,12 +2536,14 @@ final class DocumentModel: ObservableObject {
 
     func selectSource(_ source: FB01MIDIEndpoint) {
         selectedSourceIndex = source.index
+        persistActiveDeviceRoute()
         persistSelectedEndpoints()
         refreshExternalKeyboardRealtimeState()
     }
 
     func selectDestination(_ destination: FB01MIDIEndpoint) {
         selectedDestinationIndex = destination.index
+        persistActiveDeviceRoute()
         invalidateKeyboardPreparation()
         persistSelectedEndpoints()
         refreshExternalKeyboardRealtimeState()
@@ -4866,6 +4954,122 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    private func loadStoredDeviceMIDIRoutes() {
+        for device in EditorDeviceSelection.allCases {
+            let sourceIndex = UserDefaults.standard.integer(forKey: DefaultsKey.deviceSourceIndex(device))
+            let destinationIndex = UserDefaults.standard.integer(forKey: DefaultsKey.deviceDestinationIndex(device))
+            let sourceUniqueID = storedUniqueID(for: DefaultsKey.deviceSourceUniqueID(device))
+            let destinationUniqueID = storedUniqueID(for: DefaultsKey.deviceDestinationUniqueID(device))
+            deviceMIDIRoutes[device] = DeviceMIDIRouteSelection(
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                sourceUniqueID: sourceUniqueID,
+                destinationUniqueID: destinationUniqueID
+            )
+        }
+    }
+
+    private func restoreDeviceMIDIRoutes() {
+        for device in EditorDeviceSelection.allCases {
+            let fallback = deviceMIDIRoutes[device] ?? DeviceMIDIRouteSelection(
+                sourceIndex: midiSources.first?.index ?? 0,
+                destinationIndex: midiDestinations.first?.index ?? 0,
+                sourceUniqueID: nil,
+                destinationUniqueID: nil
+            )
+            deviceMIDIRoutes[device] = resolvedMIDIRoute(from: fallback)
+        }
+    }
+
+    private func resolvedMIDIRoute(from route: DeviceMIDIRouteSelection) -> DeviceMIDIRouteSelection {
+        let sourceIndex: Int
+        let sourceUniqueID: Int32?
+        if let storedSourceID = route.sourceUniqueID,
+           let source = midiSources.first(where: { $0.uniqueID == storedSourceID }) {
+            sourceIndex = source.index
+            sourceUniqueID = source.uniqueID
+        } else if let source = midiSources.first(where: { $0.index == route.sourceIndex }) {
+            sourceIndex = source.index
+            sourceUniqueID = source.uniqueID
+        } else {
+            sourceIndex = midiSources.first?.index ?? 0
+            sourceUniqueID = midiSources.first?.uniqueID
+        }
+
+        let destinationIndex: Int
+        let destinationUniqueID: Int32?
+        if let storedDestinationID = route.destinationUniqueID,
+           let destination = midiDestinations.first(where: { $0.uniqueID == storedDestinationID }) {
+            destinationIndex = destination.index
+            destinationUniqueID = destination.uniqueID
+        } else if let destination = midiDestinations.first(where: { $0.index == route.destinationIndex }) {
+            destinationIndex = destination.index
+            destinationUniqueID = destination.uniqueID
+        } else {
+            destinationIndex = midiDestinations.first?.index ?? 0
+            destinationUniqueID = midiDestinations.first?.uniqueID
+        }
+
+        return DeviceMIDIRouteSelection(
+            sourceIndex: sourceIndex,
+            destinationIndex: destinationIndex,
+            sourceUniqueID: sourceUniqueID,
+            destinationUniqueID: destinationUniqueID
+        )
+    }
+
+    private func setMIDIRoute(
+        _ route: DeviceMIDIRouteSelection,
+        for device: EditorDeviceSelection,
+        activateIfSelected: Bool
+    ) {
+        let resolved = resolvedMIDIRoute(from: route)
+        deviceMIDIRoutes[device] = resolved
+        UserDefaults.standard.set(resolved.sourceIndex, forKey: DefaultsKey.deviceSourceIndex(device))
+        UserDefaults.standard.set(resolved.destinationIndex, forKey: DefaultsKey.deviceDestinationIndex(device))
+        if let sourceUniqueID = resolved.sourceUniqueID {
+            UserDefaults.standard.set(Int(sourceUniqueID), forKey: DefaultsKey.deviceSourceUniqueID(device))
+        } else {
+            UserDefaults.standard.removeObject(forKey: DefaultsKey.deviceSourceUniqueID(device))
+        }
+        if let destinationUniqueID = resolved.destinationUniqueID {
+            UserDefaults.standard.set(Int(destinationUniqueID), forKey: DefaultsKey.deviceDestinationUniqueID(device))
+        } else {
+            UserDefaults.standard.removeObject(forKey: DefaultsKey.deviceDestinationUniqueID(device))
+        }
+
+        if activateIfSelected, selectedEditorDevice == device {
+            selectedSourceIndex = resolved.sourceIndex
+            selectedDestinationIndex = resolved.destinationIndex
+            persistSelectedEndpoints()
+            refreshExternalKeyboardRealtimeState()
+        }
+    }
+
+    private func applyMIDIRouteForSelectedDevice() {
+        guard let selectedEditorDevice else {
+            return
+        }
+        let resolved = resolvedMIDIRoute(from: currentMIDIRoute(for: selectedEditorDevice))
+        selectedSourceIndex = resolved.sourceIndex
+        selectedDestinationIndex = resolved.destinationIndex
+        deviceMIDIRoutes[selectedEditorDevice] = resolved
+        persistSelectedEndpoints()
+    }
+
+    private func persistActiveDeviceRoute() {
+        guard let selectedEditorDevice else {
+            return
+        }
+        let current = DeviceMIDIRouteSelection(
+            sourceIndex: selectedSourceIndex,
+            destinationIndex: selectedDestinationIndex,
+            sourceUniqueID: midiSources.first(where: { $0.index == selectedSourceIndex })?.uniqueID,
+            destinationUniqueID: midiDestinations.first(where: { $0.index == selectedDestinationIndex })?.uniqueID
+        )
+        setMIDIRoute(current, for: selectedEditorDevice, activateIfSelected: false)
+    }
+
     private func invalidateKeyboardPreparation() {
         preparedKeyboardVoiceSignature = nil
         preparedKeyboardVoiceDate = nil
@@ -5619,13 +5823,9 @@ final class DocumentModel: ObservableObject {
             return
         }
 
-        guard selectedEditorDevice == .dx100 else {
-            statusMessage = "Reset is currently available for DX100 only."
-            return
-        }
-
-        let destinationIndex = selectedDestinationIndex
-        let destinationName = selectedDestinationName
+        let resolved = resolvedMIDIRoute(from: currentMIDIRoute(for: .dx100))
+        let destinationIndex = resolved.destinationIndex
+        let destinationName = midiDestinations.first(where: { $0.index == destinationIndex })?.displayName ?? "Destination \(destinationIndex)"
         let channel = min(max(systemChannel, 0), 15)
 
         Task(priority: .high) { [weak self] in
