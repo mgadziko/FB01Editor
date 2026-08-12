@@ -970,7 +970,8 @@ final class DocumentModel: ObservableObject {
             do {
                 let bank = try await Task.detached(priority: .userInitiated) {
                     try EditorVoiceDocumentService.receiveDX100InternalBankManually(
-                        sourceIndex: sourceIndex
+                        sourceIndex: sourceIndex,
+                        shouldCancel: { Task.isCancelled }
                     )
                 }.value
                 let voices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
@@ -1462,7 +1463,10 @@ final class DocumentModel: ObservableObject {
                 )
 
                 let refreshedBank = try await Task.detached(priority: .userInitiated) {
-                    try EditorVoiceDocumentService.receiveDX100InternalBankManually(sourceIndex: sourceIndex)
+                    try EditorVoiceDocumentService.receiveDX100InternalBankManually(
+                        sourceIndex: sourceIndex,
+                        shouldCancel: { Task.isCancelled }
+                    )
                 }.value
 
                 try? await Task.detached(priority: .userInitiated) {
@@ -2129,7 +2133,8 @@ final class DocumentModel: ObservableObject {
             let bank = try await Task.detached(priority: .userInitiated) {
                 try EditorVoiceDocumentService.receiveDX100InternalBankManually(
                     sourceIndex: sourceIndex,
-                    timeout: 40
+                    timeout: 40,
+                    shouldCancel: { Task.isCancelled }
                 )
             }.value
             try? await Task.detached(priority: .userInitiated) {

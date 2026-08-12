@@ -403,7 +403,8 @@ public enum FB01MIDI {
     public static func receiveSysEx(
         sourceIndex: Int,
         timeout: TimeInterval = 15,
-        maxMessages: Int = 1
+        maxMessages: Int = 1,
+        shouldCancel: (() -> Bool)? = nil
     ) throws -> [[UInt8]] {
         requestLock.lock()
         defer { requestLock.unlock() }
@@ -422,11 +423,18 @@ public enum FB01MIDI {
 
         let start = Date()
         while Date().timeIntervalSince(start) < timeout {
+            if shouldCancel?() == true {
+                throw CancellationError()
+            }
             RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.05))
             let received = state.snapshot()
             if received.count >= maxMessages {
                 return Array(received.prefix(maxMessages))
             }
+        }
+
+        if shouldCancel?() == true {
+            throw CancellationError()
         }
 
         let received = state.snapshot()

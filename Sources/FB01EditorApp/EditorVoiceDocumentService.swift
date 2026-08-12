@@ -164,12 +164,14 @@ enum EditorVoiceDocumentService {
 
     static func receiveDX100InternalBankManually(
         sourceIndex: Int,
-        timeout: Double = 25
+        timeout: Double = 25,
+        shouldCancel: (() -> Bool)? = nil
     ) throws -> DX100VoiceBankData {
         let responseMessages = try FB01MIDI.receiveSysEx(
             sourceIndex: sourceIndex,
             timeout: timeout,
-            maxMessages: 1
+            maxMessages: 1,
+            shouldCancel: shouldCancel
         )
         guard let response = responseMessages.first else {
             throw FB01MIDIError.timedOut("manual DX100 Internal bank")

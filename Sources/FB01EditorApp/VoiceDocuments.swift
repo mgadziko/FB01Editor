@@ -1193,7 +1193,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     )
 
                     refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
-                        try EditorVoiceDocumentService.receiveDX100InternalBankManually(sourceIndex: sourceIndex)
+                        try EditorVoiceDocumentService.receiveDX100InternalBankManually(
+                            sourceIndex: sourceIndex,
+                            shouldCancel: { Task.isCancelled }
+                        )
                     }.value
 
                     try? await Task.detached(priority: .userInitiated) {
@@ -2651,7 +2654,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     ) throws -> [DX100VoiceData] {
         let voiceBank = try EditorVoiceDocumentService.receiveDX100InternalBankManually(
             sourceIndex: sourceIndex,
-            timeout: 25
+            timeout: 25,
+            shouldCancel: { Task.isCancelled }
         )
         return (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
             try? voiceBank.voice(atPackedVoiceIndex: index)
