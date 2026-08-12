@@ -1305,21 +1305,23 @@ final class DocumentModel: ObservableObject {
         voices: [DX100VoiceData],
         sourceDescription: String
     ) {
+        let sourceIndex = selectedSourceIndex
         let destinationIndex = selectedDestinationIndex
         let destinationName = selectedDestinationName
         let systemChannel = systemChannel
 
         isFetchingFromDevice = true
-        statusMessage = "Preparing to store \(sourceDescription) in DX100 Internal..."
+        statusMessage = "Storing \(sourceDescription) in DX100 Internal..."
         errorMessage = nil
 
         let progressPanel = EditorProgressPanel(
             title: "Store Voice Bank",
-            message: "The voice bank is being stored. Please wait.\nStoring \(sourceDescription) in DX100 Internal..."
+            message: "The voice bank is being stored. Please wait.\nWriting \(sourceDescription) into DX100 Internal..."
         )
         progressPanel.show()
 
         Task {
+            var didWriteInternalBank = false
             do {
                 try await Task.detached(priority: .userInitiated) {
                     try EditorVoiceDocumentService.writeDX100InternalBank(
@@ -1328,6 +1330,7 @@ final class DocumentModel: ObservableObject {
                         systemChannel: systemChannel
                     )
                 }.value
+                didWriteInternalBank = true
 
                 try? await Task.detached(priority: .userInitiated) {
                     try EditorVoiceDocumentService.recoverDX100PlayMode(
@@ -1336,18 +1339,144 @@ final class DocumentModel: ObservableObject {
                     )
                 }.value
 
-                cacheDX100VoiceBank(voices, bank: 1, rawBank: bankData)
+                progressPanel.update(
+                    message: "The voice bank is being stored. Please wait.\nReady to confirm DX100 Internal from a manual Internal bank dump..."
+                )
+
+                guard confirmDX100ManualInternalBankDumpVerify(sourceDescription: sourceDescription) else {
+                    throw FB01AppError.message("Manual DX100 bank verify was cancelled.")
+                }
+
+                progressPanel.update(
+                    message: "The voice bank is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to confirm the stored bank..."
+                )
+
+                let refreshedBank = try await Task.detached(priority: .userInitiated) {
+                    try EditorVoiceDocumentService.receiveDX100InternalBankManually(sourceIndex: sourceIndex)
+                }.value
+
+                try? await Task.detached(priority: .userInitiated) {
+                    try EditorVoiceDocumentService.recoverDX100PlayMode(
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        settleDelay: 0.35
+                    )
+                }.value
+
+                let refreshedVoices = (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
+                    try? refreshedBank.voice(atPackedVoiceIndex: index)
+                }
+
+                guard dx100DisplayedVoicesMatch(expected: voices, actual: refreshedVoices) else {
+                    throw FB01AppError.message("DX100 Internal did not match the stored bank after storing.")
+                }
+
+                cacheDX100VoiceBank(refreshedVoices, bank: 1, rawBank: refreshedBank)
                 requestVoiceBankWindowOpen(selection: DeviceVoiceBankWindowSelection(device: .dx100, bank: 1))
                 statusMessage = "Stored \(sourceDescription) in DX100 Internal on \(destinationName)."
                 errorMessage = nil
             } catch {
-                statusMessage = nil
-                errorMessage = "Store Bank failed: \(error)"
+                if didWriteInternalBank {
+                    cacheDX100VoiceBank(voices, bank: 1, rawBank: bankData)
+                    requestVoiceBankWindowOpen(selection: DeviceVoiceBankWindowSelection(device: .dx100, bank: 1))
+                    statusMessage = "Stored \(sourceDescription) in DX100 Internal on \(destinationName). Forest could not confirm the result automatically."
+                    errorMessage = "DX100 store verify warning: \(error)"
+                    showEditorError(
+                        title: "DX100 Store Sent - Confirmation Incomplete",
+                        message: """
+                        Forest sent the DX100 Internal bank write for \(sourceDescription), but the confirmation step did not confirm it.
+
+                        \(error)
+
+                        Notes:
+                        • the DX100 front-panel voice display does not necessarily change immediately after a bank write
+                        • MEMORY PROTECT must be OFF
+                        • reopening Internal is a good final confirmation
+                        """
+                    )
+                } else {
+                    statusMessage = nil
+                    errorMessage = "Store Bank failed: \(error)"
+                    showEditorError(
+                        title: "Store to DX100 Internal Failed",
+                        message: """
+                        \(error)
+
+                        Forest built the Internal bank write and sent it to the DX100, but the store did not complete.
+
+                        Notes:
+                        • MEMORY PROTECT must be OFF on the DX100
+                        • if the DX100 remains in an edit/programming state, use DX PLAY from Live Keyboard
+                        """
+                    )
+                }
             }
 
             progressPanel.dismiss()
             isFetchingFromDevice = false
         }
+    }
+
+    @MainActor
+    private func confirmDX100ManualInternalBankDumpVerify(sourceDescription: String) -> Bool {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Confirm DX100 Store"
+        alert.informativeText = """
+        Forest wrote \(sourceDescription) to the DX100 Internal bank.
+
+        To confirm the result, please trigger a manual Internal bank dump on the DX100 now:
+        1. Press FUNCTION
+        2. Select 5: SYS INFO
+        3. Confirm SYS INFO = ON
+        4. Press SYS INFO again to show “MIDI Transmit?”
+        5. Press YES
+
+        Forest will listen for the manual Internal dump and use it to confirm the store.
+        """
+        alert.addButton(withTitle: "Listen")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func dx100DisplayedVoicesMatch(expected: [DX100VoiceData], actual: [DX100VoiceData]) -> Bool {
+        guard expected.count == actual.count else {
+            return false
+        }
+
+        for (expectedVoice, actualVoice) in zip(expected, actual) {
+            if expectedVoice == actualVoice {
+                continue
+            }
+
+            let neutralMatch = expectedVoice.fourOperatorVoice == actualVoice.fourOperatorVoice
+            let parameterMatchExcludingName: Bool = {
+                var actualBytes = actualVoice.bytes
+                var expectedBytes = expectedVoice.bytes
+                actualBytes.replaceSubrange(77..<87, with: Array(repeating: 0x20, count: DX100VoiceData.nameLength))
+                expectedBytes.replaceSubrange(77..<87, with: Array(repeating: 0x20, count: DX100VoiceData.nameLength))
+                return actualBytes == expectedBytes
+            }()
+            let nameMatch =
+                actualVoice.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                == expectedVoice.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let truncatedPrefixNameMatch: Bool = {
+                let actualName = actualVoice.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let expectedName = expectedVoice.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !actualName.isEmpty
+                    && !expectedName.isEmpty
+                    && (expectedName.hasPrefix(actualName) || actualName.hasPrefix(expectedName))
+            }()
+
+            if neutralMatch || parameterMatchExcludingName || nameMatch || truncatedPrefixNameMatch {
+                continue
+            }
+
+            return false
+        }
+
+        return true
     }
 
     func storeFB01VoiceBankFileSelectorToDevice(_ selector: EditorDocumentWorkspace.FB01VoiceBankFileSelector, targetBank: Int) {

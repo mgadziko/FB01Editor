@@ -429,7 +429,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     var linkedBankWindowStoreTitle: String? {
         sourceDevice == .dx100
-            ? "Store Voice to Internal Bank Document..."
+            ? "Store Current Voice in Current Bank Document..."
             : "Store Voice to Open Bank Window (Forest Only)..."
     }
 
@@ -1715,7 +1715,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     ) -> DX100DeviceBankStoreTarget? {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Store Voice to Internal Bank Document"
+        alert.messageText = "Store Current Voice in Current Bank Document"
         alert.informativeText = "Choose which slot in the open DX100 Internal Bank document should receive this voice."
         alert.addButton(withTitle: "Store")
         alert.addButton(withTitle: "Cancel")
@@ -2568,7 +2568,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private func chooseDX100InternalStoreTarget(device: DocumentModel) -> DX100DeviceBankVoiceOrigin? {
         let alert = NSAlert()
         alert.messageText = "Store Voice to DX100 Internal Slot"
-        alert.informativeText = "Choose which Internal slot should permanently store \(displayName). Forest will fetch the current Internal bank, replace the selected slot, write the rebuilt bank back to the DX100, and verify the result."
+        alert.informativeText = "Choose which Internal slot should permanently store \(displayName). Forest will fetch the current Internal bank, replace the selected slot, write the rebuilt bank back to the DX100, and then confirm the result."
         alert.addButton(withTitle: "Continue")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
@@ -2590,7 +2590,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
 
         stack.addArrangedSubview(labelledEditorPopup(label: "Internal slot:", popup: slotPopup))
-        stack.addArrangedSubview(makeWarningLabel("MEMORY PROTECT must be OFF on the DX100. Forest will verify the result by refetching the Internal bank after the write completes."))
+        stack.addArrangedSubview(makeWarningLabel("MEMORY PROTECT must be OFF on the DX100. Forest will confirm the result after the write completes."))
         alert.accessoryView = stack
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -2612,18 +2612,18 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private func confirmDX100ManualInternalDumpVerify(slotIndex: Int, voiceName: String) -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Manual DX100 Verify"
+        alert.messageText = "Confirm DX100 Store"
         alert.informativeText = """
-        Forest wrote \(voiceName) to DX100 Internal slot \(slotIndex + 1), but the automatic verify fetch did not reply.
+        Forest wrote \(voiceName) to DX100 Internal slot \(slotIndex + 1).
 
-        Please trigger a manual Internal bank dump on the DX100 now:
+        To confirm the result, please trigger a manual Internal bank dump on the DX100 now:
         1. Press FUNCTION
         2. Select 5: SYS INFO
         3. Confirm SYS INFO = ON
         4. Press SYS INFO again to show “MIDI Transmit?”
         5. Press YES
 
-        Forest will listen for the manual Internal dump and use it to verify the store.
+        Forest will listen for the manual Internal dump and use it to confirm the store.
         """
         alert.addButton(withTitle: "Listen")
         alert.addButton(withTitle: "Cancel")
