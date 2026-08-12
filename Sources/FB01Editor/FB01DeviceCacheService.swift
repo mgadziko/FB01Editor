@@ -124,6 +124,7 @@ public struct FB01DeviceCacheService: SynthDeviceCacheServicing {
         destinationIndex: Int,
         systemChannel: Int,
         profile: FB01DeviceCacheFetchProfile = .launch,
+        shouldCancel: (@Sendable () -> Bool)? = nil,
         progress: (@Sendable (FB01DeviceCacheEvent, Double, Double) async -> Void)? = nil
     ) async -> FB01DeviceCacheResult {
         let voiceBanks = normalizedVoiceBanks(requestedVoiceBanks)
@@ -156,7 +157,8 @@ public struct FB01DeviceCacheService: SynthDeviceCacheServicing {
                     systemChannel: systemChannel,
                     timeoutPerRequest: 3.0,
                     timeoutForRequest: profile.timeout(for:),
-                    delayBetweenRequests: profile.delayBetweenRequests
+                    delayBetweenRequests: profile.delayBetweenRequests,
+                    shouldCancel: shouldCancel
                 ) { kind, completed, total in
                     Task {
                         await progress?(Self.cacheEvent(for: kind), Double(completed), Double(total))

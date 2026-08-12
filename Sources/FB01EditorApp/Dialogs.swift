@@ -32,6 +32,30 @@ struct DeviceConfigurationCopySelection: Equatable {
     var targetSlot: Int
 }
 
+final class EditorCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    func reset() {
+        lock.lock()
+        cancelled = false
+        lock.unlock()
+    }
+
+    func isCancelled() -> Bool {
+        lock.lock()
+        let value = cancelled
+        lock.unlock()
+        return value
+    }
+}
+
 final class DeviceConfigurationCopyAccessory: NSView {
     private let sourceSlotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let targetSlotPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -344,6 +368,8 @@ func confirmDX100AssistedBankCaptureStart(bankTitle: String) -> Bool {
 
 @MainActor
 final class EditorProgressPanel {
+    private static weak var activeCancelablePanel: EditorProgressPanel?
+
     private let panel: NSPanel
     private let messageLabel: NSTextField
     private let progress: NSProgressIndicator
@@ -402,12 +428,18 @@ final class EditorProgressPanel {
         progress.startAnimation(nil)
         panel.orderFrontRegardless()
         panel.makeKeyAndOrderFront(nil)
+        if onCancel != nil {
+            Self.activeCancelablePanel = self
+        }
         NSApp.activate(ignoringOtherApps: true)
     }
 
     func dismiss() {
         progress.stopAnimation(nil)
         panel.orderOut(nil)
+        if Self.activeCancelablePanel === self {
+            Self.activeCancelablePanel = nil
+        }
     }
 
     func update(message: String) {
@@ -426,6 +458,10 @@ final class EditorProgressPanel {
         cancelButton.isEnabled = false
         update(message: "Canceling after the current MIDI operation finishes...")
         onCancel?()
+    }
+
+    static func cancelActiveOperation() {
+        activeCancelablePanel?.cancel()
     }
 }
 

@@ -1100,11 +1100,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 return
             }
             isBusy = true
-            statusMessage = "Fetching the DX100 Internal bank before storing \(displayName)..."
+            statusMessage = "Preparing DX100 Internal slot \(target.slotIndex + 1) for \(displayName)..."
             errorMessage = nil
             let progressPanel = EditorProgressPanel(
                 title: "Store Voice",
-                message: "The voice is being stored. Please wait.\nFetching the current DX100 Internal bank..."
+                message: "The voice is being stored. Please wait.\nPreparing DX100 Internal slot \(target.slotIndex + 1)..."
             )
             progressPanel.show()
             Task {
@@ -1149,7 +1149,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                                     case .verifying(let slotIndex):
                                         Task { @MainActor in
                                             progressPanel.update(
-                                                message: "The voice is being stored. Please wait.\nVerifying DX100 Internal slot \(slotIndex + 1) by refetching the Internal bank..."
+                                                message: "The voice is being stored. Please wait.\nChecking DX100 Internal slot \(slotIndex + 1) after the write..."
                                             )
                                         }
                                     }
@@ -1162,7 +1162,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                            request == "long SysEx send",
                            shouldAllowUnconfirmedBluetoothSend {
                             progressPanel.update(
-                                message: "The voice is being stored. Please wait.\nDX100 write send did not confirm over Bluetooth. Forest is verifying the Internal bank now..."
+                                message: "The voice is being stored. Please wait.\nDX100 write send did not confirm over Bluetooth. Forest is checking the Internal bank now..."
                             )
                             didWriteToInternalDXSlot = true
                         } else {
@@ -1179,17 +1179,17 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     }.value
 
                     progressPanel.update(
-                        message: "The voice is being stored. Please wait.\nReady to verify DX100 Internal slot \(target.slotIndex + 1) from a manual Internal bank dump..."
+                        message: "The voice is being stored. Please wait.\nReady to confirm DX100 Internal slot \(target.slotIndex + 1) from a manual Internal bank dump..."
                     )
 
                     let refreshedInternalBank: DX100VoiceBankData
                     guard shouldOfferDX100ManualInternalDumpFallback(device: device),
                           confirmDX100ManualInternalDumpVerify(slotIndex: target.slotIndex, voiceName: voiceDisplayName) else {
-                        throw FB01AppError.message("Manual DX100 verify was cancelled.")
+                        throw FB01AppError.message("Manual DX100 confirmation was cancelled.")
                     }
 
                     progressPanel.update(
-                        message: "The voice is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to verify slot \(target.slotIndex + 1)..."
+                        message: "The voice is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to confirm slot \(target.slotIndex + 1)..."
                     )
 
                     refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
@@ -1264,12 +1264,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             bankTitle: "Internal"
                         )
                         markCurrentStateSaved()
-                        statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName). Forest could not verify the result automatically."
-                        errorMessage = "DX100 store verify warning: \(error)"
+                        statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName). Forest could not confirm the result automatically."
+                        errorMessage = "DX100 store confirmation warning: \(error)"
                         showEditorError(
-                            title: "DX100 Store Sent - Verify Incomplete",
+                            title: "DX100 Store Sent - Confirmation Incomplete",
                             message: """
-                            Forest sent the write for DX100 Internal slot \(target.slotIndex + 1), but the verify step did not confirm it automatically.
+                            Forest sent the write for DX100 Internal slot \(target.slotIndex + 1), but the confirmation step did not confirm it automatically.
 
                             \(error)
 
@@ -1287,12 +1287,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             message: """
                             \(error)
 
-                            Forest fetched the Internal bank, attempted to rewrite the selected slot, then tried to verify the result by refetching Internal.
+                            Forest fetched the Internal bank, attempted to rewrite the selected slot, and then tried to confirm the result.
 
                             Notes:
                             • the DX100 front-panel voice display does not necessarily change immediately after a bank write
                             • MEMORY PROTECT must be OFF
-                            • if the write succeeded but verify failed, reopening Internal may still show whether the slot changed
+                            • if the write succeeded but confirmation failed, reopening Internal may still show whether the slot changed
                             """
                         )
                     }

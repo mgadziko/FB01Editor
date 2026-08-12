@@ -184,6 +184,7 @@ public enum FB01MIDI {
         timeoutPerRequest: TimeInterval,
         timeoutForRequest: ((FB01MIDIRequestKind) -> TimeInterval)? = nil,
         delayBetweenRequests: TimeInterval = 0.05,
+        shouldCancel: (() -> Bool)? = nil,
         progress: ((FB01MIDIRequestKind, Int, Int) -> Void)? = nil
     ) throws -> [FB01MIDIRequestBatchResult] {
         requestLock.lock()
@@ -210,6 +211,9 @@ public enum FB01MIDI {
         results.reserveCapacity(kinds.count)
 
         for (index, kind) in kinds.enumerated() {
+            if shouldCancel?() == true {
+                break
+            }
             progress?(kind, index, kinds.count)
             _ = state.drain()
 
@@ -220,6 +224,9 @@ public enum FB01MIDI {
                 var received: [UInt8]?
                 let timeout = timeoutForRequest?(kind) ?? timeoutPerRequest
                 while Date().timeIntervalSince(start) < timeout {
+                    if shouldCancel?() == true {
+                        break
+                    }
                     RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.02))
                     if let message = state.drain().first {
                         received = message
@@ -243,6 +250,9 @@ public enum FB01MIDI {
             }
 
             if delayBetweenRequests > 0, index < kinds.index(before: kinds.endIndex) {
+                if shouldCancel?() == true {
+                    break
+                }
                 Thread.sleep(forTimeInterval: delayBetweenRequests)
             }
         }

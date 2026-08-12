@@ -213,6 +213,14 @@ struct FB01EditorApplication: App {
                 }
             }
 
+            CommandGroup(after: .help) {
+                Button("Cancel Current Operation") {
+                    EditorProgressPanel.cancelActiveOperation()
+                }
+                .keyboardShortcut(".", modifiers: .command)
+                .disabled(!document.isBusy)
+            }
+
             CommandMenu("Voice") {
                 if document.selectedEditorDevice == nil {
                     Text("Select a device first.")

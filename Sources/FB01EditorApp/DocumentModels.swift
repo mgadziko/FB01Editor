@@ -127,6 +127,7 @@ final class DocumentModel: ObservableObject {
     private var externalVolumeTask: Task<Void, Never>?
     private var externalPortamentoTask: Task<Void, Never>?
     private var hasStartedLaunchDeviceCacheRefresh = false
+    private let activeProgressCancellation = EditorCancellationToken()
 
     private enum DefaultsKey {
         static let sourceIndex = "FB01Editor.selectedMIDISourceIndex"
@@ -631,6 +632,22 @@ final class DocumentModel: ObservableObject {
             return
         }
 
+        if selectedEditorDevice == device {
+            switch device {
+            case .fb01:
+                refreshExternalKeyboardRealtimeState()
+                return
+            case .dx100:
+                refreshExternalKeyboardRealtimeState()
+                if cachedDX100VoiceBanks[1] != nil {
+                    deviceCacheStatus = "Loaded 1 item"
+                    statusMessage = "Using cached DX100 Internal bank."
+                    errorMessage = nil
+                    return
+                }
+            }
+        }
+
         selectedEditorDevice = device
         refreshExternalKeyboardRealtimeState()
         switch device {
@@ -642,7 +659,13 @@ final class DocumentModel: ObservableObject {
                 showsDeviceNotFoundAlert: true
             )
         case .dx100:
-            beginDX100ManualInternalCaptureFromSelection()
+            if cachedDX100VoiceBanks[1] != nil {
+                deviceCacheStatus = "Loaded 1 item"
+                statusMessage = "Using cached DX100 Internal bank."
+                errorMessage = nil
+            } else {
+                beginDX100ManualInternalCaptureFromSelection()
+            }
         }
     }
 
@@ -676,6 +699,8 @@ final class DocumentModel: ObservableObject {
             completion?()
             return
         }
+
+        activeProgressCancellation.reset()
         isFetchingFromDevice = true
         deviceCacheStatus = "\(reason)..."
         statusMessage = "\(reason) from \(sourceName) -> \(destinationName)..."
@@ -683,20 +708,52 @@ final class DocumentModel: ObservableObject {
         let progressPanel: EditorProgressPanel? = if showsProgressPanel {
             EditorProgressPanel(
                 title: "Fetching FB-01 Device Cache",
-                message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait."
+                message: "The \(cacheProgressText.subject) \(cacheProgressText.verb) being cached. Please wait.",
+                showsCancelButton: true
             )
         } else {
             nil
         }
+        progressPanel?.onCancel = { [weak self] in
+            self?.activeProgressCancellation.cancel()
+        }
         progressPanel?.show()
 
         Task {
+            let devicePresent = await self.probeFB01Presence(
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                systemChannel: systemChannel
+            )
+
+            if !devicePresent {
+                await MainActor.run {
+                    self.deviceCacheStatus = "FB-01 not found"
+                    self.statusMessage = "No FB-01 response from \(sourceName) -> \(destinationName)."
+                    self.errorMessage = nil
+                    progressPanel?.dismiss()
+                    self.isFetchingFromDevice = false
+                    self.activeProgressCancellation.reset()
+                    if showsDeviceNotFoundAlert {
+                        showEditorError(
+                            title: "Device Not Found!",
+                            message: "Forest did not receive any FB-01 response on the selected MIDI input/output. Check the MIDI ports, cabling, and FB-01 power, then try again."
+                        )
+                    }
+                    completion?()
+                }
+                return
+            }
+
             let cacheResult = await services.cacheService.fetch(
                 voiceBanks: voiceBanksToFetch,
                 fetchConfigurations: fetchConfigurations,
                 sourceIndex: sourceIndex,
                 destinationIndex: destinationIndex,
-                systemChannel: systemChannel
+                systemChannel: systemChannel,
+                shouldCancel: { [activeProgressCancellation] in
+                    activeProgressCancellation.isCancelled()
+                }
             ) { event, completed, total in
                 await MainActor.run {
                     let detail = services.cacheService.progressDetail(for: event)
@@ -707,6 +764,17 @@ final class DocumentModel: ObservableObject {
                         total: total
                     )
                 }
+            }
+
+            if activeProgressCancellation.isCancelled() {
+                deviceCacheStatus = "Canceled"
+                statusMessage = "Canceled \(reason.lowercased())."
+                errorMessage = nil
+                progressPanel?.dismiss()
+                isFetchingFromDevice = false
+                activeProgressCancellation.reset()
+                completion?()
+                return
             }
 
             cachedVoiceBanks.merge(cacheResult.voiceBanks) { _, new in new }
@@ -732,11 +800,36 @@ final class DocumentModel: ObservableObject {
             errorMessage = nil
             progressPanel?.dismiss()
             isFetchingFromDevice = false
+            activeProgressCancellation.reset()
             if showsDeviceNotFoundAlert, cacheResult.loadedCount == 0 {
-                showEditorError(title: "Device Not Found!", message: "")
+                showEditorError(
+                    title: "Device Not Found!",
+                    message: "Forest did not receive any FB-01 cache data on the selected MIDI input/output."
+                )
             }
             completion?()
         }
+    }
+
+    private func probeFB01Presence(
+        sourceIndex: Int,
+        destinationIndex: Int,
+        systemChannel: Int
+    ) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            do {
+                _ = try FB01MIDI.request(
+                    .unitID,
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    timeout: 1.25
+                )
+                return true
+            } catch {
+                return false
+            }
+        }.value
     }
 
     func refreshDX100DeviceCache(showsFailureAlert: Bool = false) {
@@ -1743,8 +1836,8 @@ final class DocumentModel: ObservableObject {
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
             systemChannel: systemChannel,
-            profile: .selector
-        ) { event, completed, total in
+            profile: .selector,
+            progress: { event, completed, total in
             await MainActor.run {
                 let detail = services.cacheService.progressDetail(for: event)
                 self.statusMessage = "\(reason): \(detail)"
@@ -1754,7 +1847,7 @@ final class DocumentModel: ObservableObject {
                     total: total
                 )
             }
-        }
+        })
 
         cachedVoiceBanks.merge(cacheResult.voiceBanks) { _, new in new }
         cachedConfigurations.merge(cacheResult.configurations) { _, new in new }
