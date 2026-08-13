@@ -2099,6 +2099,9 @@ final class DocumentModel: ObservableObject {
                     cacheDX100VoiceBank(voices, bank: bank, rawBank: rawInternalBank)
                 } else {
                     cacheDX100VoiceBank(voices, bank: bank)
+                    if kind.requiresManualBulkCapture {
+                        requestVoiceBankWindowOpen(selection: DeviceVoiceBankWindowSelection(device: .dx100, bank: bank))
+                    }
                 }
                 deviceCacheStatus = "Loaded DX100 voice bank"
                 statusMessage = "Fetched DX100 \(bankTitle) from \(sourceName) -> \(destinationName)."
@@ -3856,11 +3859,8 @@ final class DocumentModel: ObservableObject {
     }
 
     func saveDX100VoiceBankFromSelector(bank: Int) {
-        guard selectedEditorDevice == .dx100 else {
-            return
-        }
         guard let voices = cachedDX100VoiceBanks[bank] else {
-            errorMessage = "Save Bank failed: \(selectedDeviceVoiceBankTitle(bank)) is not loaded yet."
+            errorMessage = "Save Bank failed: \(voiceBankTitle(device: .dx100, bank: bank)) is not loaded yet."
             statusMessage = nil
             return
         }
@@ -3868,7 +3868,7 @@ final class DocumentModel: ObservableObject {
         let panel = NSSavePanel()
         panel.allowedContentTypes = UTType.dx100VoiceBankFileTypes
         panel.directoryURL = preferredSaveDirectoryURL()
-        panel.nameFieldStringValue = "\(safeFileName(selectedDeviceVoiceBankTitle(bank))).\(DX100SynthModule.shared.fileProfile.voiceBankExtension)"
+        panel.nameFieldStringValue = "\(safeFileName(voiceBankTitle(device: .dx100, bank: bank))).\(DX100SynthModule.shared.fileProfile.voiceBankExtension)"
         panel.message = "Save the displayed DX100 bank as a voice bank file."
         panel.prompt = "Save Bank to File"
 
@@ -3881,7 +3881,7 @@ final class DocumentModel: ObservableObject {
             try DX100DocumentService.shared.writeVoiceBank(voiceBank, channel: systemChannel, to: url)
             rememberSaveDirectory(for: url)
             clearEditedVoiceBankSelection(DeviceVoiceBankWindowSelection(device: .dx100, bank: bank))
-            statusMessage = "Saved \(selectedDeviceVoiceBankTitle(bank)) to \(url.lastPathComponent)."
+            statusMessage = "Saved \(voiceBankTitle(device: .dx100, bank: bank)) to \(url.lastPathComponent)."
             errorMessage = nil
         } catch {
             errorMessage = "Save Bank failed: \(error)"

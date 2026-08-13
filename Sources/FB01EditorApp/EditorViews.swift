@@ -240,7 +240,7 @@ struct VoiceBankSelectorWindow: View {
             trailingStatusColor: .orange,
             showsTitle: false
         ) {
-            if allowsInternalDXSwapReorder {
+            if allowsDXBankDragEditing {
                 DXInternalVoiceBankReorderGrid(
                     items: items,
                     layout: layout,
@@ -343,8 +343,8 @@ struct VoiceBankSelectorWindow: View {
         }
     }
 
-    private var allowsInternalDXSwapReorder: Bool {
-        selection.device == .dx100 && selection.bank == 1
+    private var allowsDXBankDragEditing: Bool {
+        selection.device == .dx100
     }
 
     @ViewBuilder
@@ -360,7 +360,7 @@ struct VoiceBankSelectorWindow: View {
         .disabled(document.isBusy)
         .forestHoverHelp("Fetches \(item.fetchTitle) into a new Voice Document.")
         .modifier(DXCrossBankDragModifier(
-            enabled: selection.device == .dx100 && selection.bank != 1,
+            enabled: selection.device == .dx100,
             payload: VoiceBankDragPayload(
                 device: selection.device,
                 bank: selection.bank,
@@ -388,7 +388,7 @@ struct VoiceBankSelectorWindow: View {
     }
 
     private func handleVoiceBankDrop(payload: VoiceBankDragPayload, targetItem: VoiceBankSelectorItem) -> Bool {
-        guard allowsInternalDXSwapReorder else {
+        guard allowsDXBankDragEditing else {
             return false
         }
         guard payload.device == .dx100 else {
@@ -406,7 +406,7 @@ struct VoiceBankSelectorWindow: View {
                     with: targetItem.zeroBasedVoiceNumber
                 )
                 errorMessage = nil
-                document.statusMessage = "Swapped DX100 Internal voices \(payload.slotIndex + 1) and \(targetItem.displayNumber) in Forest."
+                document.statusMessage = "Swapped DX100 \(document.voiceBankTitle(device: .dx100, bank: selection.bank)) voices \(payload.slotIndex + 1) and \(targetItem.displayNumber) in Forest."
             } else {
                 guard let sourceVoice = document.cachedDX100Voice(inBank: payload.bank, slotIndex: payload.slotIndex) else {
                     throw FB01AppError.message("\(document.voiceBankTitle(device: .dx100, bank: payload.bank)) voice \(payload.slotIndex + 1) is not loaded yet.")
@@ -417,10 +417,10 @@ struct VoiceBankSelectorWindow: View {
                     with: sourceVoice
                 )
                 errorMessage = nil
-                document.statusMessage = "Placed DX100 \(document.voiceBankTitle(device: .dx100, bank: payload.bank)) voice \(payload.slotIndex + 1) into Internal slot \(targetItem.displayNumber) in Forest."
+                document.statusMessage = "Placed DX100 \(document.voiceBankTitle(device: .dx100, bank: payload.bank)) voice \(payload.slotIndex + 1) into \(document.voiceBankTitle(device: .dx100, bank: selection.bank)) slot \(targetItem.displayNumber) in Forest."
             }
         } catch {
-            errorMessage = "DX100 Internal rearrange failed: \(error)"
+            errorMessage = "DX100 bank rearrange failed: \(error)"
         }
 
         return true
@@ -496,6 +496,23 @@ private struct DXInternalVoiceBankReorderGrid: View {
 
         return tile
             .gesture(dragGesture(for: item))
+            .onDrop(
+                of: [ForestDragTypes.voiceBankSlot.identifier],
+                isTargeted: Binding(
+                    get: { activeDropTargetID == item.id },
+                    set: { isTargeted in
+                        activeDropTargetID = isTargeted ? item.id : nil
+                    }
+                )
+            ) { _ in
+                let payload = MainActor.assumeIsolated {
+                    VoiceBankDragSession.currentPayload
+                }
+                guard let payload else {
+                    return false
+                }
+                return handleDrop(payload, item)
+            }
             .modifier(DXInternalExternalSlotDropModifier(
                 isTargeted: Binding(
                     get: { activeDropTargetID == item.id },
