@@ -435,47 +435,12 @@ private struct DXInternalVoiceBankReorderGrid: View {
     var payloadForItem: (VoiceBankSelectorItem) -> VoiceBankDragPayload
     var handleDrop: (VoiceBankDragPayload, VoiceBankSelectorItem) -> Bool
 
-    @State private var slotFrames: [String: CGRect] = [:]
-    @State private var dragState: DXInternalVoiceBankDragState?
     @State private var activeDropTargetID: String?
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            selectorGrid(items: items, layout: layout) { item in
-                tile(item)
-                    .opacity(dragState?.itemID == item.id ? 0.18 : 1)
-                    .background(
-                        GeometryReader { proxy in
-                            Color.clear.preference(
-                                key: DXInternalVoiceBankSlotFramePreferenceKey.self,
-                                value: [item.id: proxy.frame(in: .named("DXInternalVoiceBankGrid"))]
-                            )
-                        }
-                    )
-            }
-
-            if let dragState,
-               let item = items.first(where: { $0.id == dragState.itemID }),
-               let frame = slotFrames[item.id] {
-                SelectorGridButton(
-                    number: item.displayNumber,
-                    title: item.title,
-                    buttonWidth: layout.buttonWidth,
-                    isDropTarget: false,
-                    interactionStyle: .gesture
-                ) { }
-                .allowsHitTesting(false)
-                .frame(width: frame.width, height: frame.height)
-                .position(
-                    x: frame.midX + dragState.translation.width,
-                    y: frame.midY + dragState.translation.height
-                )
-                .shadow(radius: 6, y: 3)
-                .zIndex(10)
-            }
+        selectorGrid(items: items, layout: layout) { item in
+            tile(item)
         }
-        .coordinateSpace(name: "DXInternalVoiceBankGrid")
-        .onPreferenceChange(DXInternalVoiceBankSlotFramePreferenceKey.self) { slotFrames = $0 }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 18)
     }
@@ -495,7 +460,9 @@ private struct DXInternalVoiceBankReorderGrid: View {
         .allowsHitTesting(!isBusy)
 
         return tile
-            .gesture(dragGesture(for: item))
+            .onDrag {
+                payloadForItem(item).itemProvider
+            }
             .onDrop(
                 of: [ForestDragTypes.voiceBankSlot.identifier],
                 isTargeted: Binding(
@@ -524,46 +491,6 @@ private struct DXInternalVoiceBankReorderGrid: View {
                     handleDrop(payload, item)
                 }
             ))
-    }
-
-    private func dragGesture(for item: VoiceBankSelectorItem) -> some Gesture {
-        DragGesture(minimumDistance: 4, coordinateSpace: .named("DXInternalVoiceBankGrid"))
-            .onChanged { value in
-                guard let origin = slotFrames[item.id], !isBusy else { return }
-                dragState = DXInternalVoiceBankDragState(
-                    itemID: item.id,
-                    translation: value.translation
-                )
-                activeDropTargetID = dropTargetID(
-                    for: CGPoint(
-                        x: origin.midX + value.translation.width,
-                        y: origin.midY + value.translation.height
-                    ),
-                    excluding: item.id
-                )
-            }
-            .onEnded { value in
-                defer {
-                    dragState = nil
-                    activeDropTargetID = nil
-                }
-                guard let origin = slotFrames[item.id], !isBusy else { return }
-                let location = CGPoint(
-                    x: origin.midX + value.translation.width,
-                    y: origin.midY + value.translation.height
-                )
-                guard let targetID = dropTargetID(for: location, excluding: item.id),
-                      let targetItem = items.first(where: { $0.id == targetID }) else {
-                    return
-                }
-                _ = handleDrop(payloadForItem(item), targetItem)
-            }
-    }
-
-    private func dropTargetID(for location: CGPoint, excluding sourceID: String) -> String? {
-        slotFrames.first { id, frame in
-            id != sourceID && frame.contains(location)
-        }?.key
     }
 }
 
@@ -668,19 +595,6 @@ private final class ExternalDropNSView: NSView {
         }
 
         return false
-    }
-}
-
-private struct DXInternalVoiceBankDragState {
-    var itemID: String
-    var translation: CGSize
-}
-
-private struct DXInternalVoiceBankSlotFramePreferenceKey: PreferenceKey {
-    static let defaultValue: [String: CGRect] = [:]
-
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 
