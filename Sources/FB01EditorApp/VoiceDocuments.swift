@@ -1185,7 +1185,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     let refreshedInternalBank: DX100VoiceBankData
                     guard shouldOfferDX100ManualInternalDumpFallback(device: device),
                           confirmDX100ManualInternalDumpVerify(slotIndex: target.slotIndex, voiceName: voiceDisplayName) else {
-                        throw FB01AppError.message("Manual DX100 confirmation was cancelled.")
+                        throw DX100VerificationIssue.cancelled
                     }
 
                     progressPanel.update(
@@ -1211,7 +1211,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                         try? refreshedInternalBank.voice(atPackedVoiceIndex: index)
                     }
                     guard refreshedInternalVoices.indices.contains(target.slotIndex) else {
-                        throw FB01AppError.message("DX100 Internal slot \(target.slotIndex + 1) was not present in the refreshed bank.")
+                        throw DX100VerificationIssue.incomplete("DX100 Internal slot \(target.slotIndex + 1) was not present in the refreshed bank.")
                     }
 
                     let verifiedVoice = refreshedInternalVoices[target.slotIndex]
@@ -1243,7 +1243,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     }
                     device.cacheDX100VoiceBank(refreshedInternalVoices, bank: 1, rawBank: refreshedInternalBank)
                     guard exactMatch || neutralMatch || nameMatch || parameterMatchExcludingName || truncatedPrefixNameMatch else {
-                        throw FB01AppError.message("DX100 Internal slot \(target.slotIndex + 1) did not match the edited voice after storing.")
+                        throw DX100VerificationIssue.mismatch("DX100 Internal slot \(target.slotIndex + 1) did not match the edited voice after storing.")
                     }
 
                     sourceDevice = .dx100
@@ -1255,6 +1255,60 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     markCurrentStateSaved()
                     statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName)."
                     errorMessage = nil
+                } catch let verification as DX100VerificationIssue {
+                    if didWriteToInternalDXSlot {
+                        if let translatedDXVoice {
+                            try? device.replaceCachedDX100Voice(inBank: 1, slotIndex: target.slotIndex, with: translatedDXVoice)
+                        }
+                        sourceDevice = .dx100
+                        dx100DeviceBankOrigin = DX100DeviceBankVoiceOrigin(
+                            bank: 1,
+                            slotIndex: target.slotIndex,
+                            bankTitle: "Internal"
+                        )
+                        markCurrentStateSaved()
+                        switch verification {
+                        case .cancelled:
+                            statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName). Confirmation was skipped."
+                            errorMessage = nil
+                        case .incomplete:
+                            statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName)."
+                            errorMessage = nil
+                        case .mismatch:
+                            statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName), but Forest found a post-store mismatch."
+                            errorMessage = "DX100 store confirmation warning: \(verification.message)"
+                            showEditorError(
+                                title: "DX100 Store Sent - Check Memory Protect",
+                                message: """
+                                Forest sent the write for DX100 Internal slot \(target.slotIndex + 1), but the follow-up verification found a mismatch.
+
+                                \(verification.message)
+
+                                Notes:
+                                • MEMORY PROTECT is the most likely cause if the DX100 contents did not change
+                                • the DX100 front-panel voice display does not necessarily change immediately after a bank write
+                                • MEMORY PROTECT must be OFF
+                                • reopening Internal is a good final confirmation
+                                """
+                            )
+                        }
+                    } else {
+                        statusMessage = nil
+                        errorMessage = "Store failed: \(verification.message)"
+                        showEditorError(
+                            title: "Store to DX100 Internal Slot Failed",
+                            message: """
+                            \(verification.message)
+
+                            Forest fetched the Internal bank, attempted to rewrite the selected slot, and then tried to confirm the result.
+
+                            Notes:
+                            • the DX100 front-panel voice display does not necessarily change immediately after a bank write
+                            • MEMORY PROTECT must be OFF
+                            • if the write succeeded but confirmation failed, reopening Internal may still show whether the slot changed
+                            """
+                        )
+                    }
                 } catch {
                     if didWriteToInternalDXSlot {
                         if let translatedDXVoice {
@@ -1267,12 +1321,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             bankTitle: "Internal"
                         )
                         markCurrentStateSaved()
-                        statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName). Forest could not confirm the result automatically."
-                        errorMessage = "DX100 store confirmation warning: \(error)"
+                        statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName)."
+                        errorMessage = nil
                         showEditorError(
-                            title: "DX100 Store Sent - Confirmation Incomplete",
+                            title: "DX100 Store Sent - Verify Incomplete",
                             message: """
-                            Forest sent the write for DX100 Internal slot \(target.slotIndex + 1), but the confirmation step did not confirm it automatically.
+                            Forest sent the write for DX100 Internal slot \(target.slotIndex + 1), but the follow-up verification did not complete cleanly.
 
                             \(error)
 

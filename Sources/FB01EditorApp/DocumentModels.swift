@@ -1552,7 +1552,7 @@ final class DocumentModel: ObservableObject {
                 )
 
                 guard confirmDX100ManualInternalBankDumpVerify(sourceDescription: sourceDescription) else {
-                    throw FB01AppError.message("Manual DX100 bank verify was cancelled.")
+                    throw DX100VerificationIssue.cancelled
                 }
 
                 progressPanel.update(
@@ -1579,23 +1579,72 @@ final class DocumentModel: ObservableObject {
                 }
 
                 guard dx100DisplayedVoicesMatch(expected: voices, actual: refreshedVoices) else {
-                    throw FB01AppError.message("DX100 Internal did not match the stored bank after storing.")
+                    throw DX100VerificationIssue.mismatch("DX100 Internal did not match the stored bank after storing.")
                 }
 
                 cacheDX100VoiceBank(refreshedVoices, bank: 1, rawBank: refreshedBank)
                 requestVoiceBankWindowOpen(selection: DeviceVoiceBankWindowSelection(device: .dx100, bank: 1))
                 statusMessage = "Stored \(sourceDescription) in DX100 Internal on \(destinationName)."
                 errorMessage = nil
+            } catch let verification as DX100VerificationIssue {
+                if didWriteInternalBank {
+                    let message: String
+                    switch verification {
+                    case .cancelled:
+                        message = "Stored \(sourceDescription) in DX100 Internal on \(destinationName). Confirmation was skipped."
+                    case .incomplete:
+                        message = "Stored \(sourceDescription) in DX100 Internal on \(destinationName)."
+                    case .mismatch:
+                        message = "Stored \(sourceDescription) in DX100 Internal on \(destinationName), but Forest found a post-store mismatch."
+                    }
+
+                    cacheDX100VoiceBank(voices, bank: 1, rawBank: bankData)
+                    requestVoiceBankWindowOpen(selection: DeviceVoiceBankWindowSelection(device: .dx100, bank: 1))
+                    statusMessage = message
+                    errorMessage = verification.isMismatch ? "DX100 store verify warning: \(verification.message)" : nil
+
+                    if verification.isMismatch {
+                        showEditorError(
+                            title: "DX100 Store Sent - Check Memory Protect",
+                            message: """
+                            Forest sent the DX100 Internal bank write for \(sourceDescription), but the follow-up verification found a mismatch.
+
+                            \(verification.message)
+
+                            Notes:
+                            • MEMORY PROTECT is the most likely cause if the DX100 contents did not change
+                            • the DX100 front-panel voice display does not necessarily change immediately after a bank write
+                            • MEMORY PROTECT must be OFF
+                            • reopening Internal is a good final confirmation
+                            """
+                        )
+                    }
+                } else {
+                    statusMessage = nil
+                    errorMessage = "Store Bank failed: \(verification.message)"
+                    showEditorError(
+                        title: "Store to DX100 Internal Failed",
+                        message: """
+                        \(verification.message)
+
+                        Forest built the Internal bank write and sent it to the DX100, but the store did not complete.
+
+                        Notes:
+                        • MEMORY PROTECT must be OFF on the DX100
+                        • if the DX100 remains in an edit/programming state, use DX PLAY from Live Keyboard
+                        """
+                    )
+                }
             } catch {
                 if didWriteInternalBank {
                     cacheDX100VoiceBank(voices, bank: 1, rawBank: bankData)
                     requestVoiceBankWindowOpen(selection: DeviceVoiceBankWindowSelection(device: .dx100, bank: 1))
-                    statusMessage = "Stored \(sourceDescription) in DX100 Internal on \(destinationName). Forest could not confirm the result automatically."
-                    errorMessage = "DX100 store verify warning: \(error)"
+                    statusMessage = "Stored \(sourceDescription) in DX100 Internal on \(destinationName)."
+                    errorMessage = nil
                     showEditorError(
-                        title: "DX100 Store Sent - Confirmation Incomplete",
+                        title: "DX100 Store Sent - Verify Incomplete",
                         message: """
-                        Forest sent the DX100 Internal bank write for \(sourceDescription), but the confirmation step did not confirm it.
+                        Forest sent the DX100 Internal bank write for \(sourceDescription), but the follow-up verification did not complete cleanly.
 
                         \(error)
 
@@ -6534,6 +6583,26 @@ enum FB01AppError: Error {
     case noConfigurationSource
     case readOnlyConfigurationSlot
     case message(String)
+}
+
+enum DX100VerificationIssue: Error {
+    case cancelled
+    case incomplete(String)
+    case mismatch(String)
+
+    var message: String {
+        switch self {
+        case .cancelled:
+            return "Manual DX100 confirmation was cancelled."
+        case .incomplete(let detail), .mismatch(let detail):
+            return detail
+        }
+    }
+
+    var isMismatch: Bool {
+        if case .mismatch = self { return true }
+        return false
+    }
 }
 
 private func deviceStatusCode(from messages: [[UInt8]]) throws -> UInt8? {
