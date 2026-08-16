@@ -1811,15 +1811,8 @@ struct GlobalStatusView: View {
                         KeyValueRow("MIDI Destinations", "\(document.midiDestinations.count)"),
                     ])
 
-                    statusCard(title: "External Keyboard/MIDI Source", rows: [
-                        KeyValueRow("Enabled", document.externalKeyboardEnabled ? "On" : "Off"),
-                        KeyValueRow("MIDI In", document.selectedKeyboardSourceName),
-                        KeyValueRow("Channel", "\(document.keyboardChannel + 1)"),
-                        KeyValueRow("Velocity", "\(document.keyboardVelocity)"),
-                    ])
+                    externalKeyboardStatusCard
                 }
-
-                LiveMIDIStatusCard(liveKeyboard: document.liveKeyboardDisplay)
 
                 HStack(alignment: .top, spacing: 14) {
                     statusCard(title: "Open Documents", rows: [
@@ -1909,27 +1902,36 @@ struct GlobalStatusView: View {
         }
         .frame(minWidth: 300, maxWidth: .infinity, alignment: .topLeading)
     }
-}
 
-struct LiveMIDIStatusCard: View {
-    @ObservedObject var liveKeyboard: LiveKeyboardDisplayModel
-
-    var body: some View {
+    private var externalKeyboardStatusCard: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Live Status")
-                    .foregroundStyle(.secondary)
+                SummaryPanel(rows: [
+                    KeyValueRow("Enabled", document.externalKeyboardEnabled ? "On" : "Off"),
+                    KeyValueRow("MIDI In", document.selectedKeyboardSourceName),
+                    KeyValueRow("Channel", "\(document.keyboardChannel + 1)"),
+                    KeyValueRow("Velocity", "\(document.keyboardVelocity)"),
+                ])
 
-                Text(liveKeyboard.status)
-                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
+                Divider()
+                    .padding(.vertical, 2)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Live MIDI Status")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    Text(document.liveKeyboardDisplay.status)
+                        .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
             }
             .font(.body)
             .padding(.top, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
         } label: {
-            SectionTitle("Live MIDI Status")
+            SectionTitle("External Keyboard/MIDI Source")
         }
         .frame(minWidth: 300, maxWidth: .infinity, alignment: .topLeading)
     }

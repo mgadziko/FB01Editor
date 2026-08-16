@@ -206,7 +206,7 @@ struct FB01EditorApplication: App {
                 Button("Live Keyboard") {
                     LiveKeyboardPaletteController.shared.show(document: document)
                 }
-                .keyboardShortcut("k", modifiers: [.command, .option])
+                .keyboardShortcut("k", modifiers: .command)
 
                 Button("Customized Controls") {
                     CustomizedControlsPaletteController.shared.show(document: document)
