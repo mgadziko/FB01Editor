@@ -714,7 +714,7 @@ struct ConfigurationSelectorWindow: View {
     var body: some View {
         let layout = document.selectedDeviceConfigurationBankSelectorLayout
         SelectorWindowLayout(
-            title: "Configuration Bank",
+            title: "FB-01 Bank - Configuration Bank",
             subtitle: "Select a configuration to fetch it into a new Configuration Document.",
             isLoading: isLoading,
             errorMessage: errorMessage,
@@ -3011,7 +3011,7 @@ struct VoiceDocumentWindow: View {
             .id(document.layoutRevision)
         }
         .environment(\.forestHoverTextEnabled, device.hoverTextEnabled)
-        .navigationTitle("Voice - \(document.title)")
+        .navigationTitle("\(document.sourceDevice.displayName) Voice - \(document.title)")
         .toolbar {
             ToolbarItemGroup {
                 Button {
@@ -3221,7 +3221,7 @@ struct ConfigurationDocumentWindow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .environment(\.forestHoverTextEnabled, device.hoverTextEnabled)
-        .navigationTitle("Configuration - \(document.title)")
+        .navigationTitle("FB-01 Configuration - \(document.title)")
         .toolbar {
             ToolbarItemGroup {
                 Button {

@@ -236,8 +236,8 @@ public struct DX100SynthModule: SynthModule {
         SynthParameterBindingDescriptor(id: "dx100.voice.operator.release", parameterID: "voice.operator.release", scope: .voiceOperator, fieldName: "releaseRate"),
     ]
 
-    public let writableVoiceBanks = [1, 2, 3, 4, 5]
-    public let readOnlyVoiceBanks = [6, 7, 8, 9, 10, 11, 12, 13]
+    public let writableVoiceBanks = [1]
+    public let readOnlyVoiceBanks = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
     public let voicesPerBank = 24
     public let voiceBankSelectorLayout = SynthSelectorGridLayout(
         columns: 4,

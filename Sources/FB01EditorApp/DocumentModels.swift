@@ -632,9 +632,10 @@ final class DocumentModel: ObservableObject {
     func voiceBankTitle(device: EditorDeviceSelection, bank: Int) -> String {
         switch device {
         case .dx100:
-            return bank == 1 ? "Internal" : (DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)")
+            let bankName = bank == 1 ? "Internal" : (DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.displayName ?? "Bank \(bank)")
+            return "DX100 Bank - \(bankName)"
         case .fb01:
-            return "Bank \(bank)"
+            return "FB-01 Bank - Bank \(bank)"
         }
     }
 
@@ -1344,14 +1345,15 @@ final class DocumentModel: ObservableObject {
             let bank = selection.bank
             guard DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.isFetchableFromConnectedDevice == true else {
                 errorMessage = """
-                DX100 \(voiceBankTitle(device: .dx100, bank: bank)) device-bank fetch is not connected yet.
+                DX100 \(voiceBankTitle(device: .dx100, bank: bank)) cannot be fetched from the connected device.
 
                 Forest can currently fetch:
                 • the current edit voice
                 • the Internal bank
+                • Banks A-D through the manual assisted capture flow
                 • DX bank files from disk
 
-                Bank A-D and the preset banks still need verified hardware recall/dump behavior before Forest should treat them as normal fetchable device banks.
+                Preset Normal and Preset Shift banks are not yet available through Forest.
                 """
                 return []
             }
@@ -1548,23 +1550,37 @@ final class DocumentModel: ObservableObject {
                 }.value
 
                 progressPanel.update(
-                    message: "The voice bank is being stored. Please wait.\nReady to confirm DX100 Internal from a manual Internal bank dump..."
+                    message: "The voice bank is being stored. Please wait.\nVerifying DX100 Internal by refetching the bank..."
                 )
 
-                guard confirmDX100ManualInternalBankDumpVerify(sourceDescription: sourceDescription) else {
-                    throw DX100VerificationIssue.cancelled
-                }
+                let refreshedBank: DX100VoiceBankData
+                do {
+                    refreshedBank = try await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.fetchDX100InternalBank(
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 5,
+                            attempts: 1,
+                            preflightDelay: 0.2
+                        )
+                    }.value
+                } catch {
+                    guard confirmDX100ManualInternalBankDumpVerify(sourceDescription: sourceDescription) else {
+                        throw DX100VerificationIssue.cancelled
+                    }
 
-                progressPanel.update(
-                    message: "The voice bank is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to confirm the stored bank..."
-                )
-
-                let refreshedBank = try await Task.detached(priority: .userInitiated) {
-                    try EditorVoiceDocumentService.receiveDX100InternalBankManually(
-                        sourceIndex: sourceIndex,
-                        shouldCancel: { Task.isCancelled }
+                    progressPanel.update(
+                        message: "The voice bank is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to confirm the stored bank..."
                     )
-                }.value
+
+                    refreshedBank = try await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.receiveDX100InternalBankManually(
+                            sourceIndex: sourceIndex,
+                            shouldCancel: { Task.isCancelled }
+                        )
+                    }.value
+                }
 
                 try? await Task.detached(priority: .userInitiated) {
                     try EditorVoiceDocumentService.recoverDX100PlayMode(

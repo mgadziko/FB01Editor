@@ -1179,25 +1179,37 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     }.value
 
                     progressPanel.update(
-                        message: "The voice is being stored. Please wait.\nReady to confirm DX100 Internal slot \(target.slotIndex + 1) from a manual Internal bank dump..."
+                        message: "The voice is being stored. Please wait.\nVerifying DX100 Internal slot \(target.slotIndex + 1) by refetching Internal..."
                     )
 
                     let refreshedInternalBank: DX100VoiceBankData
-                    guard shouldOfferDX100ManualInternalDumpFallback(device: device),
-                          confirmDX100ManualInternalDumpVerify(slotIndex: target.slotIndex, voiceName: voiceDisplayName) else {
-                        throw DX100VerificationIssue.cancelled
-                    }
+                    do {
+                        refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
+                            try EditorVoiceDocumentService.fetchDX100InternalBank(
+                                sourceIndex: sourceIndex,
+                                destinationIndex: destinationIndex,
+                                systemChannel: systemChannel,
+                                timeout: 5,
+                                attempts: 1,
+                                preflightDelay: 0.2
+                            )
+                        }.value
+                    } catch {
+                        guard confirmDX100ManualInternalDumpVerify(slotIndex: target.slotIndex, voiceName: voiceDisplayName) else {
+                            throw DX100VerificationIssue.cancelled
+                        }
 
-                    progressPanel.update(
-                        message: "The voice is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to confirm slot \(target.slotIndex + 1)..."
-                    )
-
-                    refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
-                        try EditorVoiceDocumentService.receiveDX100InternalBankManually(
-                            sourceIndex: sourceIndex,
-                            shouldCancel: { Task.isCancelled }
+                        progressPanel.update(
+                            message: "The voice is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to confirm slot \(target.slotIndex + 1)..."
                         )
-                    }.value
+
+                        refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
+                            try EditorVoiceDocumentService.receiveDX100InternalBankManually(
+                                sourceIndex: sourceIndex,
+                                shouldCancel: { Task.isCancelled }
+                            )
+                        }.value
+                    }
 
                     try? await Task.detached(priority: .userInitiated) {
                         try EditorVoiceDocumentService.recoverDX100PlayMode(
