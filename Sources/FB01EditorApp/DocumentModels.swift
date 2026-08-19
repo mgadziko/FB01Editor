@@ -697,6 +697,30 @@ final class DocumentModel: ObservableObject {
         return voiceBankTitle(device: selectedEditorDevice, bank: bank)
     }
 
+    func selectedDeviceVoiceBankCommandTitle(_ bank: Int) -> String {
+        guard let selectedEditorDevice else {
+            return "Bank \(bank)"
+        }
+
+        switch selectedEditorDevice {
+        case .fb01:
+            return selectedDeviceVoiceBankTitle(bank)
+        case .dx100:
+            guard let kind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank) else {
+                return selectedDeviceVoiceBankTitle(bank)
+            }
+
+            switch kind {
+            case .internalRAM:
+                return "Internal"
+            case .bankMemory:
+                return "\(kind.displayName) (Assisted Capture)"
+            case .preset:
+                return kind.displayName
+            }
+        }
+    }
+
     func startLaunchDeviceCacheRefreshIfNeeded() {
         guard !hasStartedLaunchDeviceCacheRefresh else {
             return

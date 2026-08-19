@@ -37,8 +37,9 @@ Forest Editor currently supports:
 Current DX100/27 limits:
 
 - no configuration/function document support
-- Bank A-D and preset-bank device fetch remain experimental and are not presented as standard fetchable banks
-- DX current-voice and Internal-bank workflows are the verified device paths today
+- Bank A-D device fetch uses Forest's manual assisted capture flow rather than a one-shot bulk SysEx dump
+- Preset Normal and Preset Shift banks are not yet available through Forest
+- DX current-voice, Internal-bank, and Internal-bank store workflows are the verified device paths today
 
 The app uses the terminology:
 
@@ -120,8 +121,8 @@ mouse interaction and note auditioning responsive.
 | Voice bank file load/save     | Yes                           | Yes                                       |
 | Configuration file load/save  | Yes                           | No                                        |
 | Current voice fetch           | Yes                           | Yes                                       |
-| Device voice-bank fetch       | Yes, Banks 1-7                | Internal bank verified                    |
-| Additional device bank fetch  | ROM via standard requests     | Bank A-D and presets still experimental   |
+| Device voice-bank fetch       | Yes, Banks 1-7                | Internal plus Bank A-D assisted capture   |
+| Additional device bank fetch  | ROM via standard requests     | Preset banks not yet available            |
 | Live voice edit send          | Yes                           | Yes                                       |
 | Voice slot store              | Yes                           | Current edit buffer only                  |
 | Configuration support         | Yes                           | No                                        |
@@ -139,9 +140,9 @@ descriptors, and a neutral parameter descriptor catalogue. See
 app shell and what belongs to a synth module.
 
 The FB-01 path remains the most complete module. DX100/27 support is now active
-for single-voice documents, Internal-bank browsing, bank-file load/save, and
-live current-buffer editing, while broader DX bank recall/dump behavior remains
-under hardware investigation.
+for single-voice documents, Internal-bank browsing and store, Bank A-D assisted
+capture, bank-file load/save, and live current-buffer editing. Preset-bank
+fetch and broader DX automation still remain under hardware investigation.
 
 For the current breakdown of shared 4-op voice parameters versus FB-01-only and
 DX100/27-only areas, see `Docs/FourOpCapabilityMatrix.md`.

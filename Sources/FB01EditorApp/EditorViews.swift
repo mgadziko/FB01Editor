@@ -122,7 +122,7 @@ struct VoiceSelectorCommands: View {
     var body: some View {
         Menu(document.selectedDeviceCommandTitle(.showVoiceBank, fallback: "Show Voice Bank")) {
             ForEach(document.selectedDeviceVoiceBanks, id: \.self) { bank in
-                Button(document.selectedDeviceVoiceBankTitle(bank)) {
+                Button(document.selectedDeviceVoiceBankCommandTitle(bank)) {
                     let selection = DeviceVoiceBankWindowSelection(
                         device: document.selectedEditorDevice ?? .fb01,
                         bank: bank
