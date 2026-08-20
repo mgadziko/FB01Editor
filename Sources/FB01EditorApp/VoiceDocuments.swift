@@ -1095,6 +1095,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let destinationName = device.selectedDestinationName
         let voiceDisplayName = displayName
         let translatedDXVoice = try? neutralVoiceToStore.dx100Voice()
+        let isBluetoothTransport = device.isLikelyBluetoothRoute(for: .dx100)
 
         if device.selectedEditorDevice == .dx100 {
             guard let target = chooseDX100InternalStoreTarget(device: device) else {
@@ -1183,34 +1184,16 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                         message: "The voice is being stored. Please wait.\nVerifying DX100 Internal slot \(target.slotIndex + 1) by refetching Internal..."
                     )
 
-                    let refreshedInternalBank: DX100VoiceBankData
-                    do {
-                        refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
-                            try EditorVoiceDocumentService.fetchDX100InternalBank(
-                                sourceIndex: sourceIndex,
-                                destinationIndex: destinationIndex,
-                                systemChannel: systemChannel,
-                                timeout: 5,
-                                attempts: 1,
-                                preflightDelay: 0.2
-                            )
-                        }.value
-                    } catch {
-                        guard confirmDX100ManualInternalDumpVerify(slotIndex: target.slotIndex, voiceName: voiceDisplayName) else {
-                            throw DX100VerificationIssue.cancelled
-                        }
-
-                        progressPanel.update(
-                            message: "The voice is being stored. Please wait.\nListening for a manual DX100 Internal bank dump to confirm slot \(target.slotIndex + 1)..."
+                    let refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.fetchDX100InternalBank(
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: isBluetoothTransport ? 3 : 5,
+                            attempts: isBluetoothTransport ? 1 : 2,
+                            preflightDelay: isBluetoothTransport ? 0.12 : 0.3
                         )
-
-                        refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
-                            try EditorVoiceDocumentService.receiveDX100InternalBankManually(
-                                sourceIndex: sourceIndex,
-                                shouldCancel: { Task.isCancelled }
-                            )
-                        }.value
-                    }
+                    }.value
 
                     try? await Task.detached(priority: .userInitiated) {
                         try EditorVoiceDocumentService.recoverDX100PlayMode(
@@ -1285,7 +1268,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                             statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName). Confirmation was skipped."
                             errorMessage = nil
                         case .incomplete:
-                            statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName)."
+                            statusMessage = isBluetoothTransport
+                                ? "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName). Bluetooth verification timed out."
+                                : "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName)."
                             errorMessage = nil
                         case .mismatch:
                             statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName), but Forest found a post-store mismatch."
@@ -1337,16 +1322,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                         statusMessage = "Stored \(displayName) in DX100 Internal slot \(target.slotIndex + 1) on \(destinationName)."
                         errorMessage = nil
                         showEditorError(
-                            title: "DX100 Store Sent - Verify Incomplete",
+                            title: "Verify Incomplete",
                             message: """
-                            Forest sent the write for DX100 Internal slot \(target.slotIndex + 1), but the follow-up verification did not complete cleanly.
+                            Forest tried to store voice \(displayName) as DX100 slot \(target.slotIndex + 1). The follow-up Internal Bank verification timed out.
 
-                            \(error)
-
-                            Notes:
-                            • the DX100 front-panel voice display does not necessarily change immediately after a bank write
-                            • MEMORY PROTECT must be OFF
-                            • reopening Internal is a good final confirmation
+                            Manually confirm that voice \(displayName) was stored.
                             """
                         )
                     } else {
@@ -2680,29 +2660,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     private func shouldOfferDX100ManualInternalDumpFallback(device: DocumentModel) -> Bool {
         device.selectedEditorDevice == .dx100
-    }
-
-    @MainActor
-    private func confirmDX100ManualInternalDumpVerify(slotIndex: Int, voiceName: String) -> Bool {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "Confirm DX100 Store"
-        alert.informativeText = """
-        Forest wrote \(voiceName) to DX100 Internal slot \(slotIndex + 1).
-
-        To confirm the result, please trigger a manual Internal bank dump on the DX100 now:
-        1. Press FUNCTION
-        2. Select 5: SYS INFO
-        3. Confirm SYS INFO = ON
-        4. Press SYS INFO again to show “MIDI Transmit?”
-        5. Press YES
-
-        Forest will listen for the manual Internal dump and use it to confirm the store.
-        """
-        alert.addButton(withTitle: "Listen")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .warning
-        return alert.runModal() == .alertFirstButtonReturn
     }
 
     nonisolated private static func fetchDX100InternalBankVoices(

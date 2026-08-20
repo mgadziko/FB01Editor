@@ -473,6 +473,22 @@ final class DocumentModel: ObservableObject {
         )
     }
 
+    func isLikelyBluetoothRoute(for device: EditorDeviceSelection) -> Bool {
+        let names = [
+            selectedSourceName(for: device),
+            selectedDestinationName(for: device)
+        ].joined(separator: " ").lowercased()
+
+        let bluetoothMarkers = [
+            "midi-bt",
+            "bluetooth",
+            "yamaha md-bt",
+            "wireless"
+        ]
+
+        return bluetoothMarkers.contains { names.contains($0) }
+    }
+
     func midiInterfaceOptions() -> [MIDIInterfaceOption] {
         let destinationsByName = Dictionary(grouping: midiDestinations, by: \.displayName)
         return midiSources.flatMap { source in
@@ -1550,6 +1566,7 @@ final class DocumentModel: ObservableObject {
         let destinationIndex = selectedDestinationIndex
         let destinationName = selectedDestinationName
         let systemChannel = systemChannel
+        let isBluetoothTransport = isLikelyBluetoothRoute(for: .dx100)
 
         isFetchingFromDevice = true
         statusMessage = "Storing \(sourceDescription) in DX100 Internal..."
@@ -1591,12 +1608,16 @@ final class DocumentModel: ObservableObject {
                             sourceIndex: sourceIndex,
                             destinationIndex: destinationIndex,
                             systemChannel: systemChannel,
-                            timeout: 5,
+                            timeout: isBluetoothTransport ? 3 : 5,
                             attempts: 1,
-                            preflightDelay: 0.2
+                            preflightDelay: isBluetoothTransport ? 0.12 : 0.2
                         )
                     }.value
                 } catch {
+                    if isBluetoothTransport {
+                        throw DX100VerificationIssue.incomplete("DX100 Internal verify timed out over Bluetooth.")
+                    }
+
                     guard confirmDX100ManualInternalBankDumpVerify(sourceDescription: sourceDescription) else {
                         throw DX100VerificationIssue.cancelled
                     }
@@ -1640,7 +1661,9 @@ final class DocumentModel: ObservableObject {
                     case .cancelled:
                         message = "Stored \(sourceDescription) in DX100 Internal on \(destinationName). Confirmation was skipped."
                     case .incomplete:
-                        message = "Stored \(sourceDescription) in DX100 Internal on \(destinationName)."
+                        message = isBluetoothTransport
+                            ? "Stored \(sourceDescription) in DX100 Internal on \(destinationName). Bluetooth verification timed out."
+                            : "Stored \(sourceDescription) in DX100 Internal on \(destinationName)."
                     case .mismatch:
                         message = "Stored \(sourceDescription) in DX100 Internal on \(destinationName), but Forest found a post-store mismatch."
                     }
