@@ -89,13 +89,12 @@ enum EditorVoiceDocumentService {
         timeout: Double = 8
     ) throws -> DX100FetchedVoice {
         let request = try DX100ModuleServices.shared.voiceService.singleVoiceDumpRequest(channel: systemChannel)
-        let messages = try FB01MIDI.sendAndReceive(
+        let messages = try FB01MIDI.sendAndReceiveIsolated(
             [request],
             sourceIndex: sourceIndex,
             destinationIndex: destinationIndex,
             timeout: timeout,
-            maxMessages: 1,
-            delayBetweenMessages: 0.05
+            maxMessages: 1
         )
         return try DX100ModuleServices.shared.voiceService.currentVoice(from: messages)
     }
@@ -109,40 +108,22 @@ enum EditorVoiceDocumentService {
         preflightDelay: TimeInterval = 0.35
     ) throws -> DX100VoiceBankData {
         let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
-        let currentVoiceRequest = try DX100ModuleServices.shared.voiceService.singleVoiceDumpRequest(channel: systemChannel)
         var lastError: Error?
-        let preflightDelays: [TimeInterval] = [preflightDelay, max(preflightDelay, 0.6), max(preflightDelay, 1.0)]
+        let preflightDelays: [TimeInterval] = [0, preflightDelay, max(preflightDelay, 0.6)]
 
         for attemptIndex in 0..<max(1, attempts) {
             do {
-                try sendDX100SwitchPress(
-                    switchNumber: 27,
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel,
-                    releaseDelay: 0.1
-                )
                 let attemptDelay = attemptIndex < preflightDelays.count ? preflightDelays[attemptIndex] : preflightDelays.last!
-                Thread.sleep(forTimeInterval: attemptDelay)
+                if attemptDelay > 0 {
+                    Thread.sleep(forTimeInterval: attemptDelay)
+                }
 
-                // A successful single-voice SysEx round trip often "primes" the DX100's
-                // receive/transmit state before asking for the larger 32-voice bulk dump.
-                _ = try? FB01MIDI.sendAndReceive(
-                    [currentVoiceRequest],
-                    sourceIndex: sourceIndex,
-                    destinationIndex: destinationIndex,
-                    timeout: min(timeout, 2.0),
-                    maxMessages: 1,
-                    delayBetweenMessages: 0
-                )
-                Thread.sleep(forTimeInterval: 0.12)
-
-                let responseMessages = try FB01MIDI.sendAndReceive(
+                let responseMessages = try FB01MIDI.sendAndReceiveIsolated(
                     [request],
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
                     timeout: timeout,
-                    maxMessages: 1,
-                    delayBetweenMessages: 0
+                    maxMessages: 1
                 )
                 guard let response = responseMessages.first else {
                     throw FB01MIDIError.timedOut("DX100 Internal bank")
@@ -150,11 +131,6 @@ enum EditorVoiceDocumentService {
                 return try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
             } catch {
                 lastError = error
-                try? recoverDX100PlayMode(
-                    destinationIndex: destinationIndex,
-                    systemChannel: systemChannel,
-                    settleDelay: 0.1
-                )
                 Thread.sleep(forTimeInterval: 0.25)
             }
         }

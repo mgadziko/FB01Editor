@@ -26,6 +26,10 @@ let package = Package(
             targets: ["dx100-dump"]
         ),
         .executable(
+            name: "forest-cli",
+            targets: ["forest-cli"]
+        ),
+        .executable(
             name: "FB01EditorApp",
             targets: ["FB01EditorApp"]
         ),
@@ -44,6 +48,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "dx100-dump",
+            dependencies: ["FB01Editor"]
+        ),
+        .executableTarget(
+            name: "forest-cli",
             dependencies: ["FB01Editor"]
         ),
         .executableTarget(

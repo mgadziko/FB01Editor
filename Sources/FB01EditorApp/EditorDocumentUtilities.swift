@@ -348,6 +348,7 @@ struct VoiceBankSelectorItem: Identifiable, Equatable {
     var name: String
     var source: VoiceDocumentFetchSource
     var fetchTitleOverride: String?
+    var annotation: String?
 
     var id: String {
         switch source {

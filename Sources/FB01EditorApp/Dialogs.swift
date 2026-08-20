@@ -339,16 +339,12 @@ func showEditorError(title: String, message: String) {
 @MainActor
 func confirmDX100AssistedVoiceRecall(bankTitle: String, voiceNumber: Int) -> Bool {
     let alert = NSAlert()
-    alert.messageText = "Confirm DX100 Voice \(voiceNumber)"
-    alert.informativeText = """
-    Forest is capturing \(bankTitle) one voice at a time.
-
-    Press PLAY if needed, then select \(bankTitle) Voice \(voiceNumber) on the DX100 front panel, then click Continue.
-    """
+    alert.messageText = "Fetch Attempt 3"
+    alert.informativeText = "Press Voice \(voiceNumber) on the front panel and click Continue."
     alert.alertStyle = .informational
-    alert.addButton(withTitle: "Continue")
     alert.addButton(withTitle: "Cancel")
-    return alert.runModal() == .alertFirstButtonReturn
+    alert.addButton(withTitle: "Continue")
+    return alert.runModal() == .alertSecondButtonReturn
 }
 
 @MainActor
@@ -371,6 +367,7 @@ final class EditorProgressPanel {
     private static weak var activeCancelablePanel: EditorProgressPanel?
 
     private let panel: NSPanel
+    private let titleLabel: NSTextField
     private let messageLabel: NSTextField
     private let progress: NSProgressIndicator
     private let cancelButton: NSButton
@@ -393,7 +390,7 @@ final class EditorProgressPanel {
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 430, height: panelHeight))
         panel.contentView = content
 
-        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .boldSystemFont(ofSize: 15)
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.maximumNumberOfLines = 1
@@ -444,6 +441,22 @@ final class EditorProgressPanel {
 
     func update(message: String) {
         messageLabel.stringValue = message
+    }
+
+    func update(title: String, message: String) {
+        panel.title = title
+        titleLabel.stringValue = title
+        messageLabel.stringValue = message
+    }
+
+    func update(title: String, message: String, completed: Double, total: Double) {
+        panel.title = title
+        titleLabel.stringValue = title
+        messageLabel.stringValue = message
+        progress.isIndeterminate = false
+        progress.minValue = 0
+        progress.maxValue = max(total, 1)
+        progress.doubleValue = min(max(completed, 0), progress.maxValue)
     }
 
     func update(message: String, completed: Double, total: Double) {

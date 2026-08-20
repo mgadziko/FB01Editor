@@ -400,6 +400,62 @@ public enum FB01MIDI {
         throw FB01MIDIError.timedOut("MIDI response")
     }
 
+    public static func sendAndReceiveIsolated(
+        _ messages: [[UInt8]],
+        sourceIndex: Int,
+        destinationIndex: Int,
+        timeout: TimeInterval = 8,
+        maxMessages: Int = 1
+    ) throws -> [[UInt8]] {
+        requestLock.lock()
+        defer { requestLock.unlock() }
+
+        let source = try sourceEndpoint(at: sourceIndex)
+        let destination = try destinationEndpoint(at: destinationIndex)
+        let state = FB01SysExCaptureState()
+
+        var client = MIDIClientRef()
+        try check(MIDIClientCreateWithBlock("FB01EditorMIDIIsolatedSendReceive" as CFString, &client) { _ in }, "MIDIClientCreateWithBlock")
+        defer { MIDIClientDispose(client) }
+
+        var inputPort = MIDIPortRef()
+        try check(MIDIInputPortCreateWithBlock(client, "FB01EditorMIDIIsolatedInput" as CFString, &inputPort) { packetList, _ in
+            state.append(packetList: packetList)
+        }, "MIDIInputPortCreateWithBlock")
+        defer { MIDIPortDispose(inputPort) }
+
+        var outputPort = MIDIPortRef()
+        try check(MIDIOutputPortCreate(client, "FB01EditorMIDIIsolatedOutput" as CFString, &outputPort), "MIDIOutputPortCreate")
+        defer { MIDIPortDispose(outputPort) }
+
+        try check(MIDIPortConnectSource(inputPort, source, nil), "MIDIPortConnectSource")
+
+        for bytes in messages {
+            try send(bytes: bytes, to: destination, outputPort: outputPort)
+        }
+
+        let start = Date()
+        var inspectedCount = 0
+        while Date().timeIntervalSince(start) < timeout {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.02))
+            let received = state.snapshot()
+            guard received.count > inspectedCount else {
+                continue
+            }
+            if received.count >= maxMessages {
+                return Array(received.prefix(maxMessages))
+            }
+            inspectedCount = received.count
+        }
+
+        let received = state.snapshot()
+        if !received.isEmpty {
+            return Array(received.prefix(maxMessages))
+        }
+
+        throw FB01MIDIError.timedOut("MIDI response")
+    }
+
     public static func receiveSysEx(
         sourceIndex: Int,
         timeout: TimeInterval = 15,

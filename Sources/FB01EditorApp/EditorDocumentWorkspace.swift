@@ -343,7 +343,7 @@ struct VoiceDocumentDeviceCommands: View {
     var body: some View {
         if document.selectedDeviceHasConnectedVoiceDocumentCommands {
             Button(document.selectedDeviceVoiceFetchCommandTitle) {
-                let id = workspace.createVoiceDocument()
+                let id = workspace.createVoiceDocument(sourceDevice: document.selectedEditorDevice ?? .fb01)
                 openWindow(id: "voice-document", value: id)
                 Task { @MainActor in
                     await Task.yield()
@@ -423,7 +423,7 @@ struct VoiceDocumentDeviceCommands: View {
             return
         }
 
-        let id = workspace.createVoiceDocument()
+        let id = workspace.createVoiceDocument(sourceDevice: document.selectedEditorDevice ?? .fb01)
         openWindow(id: "voice-document", value: id)
         Task { @MainActor in
             await Task.yield()
@@ -538,8 +538,14 @@ final class EditorDocumentWorkspace: ObservableObject {
     private var voiceDocumentObservers: [UUID: AnyCancellable] = [:]
     private var configurationDocumentObservers: [UUID: AnyCancellable] = [:]
 
-    func createVoiceDocument(voice: FB01VoiceData = EditorDocumentTemplates.voice(), systemChannel: Int = 0, statusMessage: String? = nil) -> UUID {
+    func createVoiceDocument(
+        voice: FB01VoiceData = EditorDocumentTemplates.voice(),
+        systemChannel: Int = 0,
+        statusMessage: String? = nil,
+        sourceDevice: EditorDeviceSelection = .fb01
+    ) -> UUID {
         let document = VoiceDocumentModel(voice: voice, systemChannel: systemChannel)
+        document.sourceDevice = sourceDevice
         document.statusMessage = statusMessage
         insertVoiceDocument(document)
         return document.id

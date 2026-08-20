@@ -240,6 +240,12 @@ struct VoiceBankSelectorWindow: View {
             trailingStatusColor: .orange,
             showsTitle: false
         ) {
+            if let captureNote = document.dx100VoiceBankCaptureNote(bank: bank) {
+                Text(captureNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 4)
+            }
             if allowsDXBankDragEditing {
                 DXInternalVoiceBankReorderGrid(
                     items: items,
@@ -284,6 +290,7 @@ struct VoiceBankSelectorWindow: View {
         .background(ContentSizedWindowConfigurator(
             contentSize: CGSize(width: layout.windowWidth, height: layout.minimumWindowHeight)
         ))
+        .background(VoiceBankWindowPlacementConfigurator(selection: selection))
         .background(WindowActivationObserver(
             onBecomeKey: {
                 document.selectDevice(selection.device)
@@ -352,6 +359,7 @@ struct VoiceBankSelectorWindow: View {
         SelectorGridButton(
             number: item.displayNumber,
             title: item.title,
+            annotation: item.annotation,
             buttonWidth: layout.buttonWidth,
             interactionStyle: .button
         ) {
@@ -449,6 +457,7 @@ private struct DXInternalVoiceBankReorderGrid: View {
         let tile = SelectorGridButton(
             number: item.displayNumber,
             title: item.title,
+            annotation: item.annotation,
             buttonWidth: layout.buttonWidth,
             isDropTarget: activeDropTargetID == item.id,
             interactionStyle: .gesture
@@ -861,22 +870,31 @@ private struct SelectorGridButton: View {
 
     var number: Int
     var title: String
+    var annotation: String? = nil
     var buttonWidth: Double
     var isDropTarget: Bool = false
     var interactionStyle: InteractionStyle = .button
     var action: () -> Void
 
     var body: some View {
-        let tileContent = HStack(spacing: 8) {
-            Text("\(number)")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 24, alignment: .trailing)
-            Text(title)
-                .font(.body.weight(.semibold))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        let tileContent = VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text("\(number)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, alignment: .trailing)
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let annotation {
+                Text(annotation)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .padding(.leading, 32)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -2561,6 +2579,53 @@ struct ContentSizedWindowConfigurator: NSViewRepresentable {
         window.contentMinSize = clampedContentSize
         window.contentMaxSize = clampedContentSize
         window.setContentSize(clampedContentSize)
+    }
+}
+
+struct VoiceBankWindowPlacementConfigurator: NSViewRepresentable {
+    var selection: DeviceVoiceBankWindowSelection
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            context.coordinator.configure(window: view.window, selection: selection)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            context.coordinator.configure(window: nsView.window, selection: selection)
+        }
+    }
+
+    final class Coordinator {
+        private var configuredIdentifier: String?
+
+        @MainActor
+        func configure(window: NSWindow?, selection: DeviceVoiceBankWindowSelection) {
+            guard let window else { return }
+            let identifier = EditorDocumentWorkspace.voiceBankSelectorWindowIdentifier(for: selection)
+            guard configuredIdentifier != identifier else { return }
+            configuredIdentifier = identifier
+
+            guard let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+
+            let bankOffset = CGFloat(max(selection.bank - 1, 0))
+            let xStep: CGFloat = 28
+            let yStep: CGFloat = 24
+            let baseX = visibleFrame.minX + 48
+            let baseY = visibleFrame.maxY - window.frame.height - 72
+
+            var frame = window.frame
+            frame.origin.x = min(baseX + (bankOffset * xStep), visibleFrame.maxX - frame.width - 12)
+            frame.origin.y = max(visibleFrame.minY + 12, baseY - (bankOffset * yStep))
+            window.setFrame(frame, display: true)
+        }
     }
 }
 
