@@ -344,6 +344,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     var fb01DeviceBankOrigin: FB01DeviceBankVoiceOrigin?
     var dx100BankFileOrigin: DX100BankFileVoiceOrigin?
     var dx100DeviceBankOrigin: DX100DeviceBankVoiceOrigin?
+    var suppressAutomaticKeyboardPreparation = false
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
     private var keyboardPreparationTask: Task<Void, Never>?
@@ -1921,6 +1922,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func scheduleKeyboardVoicePreparation(device: DocumentModel, delayNanoseconds: UInt64 = 0) {
         keyboardPreparationTask?.cancel()
+        guard !suppressAutomaticKeyboardPreparation else {
+            return
+        }
         guard isAuditionCompatible(with: device) else {
             device.externalKeyboardStatus = auditionDeviceMismatchStatus(selectedDevice: device.selectedEditorDevice)
             return
@@ -2233,6 +2237,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     private func noteVoiceReplacement() {
         layoutRevision &+= 1
+        suppressAutomaticKeyboardPreparation = false
         preparedKeyboardVoiceSignature = nil
         preparedKeyboardVoiceDate = nil
         lastDX100LiveSentSignature = nil
