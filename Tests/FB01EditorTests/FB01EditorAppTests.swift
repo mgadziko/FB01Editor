@@ -261,10 +261,10 @@ import UniformTypeIdentifiers
     #expect(model.selectedDeviceHasConnectedVoiceDocumentCommands)
     #expect(!model.selectedDeviceShowsConfigurationMenu)
     #expect(model.selectedDeviceVoiceBankSelectorLayout.rowsPerColumn == 6)
-    #expect(model.selectedDeviceVoiceBankTitle(1) == "Internal")
-    #expect(model.selectedDeviceVoiceBankTitle(2) == "Bank A")
-    #expect(model.selectedDeviceVoiceBankTitle(6) == "Preset Normal 1")
-    #expect(model.selectedDeviceVoiceBankTitle(10) == "Preset Shift 1")
+    #expect(model.selectedDeviceVoiceBankTitle(1) == "DX100 Bank - Internal")
+    #expect(model.selectedDeviceVoiceBankTitle(2) == "DX100 Bank - Bank A")
+    #expect(model.selectedDeviceVoiceBankTitle(6) == "DX100 Bank - Preset Normal 1")
+    #expect(model.selectedDeviceVoiceBankTitle(10) == "DX100 Bank - Preset Shift 1")
 }
 
 @Test func deviceSpecificVoiceFileTypesExposeDXExtensions() {
@@ -320,8 +320,8 @@ import UniformTypeIdentifiers
 
     let voice = VoiceDocumentModel(voice: originalVoice, systemChannel: 0)
     voice.replaceDocument(with: LoadedVoiceDocument(
-        projection: replacementVoice,
         neutralVoice: replacementVoice.fourOperatorVoice,
+        projectionOverlay: FB01VoiceProjectionOverlay(voice: replacementVoice),
         systemChannel: 0,
         sourceDevice: .fb01
     ))
@@ -790,10 +790,10 @@ import UniformTypeIdentifiers
     model.selectedEditorDevice = .dx100
 
     #expect(model.selectedDeviceVoiceBanks == [1, 2, 3, 4, 5])
-    #expect(model.selectedDeviceWritableVoiceBanks == [1, 2, 3, 4, 5])
-    #expect(model.selectedDeviceVoiceBankTitle(1) == "Internal")
-    #expect(model.selectedDeviceVoiceBankTitle(2) == "Bank A")
-    #expect(model.selectedDeviceVoiceBankTitle(5) == "Bank D")
+    #expect(model.selectedDeviceWritableVoiceBanks == [1])
+    #expect(model.selectedDeviceVoiceBankTitle(1) == "DX100 Bank - Internal")
+    #expect(model.selectedDeviceVoiceBankTitle(2) == "DX100 Bank - Bank A")
+    #expect(model.selectedDeviceVoiceBankTitle(5) == "DX100 Bank - Bank D")
 }
 
 @MainActor

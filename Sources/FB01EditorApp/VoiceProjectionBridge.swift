@@ -37,8 +37,9 @@ enum EditorVoiceProjectionBridge {
     }
 
     static func loadedDocument(from voice: DX100VoiceData, channel: Int) throws -> LoadedVoiceDocumentProjection {
-        try loadedDocument(
-            from: voice.fb01EditableVoice(),
+        LoadedVoiceDocumentProjection(
+            neutralVoice: voice.fourOperatorVoice,
+            projectionOverlay: FB01VoiceProjectionOverlay(voice: try voice.fb01EditableVoice()),
             systemChannel: channel,
             sourceDevice: .dx100
         )

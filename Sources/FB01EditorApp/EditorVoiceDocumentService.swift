@@ -108,16 +108,37 @@ enum EditorVoiceDocumentService {
         preflightDelay: TimeInterval = 0.35
     ) throws -> DX100VoiceBankData {
         let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
+        let currentVoiceRequest = try DX100ModuleServices.shared.voiceService.singleVoiceDumpRequest(channel: systemChannel)
         var lastError: Error?
-        let preflightDelays: [TimeInterval] = [0, preflightDelay, max(preflightDelay, 0.6)]
+        let preflightDelays: [TimeInterval] = [preflightDelay, max(preflightDelay, 0.6), max(preflightDelay, 1.0)]
 
         for attemptIndex in 0..<max(1, attempts) {
             do {
-                let attemptDelay = attemptIndex < preflightDelays.count ? preflightDelays[attemptIndex] : preflightDelays.last!
-                if attemptDelay > 0 {
-                    Thread.sleep(forTimeInterval: attemptDelay)
+                if attemptIndex > 0 {
+                    // The clean request is the most reliable first attempt. Only
+                    // apply the older PLAY/current-voice priming on retries.
+                    try sendDX100SwitchPress(
+                        switchNumber: 27,
+                        destinationIndex: destinationIndex,
+                        systemChannel: systemChannel,
+                        releaseDelay: 0.1
+                    )
+                    let delayIndex = min(attemptIndex - 1, preflightDelays.count - 1)
+                    Thread.sleep(forTimeInterval: preflightDelays[delayIndex])
+
+                    _ = try? FB01MIDI.sendAndReceiveIsolated(
+                        [currentVoiceRequest],
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        timeout: min(timeout, 2.0),
+                        maxMessages: 1
+                    )
+                    Thread.sleep(forTimeInterval: 0.12)
                 }
 
+                // Use a dedicated MIDI client for the bank dump. The DX100 can
+                // return this 4 KB reply while Forest's shared client is busy
+                // monitoring live keyboard and document activity.
                 let responseMessages = try FB01MIDI.sendAndReceiveIsolated(
                     [request],
                     sourceIndex: sourceIndex,
@@ -131,6 +152,11 @@ enum EditorVoiceDocumentService {
                 return try DX100ModuleServices.shared.voiceService.voiceBank(fromThirtyTwoVoiceBulkSysEx: response)
             } catch {
                 lastError = error
+                try? recoverDX100PlayMode(
+                    destinationIndex: destinationIndex,
+                    systemChannel: systemChannel,
+                    settleDelay: 0.1
+                )
                 Thread.sleep(forTimeInterval: 0.25)
             }
         }

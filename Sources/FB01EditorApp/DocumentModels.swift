@@ -78,6 +78,11 @@ final class LiveKeyboardDisplayModel: ObservableObject {
 
 @MainActor
 final class DocumentModel: ObservableObject {
+    private enum DX100InternalBankStorePreparation {
+        case wired
+        case bluetooth(backupURL: URL)
+    }
+
     @Published var sources: [LibrarySource] = []
     @Published var selectedSourceID: LibrarySource.ID?
     @Published var errorMessage: String?
@@ -1450,10 +1455,15 @@ final class DocumentModel: ObservableObject {
 
         do {
             let bankData = try DX100DocumentService.shared.voiceBank(fromDisplayedVoices: voices, channel: systemChannel)
-            guard confirmStoreDX100InternalBank(sourceDescription: voiceBankTitle(device: .dx100, bank: sourceBank)) else {
+            guard let preparation = prepareDX100InternalBankStore(sourceDescription: voiceBankTitle(device: .dx100, bank: sourceBank)) else {
                 return
             }
-            storeDX100VoiceBankToInternal(bankData, voices: voices, sourceDescription: voiceBankTitle(device: .dx100, bank: sourceBank))
+            storeDX100VoiceBankToInternal(
+                bankData,
+                voices: voices,
+                sourceDescription: voiceBankTitle(device: .dx100, bank: sourceBank),
+                preparation: preparation
+            )
         } catch {
             errorMessage = "Store Bank failed: \(error)"
             statusMessage = nil
@@ -1467,10 +1477,15 @@ final class DocumentModel: ObservableObject {
             let voices = selector.items.map(\.candidate.voice)
             let channel = selector.items.first?.candidate.channel ?? systemChannel
             let bankData = try DX100DocumentService.shared.voiceBank(fromDisplayedVoices: voices, channel: channel)
-            guard confirmStoreDX100InternalBank(sourceDescription: selector.title) else {
+            guard let preparation = prepareDX100InternalBankStore(sourceDescription: selector.title) else {
                 return
             }
-            storeDX100VoiceBankToInternal(bankData, voices: voices, sourceDescription: selector.title)
+            storeDX100VoiceBankToInternal(
+                bankData,
+                voices: voices,
+                sourceDescription: selector.title,
+                preparation: preparation
+            )
         } catch {
             errorMessage = "Store Bank failed: \(error)"
             statusMessage = nil
@@ -1560,13 +1575,21 @@ final class DocumentModel: ObservableObject {
     private func storeDX100VoiceBankToInternal(
         _ bankData: DX100VoiceBankData,
         voices: [DX100VoiceData],
-        sourceDescription: String
+        sourceDescription: String,
+        preparation: DX100InternalBankStorePreparation
     ) {
         let sourceIndex = selectedSourceIndex
         let destinationIndex = selectedDestinationIndex
         let destinationName = selectedDestinationName
         let systemChannel = systemChannel
         let isBluetoothTransport = isLikelyBluetoothRoute(for: .dx100)
+        let bluetoothBackupURL: URL?
+        switch preparation {
+        case .wired:
+            bluetoothBackupURL = nil
+        case let .bluetooth(backupURL):
+            bluetoothBackupURL = backupURL
+        }
 
         isFetchingFromDevice = true
         statusMessage = "Storing \(sourceDescription) in DX100 Internal..."
@@ -1581,6 +1604,31 @@ final class DocumentModel: ObservableObject {
         Task {
             var didWriteInternalBank = false
             do {
+                if let bluetoothBackupURL {
+                    progressPanel.update(
+                        message: "The voice bank is being stored. Please wait.\nFetching the current DX100 Internal bank for backup..."
+                    )
+                    let currentInternalBank = try await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.fetchDX100InternalBank(
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            timeout: 5,
+                            attempts: 1,
+                            preflightDelay: 0.15
+                        )
+                    }.value
+                    try DX100DocumentService.shared.writeVoiceBank(
+                        currentInternalBank,
+                        channel: systemChannel,
+                        to: bluetoothBackupURL
+                    )
+                    rememberSaveDirectory(for: bluetoothBackupURL)
+                    progressPanel.update(
+                        message: "The voice bank is being stored. Please wait.\nBackup saved to \(bluetoothBackupURL.lastPathComponent). Writing \(sourceDescription) into DX100 Internal..."
+                    )
+                }
+
                 try await Task.detached(priority: .userInitiated) {
                     try EditorVoiceDocumentService.writeDX100InternalBank(
                         bankData,
@@ -1939,14 +1987,48 @@ final class DocumentModel: ObservableObject {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func confirmStoreDX100InternalBank(sourceDescription: String) -> Bool {
+    private func prepareDX100InternalBankStore(sourceDescription: String) -> DX100InternalBankStorePreparation? {
+        if isLikelyBluetoothRoute(for: .dx100) {
+            let alert = NSAlert()
+            alert.messageText = "Bluetooth DX100 Bank Store"
+            alert.informativeText = "Full DX100 Internal-bank writes over Bluetooth can be unreliable. Forest will first fetch and save a backup of the current DX100 Internal bank. Use a wired MIDI interface for important bank stores. MEMORY PROTECT must be OFF on the DX100."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Back Up and Store")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn,
+                  let backupURL = chooseDX100BluetoothInternalBankBackupURL() else {
+                return nil
+            }
+            return .bluetooth(backupURL: backupURL)
+        }
+
         let alert = NSAlert()
         alert.messageText = "Store Voice Bank?"
         alert.informativeText = "This stores the 24 displayed voices from \(sourceDescription) into the DX100 Internal bank, overwriting the current Internal contents. MEMORY PROTECT must be OFF on the DX100."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Store and Overwrite")
         alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn
+        return alert.runModal() == .alertFirstButtonReturn ? .wired : nil
+    }
+
+    private func chooseDX100BluetoothInternalBankBackupURL() -> URL? {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let timestamp = formatter.string(from: Date())
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = UTType.dx100VoiceBankFileTypes
+        panel.directoryURL = preferredSaveDirectoryURL()
+        panel.nameFieldStringValue = "DX100-Internal-backup-\(timestamp).\(DX100SynthModule.shared.fileProfile.voiceBankExtension)"
+        panel.message = "Save a backup of the current DX100 Internal bank before overwrite. Forest will not write to the DX100 until this backup is saved."
+        panel.prompt = "Save Backup"
+
+        guard panel.runModal() == .OK else {
+            return nil
+        }
+        return panel.url
     }
 
     func ensureConfigurationSelectorItems() async -> [ConfigurationSelectorItem] {
