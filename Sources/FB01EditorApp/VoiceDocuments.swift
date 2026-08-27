@@ -1116,13 +1116,12 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     if let cached = device.cachedDX100RawVoiceBank(inBank: 1) {
                         currentInternalBank = cached
                     } else {
-                        currentInternalBank = try await Task.detached(priority: .userInitiated) {
-                            try EditorVoiceDocumentService.fetchDX100InternalBank(
-                                sourceIndex: sourceIndex,
-                                destinationIndex: destinationIndex,
-                                systemChannel: systemChannel
-                            )
-                        }.value
+                        currentInternalBank = try await device.fetchDX100InternalBankForOperation(
+                            purpose: .storePreparation,
+                            progressPanel: progressPanel,
+                            contextTitle: "Internal",
+                            allowManualFallback: true
+                        ).bank
                     }
 
                     progressPanel.update(
@@ -1146,6 +1145,13 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                                         Task { @MainActor in
                                             progressPanel.update(
                                                 message: "The voice is being stored. Please wait.\nWriting \(voiceDisplayName) into DX100 Internal slot \(slotIndex + 1)..."
+                                            )
+                                        }
+                                    case .returningToPlayMode:
+                                        Task { @MainActor in
+                                            self.statusMessage = "Returning DX100 to PLAY mode..."
+                                            progressPanel.update(
+                                                message: "The voice is being stored. Please wait.\nReturning DX100 to PLAY mode..."
                                             )
                                         }
                                     case .verifying(let slotIndex):
@@ -1172,29 +1178,25 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                         }
                     }
 
-                    try? await Task.detached(priority: .userInitiated) {
-                        try EditorVoiceDocumentService.recoverDX100PlayMode(
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel,
-                            settleDelay: 0.45
-                        )
-                    }.value
-
                     progressPanel.update(
                         message: "The voice is being stored. Please wait.\nVerifying DX100 Internal slot \(target.slotIndex + 1) by refetching Internal..."
                     )
 
-                    let refreshedInternalBank = try await Task.detached(priority: .userInitiated) {
-                        try EditorVoiceDocumentService.fetchDX100InternalBank(
-                            sourceIndex: sourceIndex,
-                            destinationIndex: destinationIndex,
-                            systemChannel: systemChannel,
-                            timeout: isBluetoothTransport ? 3 : 5,
-                            attempts: isBluetoothTransport ? 1 : 2,
-                            preflightDelay: isBluetoothTransport ? 0.12 : 0.3
-                        )
-                    }.value
+                    let refreshedInternalBank: DX100VoiceBankData
+                    do {
+                        refreshedInternalBank = try await device.fetchDX100InternalBankForOperation(
+                            purpose: .storeVerification,
+                            progressPanel: progressPanel,
+                            contextTitle: "Internal",
+                            allowManualFallback: false
+                        ).bank
+                    } catch {
+                        throw DX100VerificationIssue.incomplete(error.localizedDescription)
+                    }
 
+                    progressPanel.update(
+                        message: "The voice is being stored. Please wait.\nReturning DX100 to PLAY mode after verification..."
+                    )
                     try? await Task.detached(priority: .userInitiated) {
                         try EditorVoiceDocumentService.recoverDX100PlayMode(
                             destinationIndex: destinationIndex,
@@ -1885,7 +1887,9 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 if isOn {
                     await MainActor.run {
                         device?.externalKeyboardStatus = "Sent note \(boundedNote) on channel \(Int(channel) + 1) to \(destinationName)."
-                        self?.errorMessage = nil
+                        if self?.errorMessage != nil {
+                            self?.errorMessage = nil
+                        }
                         if let device {
                             self?.scheduleKeyboardVoicePreparation(device: device)
                         }
@@ -2660,34 +2664,6 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     private func shouldOfferDX100ManualInternalDumpFallback(device: DocumentModel) -> Bool {
         device.selectedEditorDevice == .dx100
-    }
-
-    nonisolated private static func fetchDX100InternalBankVoices(
-        sourceIndex: Int,
-        destinationIndex: Int,
-        systemChannel: Int
-    ) throws -> [DX100VoiceData] {
-        let voiceBank = try EditorVoiceDocumentService.fetchDX100InternalBank(
-            sourceIndex: sourceIndex,
-            destinationIndex: destinationIndex,
-            systemChannel: systemChannel
-        )
-        return (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
-            try? voiceBank.voice(atPackedVoiceIndex: index)
-        }
-    }
-
-    nonisolated private static func receiveDX100InternalBankVoicesManually(
-        sourceIndex: Int
-    ) throws -> [DX100VoiceData] {
-        let voiceBank = try EditorVoiceDocumentService.receiveDX100InternalBankManually(
-            sourceIndex: sourceIndex,
-            timeout: 25,
-            shouldCancel: { Task.isCancelled }
-        )
-        return (0..<DX100VoiceBankData.dx100DisplayedVoiceCount).compactMap { index in
-            try? voiceBank.voice(atPackedVoiceIndex: index)
-        }
     }
 
 }

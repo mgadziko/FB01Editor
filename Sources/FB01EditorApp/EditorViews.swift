@@ -1023,15 +1023,21 @@ struct LiveKeyboardView: View {
 
 struct LiveKeyboardPaletteView: View {
     @ObservedObject var document: DocumentModel
+    @ObservedObject private var liveKeyboard: LiveKeyboardDisplayModel
+
+    init(document: DocumentModel) {
+        self.document = document
+        self.liveKeyboard = document.liveKeyboardDisplay
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LiveKeyboardPaletteControlsView(document: document, liveKeyboard: document.liveKeyboardDisplay)
+            LiveKeyboardPaletteControlsView(document: document, liveKeyboard: liveKeyboard)
 
             PianoKeyboardRepresentable(
                 startNote: document.keyboardStartNote,
                 octaveCount: 5,
-                highlightedNotes: document.liveKeyboardDisplay.pressedNotes,
+                highlightedNotes: liveKeyboard.pressedNotes,
                 noteOn: { document.sendLiveKeyboardPaletteNote($0, isOn: true) },
                 noteOff: { document.sendLiveKeyboardPaletteNote($0, isOn: false) }
             )
@@ -1402,6 +1408,7 @@ final class PianoKeyboardNSView: NSView {
     var noteOff: (Int) -> Void = { _ in }
     var highlightedNotes: Set<Int> = [] {
         didSet {
+            guard highlightedNotes != oldValue else { return }
             needsDisplay = true
         }
     }

@@ -350,16 +350,13 @@ func confirmDX100AssistedVoiceRecall(bankTitle: String, voiceNumber: Int) -> Boo
 @MainActor
 func confirmDX100AssistedBankCaptureStart(bankTitle: String) -> Bool {
     let alert = NSAlert()
-    alert.messageText = "Prepare DX100 \(bankTitle)"
-    alert.informativeText = """
-    Forest will capture \(bankTitle) manually, one voice at a time.
-
-    Make sure the DX100 stays in PLAY mode. Forest will prompt you for Voice 1 through Voice 24 in order and capture each current-voice dump after you confirm the front-panel selection.
-    """
+    let shortBankTitle = bankTitle.replacingOccurrences(of: "DX100 Bank - ", with: "")
+    alert.messageText = "Assisted DX100 Bank Read"
+    alert.informativeText = "Press \(shortBankTitle) and then Continue."
     alert.alertStyle = .informational
-    alert.addButton(withTitle: "Continue")
     alert.addButton(withTitle: "Cancel")
-    return alert.runModal() == .alertFirstButtonReturn
+    alert.addButton(withTitle: "Continue")
+    return alert.runModal() == .alertSecondButtonReturn
 }
 
 @MainActor

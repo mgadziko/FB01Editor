@@ -10,9 +10,52 @@ struct EditorFetchedVoiceDocument: Sendable {
 }
 
 enum EditorVoiceDocumentService {
+    enum DX100InternalBankFetchPurpose: String, Sendable {
+        case deviceSelection = "device selection"
+        case bankBrowser = "bank browser"
+        case storePreparation = "store preparation"
+        case storeVerification = "store verification"
+
+        var timeout: Double {
+            switch self {
+            case .deviceSelection, .bankBrowser:
+                8
+            case .storePreparation:
+                6
+            case .storeVerification:
+                5
+            }
+        }
+
+        var attempts: Int {
+            switch self {
+            case .deviceSelection, .bankBrowser:
+                3
+            case .storePreparation:
+                2
+            case .storeVerification:
+                // A post-store check should not add further recovery traffic to
+                // the DX100. The caller can report verification as incomplete.
+                1
+            }
+        }
+    }
+
+    struct DX100InternalBankFetchFailure: LocalizedError {
+        let purpose: DX100InternalBankFetchPurpose
+        let attempts: Int
+        let underlyingError: Error
+
+        var errorDescription: String? {
+            let attemptWord = attempts == 1 ? "attempt" : "attempts"
+            return "DX100 Internal \(purpose.rawValue) failed after \(attempts) automatic \(attemptWord): \(underlyingError.localizedDescription)"
+        }
+    }
+
     enum DX100InternalStoreProgress: Sendable {
         case preparingBank
         case sendingBank(slotIndex: Int)
+        case returningToPlayMode
         case verifying(slotIndex: Int)
     }
 
@@ -103,16 +146,19 @@ enum EditorVoiceDocumentService {
         sourceIndex: Int,
         destinationIndex: Int,
         systemChannel: Int,
-        timeout: Double = 10,
-        attempts: Int = 3,
+        purpose: DX100InternalBankFetchPurpose = .bankBrowser,
+        timeout: Double? = nil,
+        attempts: Int? = nil,
         preflightDelay: TimeInterval = 0.35
     ) throws -> DX100VoiceBankData {
         let request = try DX100ModuleServices.shared.voiceService.voiceBankDumpRequest(channel: systemChannel)
         let currentVoiceRequest = try DX100ModuleServices.shared.voiceService.singleVoiceDumpRequest(channel: systemChannel)
         var lastError: Error?
+        let resolvedTimeout = timeout ?? purpose.timeout
+        let resolvedAttempts = attempts ?? purpose.attempts
         let preflightDelays: [TimeInterval] = [preflightDelay, max(preflightDelay, 0.6), max(preflightDelay, 1.0)]
 
-        for attemptIndex in 0..<max(1, attempts) {
+        for attemptIndex in 0..<max(1, resolvedAttempts) {
             do {
                 if attemptIndex > 0 {
                     // The clean request is the most reliable first attempt. Only
@@ -130,7 +176,7 @@ enum EditorVoiceDocumentService {
                         [currentVoiceRequest],
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
-                        timeout: min(timeout, 2.0),
+                        timeout: min(resolvedTimeout, 2.0),
                         maxMessages: 1
                     )
                     Thread.sleep(forTimeInterval: 0.12)
@@ -143,7 +189,7 @@ enum EditorVoiceDocumentService {
                     [request],
                     sourceIndex: sourceIndex,
                     destinationIndex: destinationIndex,
-                    timeout: timeout,
+                    timeout: resolvedTimeout,
                     maxMessages: 1
                 )
                 guard let response = responseMessages.first else {
@@ -161,7 +207,11 @@ enum EditorVoiceDocumentService {
             }
         }
 
-        throw lastError ?? FB01MIDIError.timedOut("DX100 Internal bank")
+        throw DX100InternalBankFetchFailure(
+            purpose: purpose,
+            attempts: max(1, resolvedAttempts),
+            underlyingError: lastError ?? FB01MIDIError.timedOut("DX100 Internal bank")
+        )
     }
 
     static func receiveDX100InternalBankManually(
@@ -328,7 +378,7 @@ enum EditorVoiceDocumentService {
         destinationIndex: Int,
         systemChannel: Int,
         currentBank: DX100VoiceBankData,
-        settleDelay: TimeInterval = 0.4,
+        settleDelay: TimeInterval = 1.25,
         progress: (@Sendable (DX100InternalStoreProgress) -> Void)? = nil
     ) throws {
         progress?(.preparingBank)
@@ -355,13 +405,19 @@ enum EditorVoiceDocumentService {
         if settleDelay > 0 {
             Thread.sleep(forTimeInterval: settleDelay)
         }
+        progress?(.returningToPlayMode)
+        try normalizeDX100AfterInternalBankStore(
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel
+        )
     }
 
     static func writeDX100InternalBank(
         _ bank: DX100VoiceBankData,
         destinationIndex: Int,
         systemChannel: Int,
-        settleDelay: TimeInterval = 0.4
+        settleDelay: TimeInterval = 1.25,
+        progress: (@Sendable (DX100InternalStoreProgress) -> Void)? = nil
     ) throws {
         let messages = try DX100ModuleServices.shared.voiceService.voiceBankMessages(
             for: bank,
@@ -379,10 +435,16 @@ enum EditorVoiceDocumentService {
         )
         Thread.sleep(forTimeInterval: 0.35)
 
+        progress?(.sendingBank(slotIndex: 0))
         try FB01MIDI.sendLongSysEx(loadMessage, destinationIndex: destinationIndex, timeout: 45)
         if settleDelay > 0 {
             Thread.sleep(forTimeInterval: settleDelay)
         }
+        progress?(.returningToPlayMode)
+        try normalizeDX100AfterInternalBankStore(
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel
+        )
     }
 
     static func recoverDX100PlayMode(
@@ -399,6 +461,32 @@ enum EditorVoiceDocumentService {
         if settleDelay > 0 {
             Thread.sleep(forTimeInterval: settleDelay)
         }
+    }
+
+    /// A full Internal-bank write can leave the DX100 unable to answer its next
+    /// automatic dump request until it has returned to a stable play state.
+    /// The hardware's equivalent front-panel recovery is selecting Internal
+    /// Voice 1, so make that known-good selection here after the bulk transfer
+    /// has had time to settle.
+    private static func normalizeDX100AfterInternalBankStore(
+        destinationIndex: Int,
+        systemChannel: Int
+    ) throws {
+        try recoverDX100PlayMode(
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            settleDelay: 0.45
+        )
+        // A MIDI Program Change does not reproduce the DX100's front-panel
+        // Voice 1 key. Use its documented remote switch message so this is the
+        // same transition as pressing INTERNAL/PLAY then Voice 1 by hand.
+        try sendDX100SwitchPress(
+            switchNumber: 1,
+            destinationIndex: destinationIndex,
+            systemChannel: systemChannel,
+            releaseDelay: 0.1
+        )
+        Thread.sleep(forTimeInterval: 0.5)
     }
 
     private static func dx100ProgramChangeMessage(channel: Int, programNumber: Int) throws -> [UInt8] {

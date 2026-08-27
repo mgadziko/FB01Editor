@@ -21,6 +21,15 @@ import UniformTypeIdentifiers
     #expect(candidates[1].voice.name == "Horn")
 }
 
+@Test func dx100InternalBankFetchPoliciesKeepVerificationConservative() {
+    #expect(EditorVoiceDocumentService.DX100InternalBankFetchPurpose.deviceSelection.timeout == 8)
+    #expect(EditorVoiceDocumentService.DX100InternalBankFetchPurpose.deviceSelection.attempts == 3)
+    #expect(EditorVoiceDocumentService.DX100InternalBankFetchPurpose.bankBrowser.attempts == 3)
+    #expect(EditorVoiceDocumentService.DX100InternalBankFetchPurpose.storePreparation.attempts == 2)
+    #expect(EditorVoiceDocumentService.DX100InternalBankFetchPurpose.storeVerification.timeout == 5)
+    #expect(EditorVoiceDocumentService.DX100InternalBankFetchPurpose.storeVerification.attempts == 1)
+}
+
 @MainActor
 @Test func documentExtractionBuildsConfigurationCandidatesFromCurrentDump() throws {
     let fixtureURL = Bundle.module.url(
