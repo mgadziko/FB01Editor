@@ -10,7 +10,7 @@ enum FB01VoiceDocumentService {
         let service = FB01ModuleServices.shared.voiceService
 
         switch source {
-        case .currentVoice, .dx100Bank:
+        case .currentVoice, .dx100Bank, .tx81zVoiceBank:
             throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.fb01)
         case .instrument(let instrument):
             let result = try service.fetchInstrumentVoice(

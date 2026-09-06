@@ -24,6 +24,7 @@ private enum ForestCLIDX100Log {
 enum ForestCLIDevice: String, Codable {
     case dx100
     case fb01
+    case tx81z
 
     var displayName: String {
         switch self {
@@ -31,6 +32,8 @@ enum ForestCLIDevice: String, Codable {
             "DX100"
         case .fb01:
             "FB-01"
+        case .tx81z:
+            "TX81Z"
         }
     }
 }
@@ -122,6 +125,12 @@ struct ForestCLI {
             try fetchCurrentVoice()
         case "store-internal-slot":
             try storeInternalSlot(arguments: Array(arguments.dropFirst()))
+        case "store-bank-i":
+            try storeTX81ZBankI(arguments: Array(arguments.dropFirst()))
+        case "store-bank-i-slot":
+            try storeTX81ZBankISlot(arguments: Array(arguments.dropFirst()))
+        case "tx81z-data-plus":
+            try tx81zDataEntryPlus(arguments: Array(arguments.dropFirst()))
         default:
             throw ForestCLIError.usage("Unknown command '\(command)'. Run `forest-cli help`.")
         }
@@ -134,16 +143,22 @@ struct ForestCLI {
 
             Commands:
               forest-cli list-midi
-              forest-cli select-device <dx100|fb01> [--source <index-or-name>] [--destination <index-or-name>] [--channel <1-16>]
+              forest-cli select-device <dx100|fb01|tx81z> [--source <index-or-name>] [--destination <index-or-name>] [--channel <1-16>]
               forest-cli status
-              forest-cli show-bank <internal|a|b|c|d|1-7>
+              forest-cli show-bank <internal|a|b|c|d|1-7|i>
               forest-cli fetch-current-voice
               forest-cli store-internal-slot <1-24>
+              forest-cli store-bank-i
+              forest-cli store-bank-i-slot <1-32>
+              forest-cli tx81z-data-plus
 
             Notes:
-              - This first CLI slice is optimized for high-value current-voice and DX100 Internal-bank workflows.
+              - This first CLI slice is optimized for high-value current-voice, DX100 Internal-bank, and TX81Z Bank I workflows.
               - `fetch-current-voice` caches the fetched voice in tmp/forest-cli-state.json.
               - `store-internal-slot` stores the cached DX100 voice into the selected Internal slot.
+              - `store-bank-i` rewrites the current TX81Z Bank I image and verifies it by refetching Bank I.
+              - `store-bank-i-slot` stores the cached TX81Z current voice in a chosen Bank I slot and verifies that slot.
+              - `tx81z-data-plus` presses the TX81Z's documented remote DATA ENTRY + switch once.
             """
         )
     }
@@ -173,7 +188,7 @@ struct ForestCLI {
     private func selectDevice(arguments: [String]) throws {
         guard let deviceToken = arguments.first,
               let device = ForestCLIDevice(rawValue: deviceToken.lowercased()) else {
-            throw ForestCLIError.usage("Usage: forest-cli select-device <dx100|fb01> [--source <index-or-name>] [--destination <index-or-name>] [--channel <1-16>]")
+            throw ForestCLIError.usage("Usage: forest-cli select-device <dx100|fb01|tx81z> [--source <index-or-name>] [--destination <index-or-name>] [--channel <1-16>]")
         }
 
         var sourceQuery: String?
@@ -246,6 +261,8 @@ struct ForestCLI {
             try showDXBank(bankToken: bankToken, state: state)
         case .fb01:
             try showFBBank(bankToken: bankToken, state: state)
+        case .tx81z:
+            try showTX81ZBank(bankToken: bankToken, state: state)
         }
     }
 
@@ -276,6 +293,17 @@ struct ForestCLI {
             state.cachedVoice = ForestCLICachedVoice(device: .fb01, title: fetched.voice.name.isEmpty ? "Untitled" : fetched.voice.name, sysExBytes: bytes)
             try ForestCLIStateStore.save(state)
             print("Fetched FB-01 current Instrument 1 voice: \(state.cachedVoice?.title ?? "Untitled")")
+        case .tx81z:
+            let fetched = try TX81ZModuleServices.shared.voiceService.fetchCurrentVoice(
+                sourceIndex: state.sourceIndex,
+                destinationIndex: state.destinationIndex,
+                channel: state.systemChannel,
+                timeout: 8
+            )
+            let bytes = try fetched.voice.bulkMessages(channel: fetched.channel).flatMap { $0 }
+            state.cachedVoice = ForestCLICachedVoice(device: .tx81z, title: fetched.voice.name.isEmpty ? "Untitled" : fetched.voice.name, sysExBytes: bytes)
+            try ForestCLIStateStore.save(state)
+            print("Fetched TX81Z current voice: \(state.cachedVoice?.title ?? "Untitled")")
         }
     }
 
@@ -322,6 +350,113 @@ struct ForestCLI {
             ForestCLIDX100Log.write("DX100 verify incomplete after store: \(error)")
             print("Stored \(cachedVoice.title) in DX100 Internal slot \(slotNumber). Verification incomplete: \(error)")
         }
+    }
+
+    private func storeTX81ZBankI(arguments: [String]) throws {
+        guard arguments.isEmpty else {
+            throw ForestCLIError.usage("Usage: forest-cli store-bank-i")
+        }
+
+        let state = try ForestCLIStateStore.load()
+        guard state.selectedDevice == .tx81z else {
+            throw ForestCLIError.unsupported("store-bank-i currently supports TX81Z only.")
+        }
+
+        print("Fetching TX81Z Bank I...")
+        let bank = try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel,
+            timeout: 12
+        )
+        let messages = try TX81ZModuleServices.shared.voiceService.voiceMemoryBankStoreMessages(
+            for: bank,
+            channel: state.systemChannel
+        )
+        guard let message = messages.first else {
+            throw ForestCLIError.stateMissing("Forest could not build a TX81Z Bank I store message.")
+        }
+
+        print("Writing the unchanged TX81Z Bank I image...")
+        try FB01MIDI.sendLongSysEx(message, destinationIndex: state.destinationIndex, timeout: 45)
+        Thread.sleep(forTimeInterval: 1.0)
+
+        print("Refetching TX81Z Bank I for verification...")
+        let verified = try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel,
+            timeout: 12
+        )
+        guard verified == bank else {
+            throw ForestCLIError.stateMissing("TX81Z Bank I verification mismatch after store.")
+        }
+        print("Stored and verified TX81Z Bank I (unchanged image).")
+    }
+
+    private func storeTX81ZBankISlot(arguments: [String]) throws {
+        guard let slotToken = arguments.first,
+              let slotNumber = Int(slotToken),
+              (1...TX81ZVoiceBankData.voiceCount).contains(slotNumber) else {
+            throw ForestCLIError.usage("Usage: forest-cli store-bank-i-slot <1-32>")
+        }
+
+        let state = try ForestCLIStateStore.load()
+        guard state.selectedDevice == .tx81z else {
+            throw ForestCLIError.unsupported("store-bank-i-slot currently supports TX81Z only.")
+        }
+        guard let cachedVoice = state.cachedVoice, cachedVoice.device == .tx81z else {
+            throw ForestCLIError.stateMissing("No cached TX81Z voice. Run `forest-cli fetch-current-voice` first.")
+        }
+
+        let voice = try TX81ZVoiceData(messages: TX81Z.splitSysExMessages(from: cachedVoice.sysExBytes))
+        print("Fetching TX81Z Bank I before storing " + cachedVoice.title + " in slot " + String(slotNumber) + "...")
+        let bank = try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel,
+            timeout: 12
+        )
+        let updatedBank = try bank.replacingVoice(at: slotNumber - 1, with: voice)
+        let messages = try TX81ZModuleServices.shared.voiceService.voiceMemoryBankStoreMessages(
+            for: updatedBank,
+            channel: state.systemChannel
+        )
+        guard let message = messages.first else {
+            throw ForestCLIError.stateMissing("Forest could not build a TX81Z Bank I slot store message.")
+        }
+
+        print("Writing TX81Z Bank I slot " + String(slotNumber) + "...")
+        try FB01MIDI.sendLongSysEx(message, destinationIndex: state.destinationIndex, timeout: 45)
+        Thread.sleep(forTimeInterval: 1.0)
+
+        print("Verifying TX81Z Bank I slot " + String(slotNumber) + "...")
+        let verified = try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel,
+            timeout: 12
+        )
+        guard try verified.voice(at: slotNumber - 1) == voice else {
+            throw ForestCLIError.stateMissing("TX81Z Bank I slot " + String(slotNumber) + " did not match the stored voice after verification.")
+        }
+        print("Stored and verified " + cachedVoice.title + " in TX81Z Bank I slot " + String(slotNumber) + ".")
+    }
+
+    private func tx81zDataEntryPlus(arguments: [String]) throws {
+        guard arguments.isEmpty else {
+            throw ForestCLIError.usage("Usage: forest-cli tx81z-data-plus")
+        }
+        let state = try ForestCLIStateStore.load()
+        guard state.selectedDevice == .tx81z else {
+            throw ForestCLIError.unsupported("tx81z-data-plus currently supports TX81Z only.")
+        }
+        let messages = try TX81ZModuleServices.shared.voiceService.remoteSwitchMessages(
+            .dataEntryPlus,
+            channel: state.systemChannel
+        )
+        try FB01MIDI.sendSysEx(messages, destinationIndex: state.destinationIndex, delayBetweenMessages: 0.1)
+        print("Sent TX81Z remote DATA ENTRY +.")
     }
 
     private func fetchDX100InternalBank(
@@ -421,6 +556,24 @@ struct ForestCLI {
         for (index, name) in bank.dx100DisplayedVoiceNames.enumerated() {
             let title = name.isEmpty ? "Untitled" : name
             print(String(format: "%2d  %@", index + 1, title))
+        }
+    }
+
+    private func showTX81ZBank(bankToken: String, state: ForestCLIState) throws {
+        let normalized = bankToken.lowercased()
+        guard ["1", "i", "voice-bank-i", "voicebanki"].contains(normalized) else {
+            throw ForestCLIError.invalidValue("TX81Z currently exposes Voice Bank I. Use `forest-cli show-bank i`.")
+        }
+
+        let bank = try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel,
+            timeout: 12
+        )
+        print("TX81Z Voice Bank I")
+        for (index, name) in bank.voiceNames.enumerated() {
+            print(String(format: "%2d  %@", index + 1, name.isEmpty ? "Untitled" : name))
         }
     }
 

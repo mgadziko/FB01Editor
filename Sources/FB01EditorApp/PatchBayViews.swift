@@ -1151,13 +1151,15 @@ struct FMPatchOperatorModule: View {
     }
 
     private var frequencyRatioLabel: String {
-        editingDevice == .dx100 ? "Oscillator\nFrequency Ratio" : "Frequency Ratio"
+        editingDevice != .fb01 ? "Oscillator\nFrequency Ratio" : "Frequency Ratio"
     }
 
     private var frequencyRatioHelpText: String {
         switch editingDevice {
         case .dx100:
             return "DX100 oscillator frequency ratio. Lower ratios sound foundational; higher or unusual ratios add brighter or more metallic harmonics."
+        case .tx81z:
+            return "TX81Z oscillator frequency ratio. TX81Z-only waveform, fixed-frequency, fine-frequency, and EG Shift data are preserved by the current-voice codec but are not editable in this first Forest pass."
         case .fb01:
             return "FB-01 ratio control. It behaves like a multiplier-style oscillator ratio for setting harmonic relationships."
         }
@@ -1176,16 +1178,16 @@ struct FMPatchOperatorModule: View {
     }
 
     private var keyVelocityToLevelLabel: String {
-        editingDevice == .dx100 ? "Key Velocity\nSensitivity" : "Key Velocity\nto Level"
+        editingDevice != .fb01 ? "Key Velocity\nSensitivity" : "Key Velocity\nto Level"
     }
 
     private var sustainLikeLabel: String {
-        editingDevice == .dx100 ? "Decay 1 Level" : "Sustain Level"
+        editingDevice != .fb01 ? "Decay 1 Level" : "Sustain Level"
     }
 
     private var sustainLikeHelpText: String {
-        editingDevice == .dx100
-            ? "DX100 Decay 1 Level. Sets the level the envelope settles toward after its first decay."
+        editingDevice != .fb01
+            ? "DX-family Decay 1 Level. Sets the level the envelope settles toward after its first decay."
             : "Sets the held level after the decay stages."
     }
 

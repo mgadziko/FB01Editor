@@ -31,6 +31,8 @@ struct ActiveEditorDocumentActions {
     var storeToLinkedBankWindowTitle: String?
     var storeToDevice: (DocumentModel) -> Void
     var storeToDeviceTitle: String
+    var sendToEditBuffer: ((DocumentModel) -> Void)? = nil
+    var sendToEditBufferTitle: String? = nil
     var isEdited: Bool
     var isBusy: Bool
 }
@@ -113,6 +115,8 @@ struct EditorDocumentCommands: View {
             return FB01ModuleServices.shared.module.capabilities.supportsConfigurations
         case .dx100:
             return DX100ModuleServices.shared.module.capabilities.supportsConfigurations
+        case .tx81z:
+            return TX81ZModuleServices.shared.module.capabilities.supportsConfigurations
         case nil:
             return true
         }
@@ -226,6 +230,8 @@ struct EditorDocumentCommands: View {
                 document.saveDX100VoiceBankFromSelector(bank: sourceBank.bank)
             } else if let sourceBank = activeVoiceBankSelector, sourceBank.device == .fb01 {
                 document.saveFB01VoiceBankFromSelector(bank: sourceBank.bank)
+            } else if let sourceBank = activeVoiceBankSelector, sourceBank.device == .tx81z {
+                document.saveTX81ZVoiceBankFromSelector(bank: sourceBank.bank)
             } else {
                 document.errorMessage = "Save Bank failed: bring a bank window to the front first."
                 document.statusMessage = nil
@@ -398,6 +404,14 @@ struct VoiceDocumentDeviceCommands: View {
                 .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)
             }
 
+            if let sendToEditBufferTitle = activeDocumentActions?.sendToEditBufferTitle,
+               let sendToEditBuffer = activeDocumentActions?.sendToEditBuffer {
+                Button(sendToEditBufferTitle) {
+                    sendToEditBuffer(document)
+                }
+                .disabled(activeDocumentActions?.kind != .voice || activeDocumentActions?.isBusy == true || document.isBusy)
+            }
+
             Button(activeDocumentActions?.storeToDeviceTitle ?? document.selectedDeviceVoiceStoreCommandTitle) {
                 activeDocumentActions?.storeToDevice(document)
             }
@@ -450,38 +464,54 @@ struct ConfigurationDocumentDeviceCommands: View {
     @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
 
     var body: some View {
-        Button("Fetch Configuration from Device...") {
-            let id = workspace.createConfigurationDocument()
-            openWindow(id: "configuration-document", value: id)
-            Task { @MainActor in
-                await Task.yield()
-                workspace.configurationDocument(id: id)?.fetchFromDevice(device: document)
-            }
-        }
-        .disabled(document.isBusy)
-
-        Menu("Fetch Recent Configuration") {
-            if document.recentFetchedConfigurations.isEmpty {
-                Text("No Recent Configuration Fetches")
-            } else {
-                ForEach(document.recentFetchedConfigurations) { item in
-                    Button(item.title) {
-                        fetchRecentConfiguration(item)
-                    }
-                    .disabled(document.isBusy)
+        if document.selectedEditorDevice == .tx81z {
+            Button("Fetch Current Performance from Device...") {
+                Task { @MainActor in
+                    guard let performance = await document.fetchTX81ZCurrentPerformance() else { return }
+                    let id = workspace.createTX81ZPerformanceDocument(
+                        performance: performance,
+                        slotNumber: nil,
+                        systemChannel: document.systemChannel,
+                        statusMessage: "Fetched the current TX81Z Performance edit buffer."
+                    )
+                    openWindow(id: "tx81z-performance-document", value: id)
                 }
             }
-        }
+            .disabled(document.isBusy)
+        } else {
+            Button("Fetch Configuration from Device...") {
+                let id = workspace.createConfigurationDocument()
+                openWindow(id: "configuration-document", value: id)
+                Task { @MainActor in
+                    await Task.yield()
+                    workspace.configurationDocument(id: id)?.fetchFromDevice(device: document)
+                }
+            }
+            .disabled(document.isBusy)
 
-        Button(activeDocumentActions?.fetchFromDeviceTitle ?? "Fetch Configuration from Device into Current Document...") {
-            activeDocumentActions?.fetchFromDevice(document)
-        }
-        .disabled(activeDocumentActions?.kind != .configuration || activeDocumentActions?.isBusy == true || document.isBusy)
+            Menu("Fetch Recent Configuration") {
+                if document.recentFetchedConfigurations.isEmpty {
+                    Text("No Recent Configuration Fetches")
+                } else {
+                    ForEach(document.recentFetchedConfigurations) { item in
+                        Button(item.title) {
+                            fetchRecentConfiguration(item)
+                        }
+                        .disabled(document.isBusy)
+                    }
+                }
+            }
 
-        Button(activeDocumentActions?.storeToDeviceTitle ?? "Store Configuration to Device Slot...") {
-            activeDocumentActions?.storeToDevice(document)
+            Button(activeDocumentActions?.fetchFromDeviceTitle ?? "Fetch Configuration from Device into Current Document...") {
+                activeDocumentActions?.fetchFromDevice(document)
+            }
+            .disabled(activeDocumentActions?.kind != .configuration || activeDocumentActions?.isBusy == true || document.isBusy)
+
+            Button(activeDocumentActions?.storeToDeviceTitle ?? "Store Configuration to Device Slot...") {
+                activeDocumentActions?.storeToDevice(document)
+            }
+            .disabled(activeDocumentActions?.kind != .configuration || activeDocumentActions?.isBusy == true || document.isBusy)
         }
-        .disabled(activeDocumentActions?.kind != .configuration || activeDocumentActions?.isBusy == true || document.isBusy)
     }
 
     private func fetchRecentConfiguration(_ item: RecentConfigurationFetch) {
@@ -539,6 +569,7 @@ final class EditorDocumentWorkspace: ObservableObject {
 
     @Published private(set) var voiceDocuments: [UUID: VoiceDocumentModel] = [:]
     @Published private(set) var configurationDocuments: [UUID: ConfigurationDocumentModel] = [:]
+    @Published private(set) var tx81zPerformanceDocuments: [UUID: TX81ZPerformanceDocumentModel] = [:]
     @Published private(set) var fb01VoiceBankFileSelectors: [UUID: FB01VoiceBankFileSelector] = [:]
     @Published private(set) var dx100VoiceBankFileSelectors: [UUID: DX100VoiceBankFileSelector] = [:]
     private var voiceDocumentObservers: [UUID: AnyCancellable] = [:]
@@ -642,6 +673,23 @@ final class EditorDocumentWorkspace: ObservableObject {
         configurationDocuments[id]
     }
 
+    func createTX81ZPerformanceDocument(
+        performance: TX81ZPerformanceData,
+        slotNumber: Int?,
+        systemChannel: Int,
+        statusMessage: String
+    ) -> UUID {
+        let document = TX81ZPerformanceDocumentModel(
+            performance: performance, slotNumber: slotNumber, systemChannel: systemChannel, statusMessage: statusMessage
+        )
+        tx81zPerformanceDocuments[document.id] = document
+        return document.id
+    }
+
+    func tx81zPerformanceDocument(id: UUID) -> TX81ZPerformanceDocumentModel? {
+        tx81zPerformanceDocuments[id]
+    }
+
     func dx100VoiceBankFileSelector(id: UUID) -> DX100VoiceBankFileSelector? {
         dx100VoiceBankFileSelectors[id]
     }
@@ -738,6 +786,10 @@ final class EditorDocumentWorkspace: ObservableObject {
     func closeConfigurationDocument(id: UUID) {
         configurationDocuments[id] = nil
         configurationDocumentObservers[id] = nil
+    }
+
+    func closeTX81ZPerformanceDocument(id: UUID) {
+        tx81zPerformanceDocuments[id] = nil
     }
 
     func closeDX100VoiceBankFileSelector(id: UUID) {
@@ -870,6 +922,10 @@ final class EditorDocumentWorkspace: ObservableObject {
 
     static func configurationWindowIdentifier(for id: UUID) -> String {
         "configuration-document-\(id.uuidString)"
+    }
+
+    static func tx81zPerformanceWindowIdentifier(for id: UUID) -> String {
+        "tx81z-performance-document-\(id.uuidString)"
     }
 
     static func voiceBankSelectorWindowIdentifier(for selection: DeviceVoiceBankWindowSelection) -> String {

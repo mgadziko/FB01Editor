@@ -114,6 +114,17 @@ struct FB01EditorApplication: App {
                     .frame(width: 420, height: 180)
             }
         }
+        WindowGroup("TX81Z Performance", id: "tx81z-performance-document", for: UUID.self) { $id in
+            if let id, let performanceDocument = documentWorkspace.tx81zPerformanceDocument(id: id) {
+                TX81ZPerformanceDocumentWindow(document: performanceDocument, device: document) {
+                    documentWorkspace.closeTX81ZPerformanceDocument(id: id)
+                }
+                .frame(minWidth: 620, minHeight: 520)
+            } else {
+                MissingEditorDocumentView()
+                    .frame(width: 420, height: 180)
+            }
+        }
         WindowGroup("Voice Bank", id: "voice-bank-selector", for: DeviceVoiceBankWindowSelection.self) { $selection in
             if let selection {
                 VoiceBankSelectorWindow(selection: selection, document: document, workspace: documentWorkspace)
@@ -149,7 +160,11 @@ struct FB01EditorApplication: App {
         .defaultSize(width: voiceSelectorLayout.windowWidth, height: voiceSelectorLayout.minimumWindowHeight)
         .windowResizability(.contentSize)
         WindowGroup("Configuration Bank", id: "configuration-bank-selector") {
-            ConfigurationSelectorWindow(document: document, workspace: documentWorkspace)
+            if document.selectedEditorDevice == .tx81z {
+                TX81ZPerformanceSelectorWindow(document: document, workspace: documentWorkspace)
+            } else {
+                ConfigurationSelectorWindow(document: document, workspace: documentWorkspace)
+            }
         }
         .defaultSize(width: configurationSelectorLayout.windowWidth, height: configurationSelectorLayout.minimumWindowHeight + 20)
         .windowResizability(.contentSize)

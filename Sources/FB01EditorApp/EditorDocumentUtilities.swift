@@ -58,6 +58,7 @@ struct RecentVoiceFetch: Codable, Identifiable, Equatable {
         case bank
         case voiceRAM1
         case dx100Bank
+        case tx81zVoiceBank
     }
 
     var device: EditorDeviceSelection?
@@ -80,6 +81,8 @@ struct RecentVoiceFetch: Codable, Identifiable, Equatable {
             return "\(devicePrefix)-voiceRAM1-\(voiceNumber ?? 0)"
         case .dx100Bank:
             return "\(devicePrefix)-dx100-bank-\(bank ?? 0)-voice-\(voiceNumber ?? 0)"
+        case .tx81zVoiceBank:
+            return "\(devicePrefix)-tx81z-bank-\(bank ?? 1)-voice-\(voiceNumber ?? 0)"
         }
     }
 
@@ -99,6 +102,9 @@ struct RecentVoiceFetch: Codable, Identifiable, Equatable {
         case .dx100Bank:
             guard let bank, let voiceNumber else { return nil }
             return .dx100Bank(bank: bank, voiceNumber: voiceNumber)
+        case .tx81zVoiceBank:
+            guard let bank, let voiceNumber else { return nil }
+            return .tx81zVoiceBank(bank: bank, voiceNumber: voiceNumber)
         }
     }
 
@@ -182,6 +188,7 @@ enum VoiceDocumentFetchSource: Sendable, Equatable {
     case instrument(Int)
     case storedSlot(location: VoiceDocumentFetchLocation, voiceNumber: Int)
     case dx100Bank(bank: Int, voiceNumber: Int)
+    case tx81zVoiceBank(bank: Int, voiceNumber: Int)
 
     func title(nameLookup: VoiceDocumentFetchNameLookup = .empty) -> String {
         switch self {
@@ -193,6 +200,9 @@ enum VoiceDocumentFetchSource: Sendable, Equatable {
             return nameLookup.sourceTitle(location: location, voiceNumber: voiceNumber + 1)
         case let .dx100Bank(bank, voiceNumber):
             return "DX100 Bank \(bank) Voice \(voiceNumber + 1)"
+        case let .tx81zVoiceBank(bank, voiceNumber):
+            let bankName = [1: "Voice Bank I", 2: "Bank A", 3: "Bank B", 4: "Bank C", 5: "Bank D"][bank] ?? "Bank \(bank)"
+            return "TX81Z \(bankName) Voice \(voiceNumber + 1)"
         }
     }
 }
@@ -354,6 +364,8 @@ struct VoiceBankSelectorItem: Identifiable, Equatable {
         switch source {
         case .dx100Bank(let bank, let voiceNumber):
             return "dx100-bank-\(bank)-voice-\(voiceNumber)"
+        case .tx81zVoiceBank(let bank, let voiceNumber):
+            return "tx81z-bank-\(bank)-voice-\(voiceNumber)"
         default:
             return "bank-\(bank)-voice-\(zeroBasedVoiceNumber)"
         }

@@ -36,6 +36,7 @@ enum CustomControlsControllerProfile: String, CaseIterable, Identifiable {
 enum EditorDeviceSelection: String, CaseIterable, Identifiable, Codable {
     case fb01
     case dx100
+    case tx81z
 
     var id: String { rawValue }
 
@@ -45,6 +46,8 @@ enum EditorDeviceSelection: String, CaseIterable, Identifiable, Codable {
             return "FB-01"
         case .dx100:
             return "DX100"
+        case .tx81z:
+            return "TX81Z"
         }
     }
 }
@@ -102,6 +105,7 @@ final class DocumentModel: ObservableObject {
     @Published var sidebarSelection: SidebarSelection = .system
     @Published var systemChannel = 0
     @Published var systemMemoryProtectEnabled = false
+    @Published var tx81zMemoryProtectEnabled = true
     @Published var systemMasterOutputLevel = 127
     @Published var systemDeviceStatus = "Not requested"
     @Published var voiceEditorParadigm: VoiceEditorParadigm = .fmRoutingPatchBay
@@ -130,6 +134,8 @@ final class DocumentModel: ObservableObject {
     @Published private var cachedDX100VoiceBanks: [Int: [DX100VoiceData]] = [:]
     @Published private var cachedDX100RawVoiceBanks: [Int: DX100VoiceBankData] = [:]
     @Published private var cachedDX100ManualCaptureSlots: [Int: Set<Int>] = [:]
+    @Published private var cachedTX81ZVoiceBanks: [Int: TX81ZVoiceBankData] = [:]
+    @Published private var cachedTX81ZPerformanceBank: TX81ZPerformanceBankData?
     @Published private var editedVoiceBankSelections: Set<DeviceVoiceBankWindowSelection> = []
     @Published var selectedEditorDevice: EditorDeviceSelection?
     @Published var deviceCacheStatus = "Not loaded"
@@ -166,6 +172,7 @@ final class DocumentModel: ObservableObject {
         static let lastLoadDirectory = "FB01Editor.lastLoadDirectory"
         static let lastSaveDirectory = "FB01Editor.lastSaveDirectory"
         static let systemChannel = "FB01Editor.systemChannel"
+        static let tx81zMemoryProtect = "FB01Editor.tx81zMemoryProtect"
         static let keyboardChannel = "FB01Editor.keyboardChannel"
         static let keyboardVelocity = "FB01Editor.keyboardVelocity"
         static let keyboardStartNote = "FB01Editor.keyboardStartNote"
@@ -216,6 +223,9 @@ final class DocumentModel: ObservableObject {
         externalKeyboardEnabled = UserDefaults.standard.bool(forKey: DefaultsKey.externalKeyboardEnabled)
         let savedSystemChannel = UserDefaults.standard.integer(forKey: DefaultsKey.systemChannel)
         systemChannel = (0...15).contains(savedSystemChannel) ? savedSystemChannel : 0
+        tx81zMemoryProtectEnabled = UserDefaults.standard.object(forKey: DefaultsKey.tx81zMemoryProtect) == nil
+            ? true
+            : UserDefaults.standard.bool(forKey: DefaultsKey.tx81zMemoryProtect)
         let savedKeyboardChannel = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardChannel)
         keyboardChannel = (0...15).contains(savedKeyboardChannel) ? savedKeyboardChannel : 0
         let savedKeyboardVelocity = UserDefaults.standard.integer(forKey: DefaultsKey.keyboardVelocity)
@@ -544,6 +554,14 @@ final class DocumentModel: ObservableObject {
             return fb01DeviceCacheSummaryRows
         case .dx100:
             return dx100DeviceCacheSummaryRows
+        case .tx81z:
+            return [
+                KeyValueRow("Device", EditorDeviceSelection.tx81z.displayName),
+                KeyValueRow("Status", deviceCacheStatus),
+                KeyValueRow("Coverage", cachedTX81ZVoiceBanks.isEmpty ? "Current voice only" : "Partial"),
+                KeyValueRow("Voice Banks", "\(cachedTX81ZVoiceBanks.count)/\(TX81ZModuleServices.shared.module.fullDeviceCacheScope.voiceBanks.count)"),
+                KeyValueRow("Performances", "Not available"),
+            ]
         }
     }
 
@@ -586,6 +604,8 @@ final class DocumentModel: ObservableObject {
             return FB01ModuleServices.shared.module.capabilities.supportsConfigurations
         case .dx100:
             return DX100ModuleServices.shared.module.capabilities.supportsConfigurations
+        case .tx81z:
+            return TX81ZModuleServices.shared.module.capabilities.supportsConfigurations
         case nil:
             return false
         }
@@ -597,7 +617,7 @@ final class DocumentModel: ObservableObject {
 
     var selectedDeviceHasConnectedVoiceDocumentCommands: Bool {
         switch selectedEditorDevice {
-        case .fb01, .dx100:
+        case .fb01, .dx100, .tx81z:
             return true
         case nil:
             return false
@@ -608,6 +628,8 @@ final class DocumentModel: ObservableObject {
         switch selectedEditorDevice {
         case .dx100:
             return "Fetch Current Edit Voice from Device..."
+        case .tx81z:
+            return "Fetch Current Voice from Device..."
         case .fb01, nil:
             return "Fetch Voice from Device..."
         }
@@ -617,6 +639,8 @@ final class DocumentModel: ObservableObject {
         switch selectedEditorDevice {
         case .dx100:
             return "Fetch Current Edit Voice from Device into Current Document..."
+        case .tx81z:
+            return "Fetch Current Voice from Device into Current Document..."
         case .fb01, nil:
             return "Fetch Voice from Device into Current Document..."
         }
@@ -626,13 +650,15 @@ final class DocumentModel: ObservableObject {
         switch selectedEditorDevice {
         case .dx100:
             return "Store Voice to DX100 Internal Slot..."
+        case .tx81z:
+            return "Store Voice to TX81Z is not available"
         case .fb01, nil:
             return "Store Voice to Device Slot..."
         }
     }
 
     var selectedDeviceShowsConfigurationMenu: Bool {
-        selectedEditorDevice != .dx100
+        selectedEditorDevice == .fb01 || selectedEditorDevice == nil
     }
 
     var selectedDeviceVoiceBankSelectorLayout: SynthSelectorGridLayout {
@@ -648,6 +674,8 @@ final class DocumentModel: ObservableObject {
             return FB01ModuleServices.shared.module.voiceBankSelectorLayout
         case .dx100:
             return DX100ModuleServices.shared.module.voiceBankSelectorLayout
+        case .tx81z:
+            return TX81ZModuleServices.shared.module.voiceBankSelectorLayout
         }
     }
 
@@ -658,12 +686,15 @@ final class DocumentModel: ObservableObject {
             return "DX100 Bank - \(bankName)"
         case .fb01:
             return "FB-01 Bank - Bank \(bank)"
+        case .tx81z:
+            let bankName = [1: "Voice Bank I", 2: "Bank A", 3: "Bank B", 4: "Bank C", 5: "Bank D"][bank] ?? "Bank \(bank)"
+            return "TX81Z Bank - \(bankName)"
         }
     }
 
     var selectedDeviceConfigurationBankSelectorLayout: SynthSelectorGridLayout {
         switch selectedEditorDevice {
-        case .fb01, .dx100, nil:
+        case .fb01, .dx100, .tx81z, nil:
             return FB01ModuleServices.shared.module.configurationBankSelectorLayout
                 ?? FB01ModuleServices.shared.module.voiceBankSelectorLayout
         }
@@ -683,6 +714,8 @@ final class DocumentModel: ObservableObject {
             return FB01ModuleServices.shared.module.commandDescriptors.first { $0.kind == kind }
         case .dx100:
             return DX100ModuleServices.shared.module.commandDescriptors.first { $0.kind == kind }
+        case .tx81z:
+            return TX81ZModuleServices.shared.module.commandDescriptors.first { $0.kind == kind }
         case nil:
             return nil
         }
@@ -696,6 +729,9 @@ final class DocumentModel: ObservableObject {
             return DX100ModuleServices.shared.module.allVoiceBanks.filter { bank in
                 DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank)?.isFetchableFromConnectedDevice == true
             }
+        case .tx81z:
+            let module = TX81ZModuleServices.shared.module
+            return module.writableVoiceBanks + module.readOnlyVoiceBanks
         case nil:
             return []
         }
@@ -707,6 +743,8 @@ final class DocumentModel: ObservableObject {
             return FB01ModuleServices.shared.module.writableVoiceBanks
         case .dx100:
             return [1]
+        case .tx81z:
+            return TX81ZModuleServices.shared.module.writableVoiceBanks
         case nil:
             return []
         }
@@ -731,7 +769,6 @@ final class DocumentModel: ObservableObject {
             guard let kind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank) else {
                 return selectedDeviceVoiceBankTitle(bank)
             }
-
             switch kind {
             case .internalRAM:
                 return "Internal"
@@ -740,6 +777,8 @@ final class DocumentModel: ObservableObject {
             case .preset:
                 return kind.displayName
             }
+        case .tx81z:
+            return selectedDeviceVoiceBankTitle(bank)
         }
     }
 
@@ -765,6 +804,7 @@ final class DocumentModel: ObservableObject {
         alert.addButton(withTitle: "Cancel")
         alert.addButton(withTitle: "DX100")
         alert.addButton(withTitle: "FB-01")
+        alert.addButton(withTitle: "TX81Z")
 
         switch alert.runModal() {
         case .alertFirstButtonReturn:
@@ -773,6 +813,8 @@ final class DocumentModel: ObservableObject {
             selectDevice(.dx100)
         case .alertThirdButtonReturn:
             selectDevice(.fb01)
+        case .init(rawValue: 1003):
+            selectDevice(.tx81z)
         default:
             break
         }
@@ -815,6 +857,10 @@ final class DocumentModel: ObservableObject {
             } else {
                 refreshDX100DeviceCache(showsFailureAlert: false)
             }
+        case .tx81z:
+            deviceCacheStatus = "On-demand current voice fetch"
+            statusMessage = "TX81Z selected. Fetch the current voice to open a read-only TX81Z Voice Document."
+            errorMessage = nil
         }
     }
 
@@ -1366,7 +1412,7 @@ final class DocumentModel: ObservableObject {
                 systemChannel,
                 "DX100 Bank \(bank) Voice \(voiceNumber + 1): \(name)"
             )
-        case .currentVoice, .instrument:
+        case .currentVoice, .instrument, .tx81zVoiceBank:
             return nil
         }
     }
@@ -1430,12 +1476,20 @@ final class DocumentModel: ObservableObject {
                     fetchConfigurations: false
                 )
             }
-
-            if module.isWritableVoiceBank(bank), cachedVoiceBanks[bank] == nil {
+            return voiceBankSelectorItems(bank: bank)
+        case .tx81z:
+            let bank = selection.bank
+            guard (1...5).contains(bank) else {
                 return []
             }
-
-            return voiceBankSelectorItems(bank: bank)
+            if cachedTX81ZVoiceBanks[bank] == nil {
+                if bank == 1 {
+                    await fetchTX81ZVoiceMemoryBank()
+                } else {
+                    await fetchTX81ZFactoryVoiceBank(bank: bank)
+                }
+            }
+            return tx81zVoiceBankSelectorItems(bank: bank)
         }
     }
 
@@ -2044,6 +2098,216 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func tx81zVoiceBankSelectorItems(bank: Int) -> [VoiceBankSelectorItem] {
+        guard let voiceBank = cachedTX81ZVoiceBanks[bank] else {
+            return []
+        }
+
+        return voiceBank.voiceNames.enumerated().map { index, name in
+            let voiceName = name.isEmpty ? "Voice \(index + 1)" : name
+            return VoiceBankSelectorItem(
+                bank: bank,
+                zeroBasedVoiceNumber: index,
+                name: voiceName,
+                source: .tx81zVoiceBank(bank: bank, voiceNumber: index),
+                fetchTitleOverride: "\(voiceBankTitle(device: .tx81z, bank: bank)) Voice \(index + 1): \(voiceName)",
+                annotation: nil
+            )
+        }
+    }
+
+    func fetchTX81ZVoiceMemoryBankForOperation() async throws -> TX81ZVoiceBankData {
+        let sourceIndex = selectedSourceIndex(for: .tx81z)
+        let destinationIndex = selectedDestinationIndex(for: .tx81z)
+        let channel = systemChannel
+        let bank = try await Task.detached(priority: .userInitiated) {
+            try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
+                sourceIndex: sourceIndex,
+                destinationIndex: destinationIndex,
+                channel: channel
+            )
+        }.value
+        cachedTX81ZVoiceBanks[1] = bank
+        voiceBankSelectorRevision += 1
+        return bank
+    }
+
+    func cacheTX81ZVoiceMemoryBank(_ bank: TX81ZVoiceBankData) {
+        cachedTX81ZVoiceBanks[1] = bank
+        voiceBankSelectorRevision += 1
+    }
+
+    func tx81zCachedVoiceBank(_ bank: Int) -> TX81ZVoiceBankData? {
+        cachedTX81ZVoiceBanks[bank]
+    }
+
+    func tx81zCachedPerformanceBank() -> TX81ZPerformanceBankData? {
+        cachedTX81ZPerformanceBank
+    }
+
+    func fetchTX81ZCurrentPerformance() async -> TX81ZPerformanceData? {
+        guard !isBusy else { return nil }
+        let sourceIndex = selectedSourceIndex(for: .tx81z)
+        let destinationIndex = selectedDestinationIndex(for: .tx81z)
+        let channel = systemChannel
+        isFetchingFromDevice = true
+        statusMessage = "Fetching current TX81Z Performance..."
+        errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Fetching TX81Z Performance",
+            message: "The current TX81Z Performance is being fetched. Please wait.",
+            showsCancelButton: true
+        )
+        var operationTask: Task<TX81ZPerformanceData?, Never>?
+        progressPanel.onCancel = { operationTask?.cancel() }
+        progressPanel.show()
+        operationTask = Task {
+            do {
+                let performance = try await Task.detached(priority: .userInitiated) {
+                    try TX81ZModuleServices.shared.voiceService.fetchCurrentPerformance(
+                        sourceIndex: sourceIndex, destinationIndex: destinationIndex, channel: channel
+                    )
+                }.value
+                try Task.checkCancellation()
+                statusMessage = "Fetched current TX81Z Performance."
+                return performance
+            } catch is CancellationError {
+                statusMessage = nil
+                return nil
+            } catch {
+                errorMessage = "TX81Z Performance fetch failed: \(error)"
+                statusMessage = nil
+                return nil
+            }
+        }
+        let performance = await operationTask?.value
+        progressPanel.dismiss()
+        isFetchingFromDevice = false
+        return performance
+    }
+
+    func ensureTX81ZPerformanceBank() async -> TX81ZPerformanceBankData? {
+        if let cachedTX81ZPerformanceBank { return cachedTX81ZPerformanceBank }
+        guard !isBusy else { return nil }
+        let sourceIndex = selectedSourceIndex(for: .tx81z)
+        let destinationIndex = selectedDestinationIndex(for: .tx81z)
+        let sourceName = selectedSourceName(for: .tx81z)
+        let destinationName = selectedDestinationName(for: .tx81z)
+        let channel = systemChannel
+        isFetchingFromDevice = true
+        statusMessage = "Fetching TX81Z Performance Bank from \(sourceName) -> \(destinationName)..."
+        errorMessage = nil
+        let progressPanel = EditorProgressPanel(
+            title: "Fetching TX81Z Performance Bank",
+            message: "The TX81Z Performance Bank is being fetched. Please wait.",
+            showsCancelButton: true
+        )
+        var operationTask: Task<TX81ZPerformanceBankData?, Never>?
+        progressPanel.onCancel = { operationTask?.cancel() }
+        progressPanel.show()
+        operationTask = Task {
+            do {
+                let bank = try await Task.detached(priority: .userInitiated) {
+                    try TX81ZModuleServices.shared.voiceService.fetchPerformanceMemoryBank(
+                        sourceIndex: sourceIndex, destinationIndex: destinationIndex, channel: channel
+                    )
+                }.value
+                try Task.checkCancellation()
+                cachedTX81ZPerformanceBank = bank
+                configurationSelectorRevision += 1
+                deviceCacheStatus = "Loaded TX81Z Performance Bank"
+                statusMessage = "Fetched TX81Z Performance Bank from \(sourceName) -> \(destinationName)."
+                return bank
+            } catch is CancellationError {
+                statusMessage = nil
+                return nil
+            } catch {
+                errorMessage = "TX81Z Performance Bank fetch failed: \(error)"
+                statusMessage = nil
+                return nil
+            }
+        }
+        let bank = await operationTask?.value
+        progressPanel.dismiss()
+        isFetchingFromDevice = false
+        return bank
+    }
+
+    func storeTX81ZVoiceBankFromSelector(sourceBank: Int) {
+        guard !isBusy else { return }
+        guard sourceBank == 1, let bank = cachedTX81ZVoiceBanks[sourceBank] else {
+            errorMessage = "TX81Z Bank I store failed: bring the loaded Bank I document to the front first."
+            statusMessage = nil
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Store TX81Z Bank I"
+        alert.informativeText = "Forest will overwrite all 32 writable Bank I voices on the TX81Z, then refetch Bank I to verify the transfer. Confirm that MEMORY PROTECT is OFF."
+        alert.addButton(withTitle: "Store Bank I")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let sourceIndex = selectedSourceIndex(for: .tx81z)
+        let destinationIndex = selectedDestinationIndex(for: .tx81z)
+        let destinationName = selectedDestinationName(for: .tx81z)
+        let channel = systemChannel
+        isFetchingFromDevice = true
+        errorMessage = nil
+        statusMessage = "Writing TX81Z Bank I to \(destinationName)..."
+        let progressPanel = EditorProgressPanel(
+            title: "Store TX81Z Bank I",
+            message: "Writing all 32 Bank I voices to the TX81Z..."
+        )
+        progressPanel.show()
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let messages = try TX81ZModuleServices.shared.voiceService.voiceMemoryBankStoreMessages(
+                    for: bank,
+                    channel: channel
+                )
+                guard let message = messages.first else {
+                    throw FB01AppError.message("Forest could not build a TX81Z Bank I store message.")
+                }
+                try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendLongSysEx(message, destinationIndex: destinationIndex, timeout: 45)
+                }.value
+                noteTX81ZMemoryProtectResetAfterBulkReceive()
+                try await Task.sleep(nanoseconds: 500_000_000)
+                progressPanel.update(message: "Refetching TX81Z Bank I to verify the transfer...")
+                let verified = try await Task.detached(priority: .userInitiated) {
+                    try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        channel: channel
+                    )
+                }.value
+                guard verified == bank else {
+                    throw FB01AppError.message("The refetched Bank I did not match the bank Forest sent.")
+                }
+                cacheTX81ZVoiceMemoryBank(verified)
+                statusMessage = "Stored and verified TX81Z Bank I on \(destinationName)."
+                errorMessage = nil
+            } catch {
+                errorMessage = "TX81Z Bank I store failed: \(error)"
+                statusMessage = nil
+            }
+            progressPanel.dismiss()
+            isFetchingFromDevice = false
+        }
+    }
+
+    func cachedTX81ZVoiceName(inBank bank: Int = 1, slotIndex: Int) -> String? {
+        guard let voiceBank = cachedTX81ZVoiceBanks[bank],
+              voiceBank.voiceNames.indices.contains(slotIndex) else {
+            return nil
+        }
+        return voiceBank.voiceNames[slotIndex]
+    }
+
     func dx100VoiceBankCaptureNote(bank: Int) -> String? {
         guard let kind = DX100ModuleServices.shared.module.voiceBankKind(displayBank: bank),
               kind.requiresManualBulkCapture,
@@ -2168,6 +2432,129 @@ final class DocumentModel: ObservableObject {
             : "\(reason) did not fetch: \(cacheResult.failures.joined(separator: ", "))."
         progressPanel.dismiss()
         isFetchingFromDevice = false
+    }
+
+    private func fetchTX81ZVoiceMemoryBank() async {
+        guard !isBusy else {
+            return
+        }
+
+        let sourceIndex = selectedSourceIndex(for: .tx81z)
+        let destinationIndex = selectedDestinationIndex(for: .tx81z)
+        let sourceName = selectedSourceName(for: .tx81z)
+        let destinationName = selectedDestinationName(for: .tx81z)
+        let systemChannel = systemChannel
+        let bankTitle = voiceBankTitle(device: .tx81z, bank: 1)
+
+        isFetchingFromDevice = true
+        deviceCacheStatus = "Fetching \(bankTitle)..."
+        statusMessage = "Fetching \(bankTitle) from \(sourceName) -> \(destinationName)..."
+        errorMessage = nil
+
+        let progressPanel = EditorProgressPanel(
+            title: "Fetching TX81Z Voice Bank I",
+            message: "The TX81Z voice bank is being fetched. Please wait.",
+            showsCancelButton: true
+        )
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
+        progressPanel.show()
+
+        operationTask = Task {
+            do {
+                try Task.checkCancellation()
+                let voiceBank = try await Task.detached(priority: .userInitiated) {
+                    try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        channel: systemChannel
+                    )
+                }.value
+                try Task.checkCancellation()
+                cachedTX81ZVoiceBanks[1] = voiceBank
+                voiceBankSelectorRevision += 1
+                deviceCacheStatus = "Loaded TX81Z Voice Bank I"
+                statusMessage = "Fetched \(bankTitle) from \(sourceName) -> \(destinationName)."
+                errorMessage = nil
+            } catch is CancellationError {
+                deviceCacheStatus = "TX81Z Voice Bank I fetch canceled"
+                statusMessage = nil
+                errorMessage = nil
+            } catch {
+                deviceCacheStatus = "TX81Z Voice Bank I fetch failed"
+                statusMessage = nil
+                errorMessage = "TX81Z Voice Bank I fetch failed: \(error)"
+            }
+
+            progressPanel.dismiss()
+            isFetchingFromDevice = false
+        }
+        await operationTask?.value
+    }
+
+    private func fetchTX81ZFactoryVoiceBank(bank: Int) async {
+        guard (2...5).contains(bank), !isBusy else { return }
+        let bankTitle = voiceBankTitle(device: .tx81z, bank: bank)
+        let shortName = [2: "A", 3: "B", 4: "C", 5: "D"][bank] ?? "?"
+
+        let alert = NSAlert()
+        alert.messageText = "Fetch TX81Z Bank \(shortName)"
+        alert.informativeText = "Set the TX81Z to PLAY SINGLE, Bank \(shortName), Voice 1, then click Continue. Forest will capture all 32 voices and advance through the bank remotely."
+        alert.addButton(withTitle: "Continue")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let sourceIndex = selectedSourceIndex(for: .tx81z)
+        let destinationIndex = selectedDestinationIndex(for: .tx81z)
+        let sourceName = selectedSourceName(for: .tx81z)
+        let destinationName = selectedDestinationName(for: .tx81z)
+        let channel = systemChannel
+        isFetchingFromDevice = true
+        deviceCacheStatus = "Fetching \(bankTitle)..."
+        statusMessage = "Capturing \(bankTitle) from \(sourceName) -> \(destinationName)..."
+        errorMessage = nil
+
+        let progressPanel = EditorProgressPanel(
+            title: "Fetching \(bankTitle)",
+            message: "Capturing 32 TX81Z voices. Please wait.",
+            showsCancelButton: true
+        )
+        var operationTask: Task<Void, Never>?
+        progressPanel.onCancel = {
+            operationTask?.cancel()
+        }
+        progressPanel.show()
+
+        operationTask = Task {
+            do {
+                let captured = try await Task.detached(priority: .userInitiated) {
+                    try TX81ZModuleServices.shared.voiceService.captureSelectedFactoryVoiceBank(
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        channel: channel,
+                        shouldCancel: { Task.isCancelled }
+                    )
+                }.value
+                try Task.checkCancellation()
+                cachedTX81ZVoiceBanks[bank] = captured
+                voiceBankSelectorRevision += 1
+                deviceCacheStatus = "Loaded \(bankTitle)"
+                statusMessage = "Captured \(bankTitle) from \(sourceName) -> \(destinationName)."
+            } catch is CancellationError {
+                deviceCacheStatus = "\(bankTitle) fetch canceled"
+                statusMessage = nil
+                errorMessage = nil
+            } catch {
+                deviceCacheStatus = "\(bankTitle) fetch failed"
+                statusMessage = nil
+                errorMessage = "\(bankTitle) fetch failed: \(error)"
+            }
+            progressPanel.dismiss()
+            isFetchingFromDevice = false
+        }
+        await operationTask?.value
     }
 
     private func fetchDX100SelectorCache(bank: Int) async {
@@ -2962,6 +3349,8 @@ final class DocumentModel: ObservableObject {
             item = RecentVoiceFetch(device: selectedEditorDevice, kind: .voiceRAM1, instrument: nil, bank: nil, voiceNumber: voiceNumber, title: title)
         case .dx100Bank(let bank, let voiceNumber):
             item = RecentVoiceFetch(device: selectedEditorDevice, kind: .dx100Bank, instrument: nil, bank: bank, voiceNumber: voiceNumber, title: title)
+        case .tx81zVoiceBank(let bank, let voiceNumber):
+            item = RecentVoiceFetch(device: selectedEditorDevice, kind: .tx81zVoiceBank, instrument: nil, bank: bank, voiceNumber: voiceNumber, title: title)
         }
         recentFetchedVoices = addingRecentEditorItem(item, to: recentFetchedVoices)
         saveRecentEditorItems(recentFetchedVoices, forKey: DefaultsKey.recentFetchedVoices)
@@ -3007,6 +3396,11 @@ final class DocumentModel: ObservableObject {
     }
 
     func setMemoryProtect(_ enabled: Bool) {
+        guard selectedEditorDevice == .fb01 else {
+            errorMessage = "Memory Protect control is not available for \(selectedEditorDevice?.displayName ?? "the selected device") yet."
+            statusMessage = nil
+            return
+        }
         systemMemoryProtectEnabled = enabled
         do {
             sendMIDI(
@@ -3020,7 +3414,37 @@ final class DocumentModel: ObservableObject {
         }
     }
 
+    func setTX81ZMemoryProtect(_ enabled: Bool) {
+        guard selectedEditorDevice == .tx81z else {
+            errorMessage = "TX81Z Memory Protect control is only available while TX81Z is selected."
+            statusMessage = nil
+            return
+        }
+        tx81zMemoryProtectEnabled = enabled
+        UserDefaults.standard.set(enabled, forKey: DefaultsKey.tx81zMemoryProtect)
+        do {
+            sendMIDI(
+                [try TX81Z.memoryProtectMessage(channel: systemChannel, enabled: enabled)],
+                delayBetweenMessages: 0,
+                statusMessage: "Set TX81Z Memory Protect \(enabled ? "ON" : "OFF") on \(selectedDestinationName(for: .tx81z))."
+            )
+        } catch {
+            errorMessage = "Set TX81Z Memory Protect failed: \(error)"
+            statusMessage = nil
+        }
+    }
+
+    func noteTX81ZMemoryProtectResetAfterBulkReceive() {
+        tx81zMemoryProtectEnabled = true
+        UserDefaults.standard.set(true, forKey: DefaultsKey.tx81zMemoryProtect)
+    }
+
     func setMasterOutputLevel(_ level: Int) {
+        guard selectedEditorDevice == .fb01 else {
+            errorMessage = "Master Output control is FB-01 only."
+            statusMessage = nil
+            return
+        }
         let bounded = min(max(level, 0), 127)
         systemMasterOutputLevel = bounded
         do {
@@ -3037,6 +3461,11 @@ final class DocumentModel: ObservableObject {
 
     func requestUnitID() {
         guard !isBusy else { return }
+        guard selectedEditorDevice == .fb01 else {
+            errorMessage = "Unit ID request is FB-01 only."
+            statusMessage = nil
+            return
+        }
 
         let sourceIndex = selectedSourceIndex
         let destinationIndex = selectedDestinationIndex
@@ -3109,7 +3538,7 @@ final class DocumentModel: ObservableObject {
     func liveKeyboardVolumeMessages(value: Int, midiChannel: Int? = nil) throws -> [[UInt8]] {
         let bounded = UInt8(min(max(value, 0), 127))
         switch selectedEditorDevice {
-        case .dx100:
+        case .dx100, .tx81z:
             let channel = UInt8(min(max(midiChannel ?? keyboardChannel, 0), 15))
             return [[0xB0 | channel, 7, bounded]]
         case .fb01, nil:
@@ -3131,7 +3560,7 @@ final class DocumentModel: ObservableObject {
     func liveKeyboardPortamentoMessages(value: Int, systemChannel: Int? = nil, midiChannel: Int? = nil) throws -> [[UInt8]] {
         let bounded = UInt8(min(max(value, 0), 127))
         switch selectedEditorDevice {
-        case .dx100:
+        case .dx100, .tx81z:
             let channel = UInt8(min(max(midiChannel ?? keyboardChannel, 0), 15))
             let portamentoEnabled: UInt8 = bounded == 0 ? 0 : 127
             return [
@@ -4221,6 +4650,38 @@ final class DocumentModel: ObservableObject {
                 progressPanel.dismiss()
                 self.isFetchingFromDevice = false
             }
+        }
+    }
+
+    func saveTX81ZVoiceBankFromSelector(bank: Int) {
+        guard let voiceBank = cachedTX81ZVoiceBanks[bank] else {
+            errorMessage = "Save Bank failed: \(voiceBankTitle(device: .tx81z, bank: bank)) is not loaded yet."
+            statusMessage = nil
+            return
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = UTType.tx81zVoiceBankFileTypes
+        panel.directoryURL = preferredSaveDirectoryURL()
+        panel.nameFieldStringValue = "\(safeFileName(voiceBankTitle(device: .tx81z, bank: bank))).\(TX81ZSynthModule.shared.fileProfile.voiceBankExtension)"
+        panel.message = "Save the displayed TX81Z bank as a voice bank file."
+        panel.prompt = "Save Bank to File"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+
+        do {
+            let bytes = try voiceBank.voiceMemoryBulkSysEx(channel: systemChannel)
+            try Data(bytes).write(to: url, options: .atomic)
+            rememberSaveDirectory(for: url)
+            clearEditedVoiceBankSelection(DeviceVoiceBankWindowSelection(device: .tx81z, bank: bank))
+            statusMessage = "Saved \(voiceBankTitle(device: .tx81z, bank: bank)) to \(url.lastPathComponent)."
+            errorMessage = nil
+        } catch {
+            errorMessage = "Save Bank failed: \(error)"
+            statusMessage = nil
         }
     }
 
@@ -7082,6 +7543,9 @@ extension UTType {
     static let dx100SingleVoice = UTType(filenameExtension: DX100SynthModule.shared.fileProfile.singleVoiceExtension)!
     static let dx100VoiceBank = UTType(filenameExtension: DX100SynthModule.shared.fileProfile.voiceBankExtension)!
     static let dx100GenericSysEx = UTType(filenameExtension: DX100SynthModule.shared.fileProfile.genericSysExExtension)!
+    static let tx81zSingleVoice = UTType(filenameExtension: TX81ZSynthModule.shared.fileProfile.singleVoiceExtension)!
+    static let tx81zVoiceBank = UTType(filenameExtension: TX81ZSynthModule.shared.fileProfile.voiceBankExtension)!
+    static let tx81zGenericSysEx = UTType(filenameExtension: TX81ZSynthModule.shared.fileProfile.genericSysExExtension)!
 
     static var fb01VoiceFileTypes: [UTType] {
         [.fb01SingleVoice, .fb01GenericSysEx]
@@ -7123,6 +7587,18 @@ extension UTType {
         [.dx100VoiceBank, .dx100GenericSysEx]
     }
 
+    static var tx81zVoiceFileTypes: [UTType] {
+        [.tx81zSingleVoice, .tx81zGenericSysEx]
+    }
+
+    static var tx81zVoiceBankFileTypes: [UTType] {
+        [.tx81zVoiceBank, .tx81zGenericSysEx]
+    }
+
+    static var tx81zReadableVoiceFileTypes: [UTType] {
+        [.tx81zSingleVoice, .tx81zGenericSysEx, .sysex, .data]
+    }
+
     static var currentModuleVoiceFileTypes: [UTType] {
         fb01VoiceFileTypes
     }
@@ -7159,6 +7635,8 @@ extension UTType {
         switch device {
         case .dx100:
             dx100VoiceFileTypes
+        case .tx81z:
+            tx81zVoiceFileTypes
         case .fb01, nil:
             fb01VoiceFileTypes
         }
@@ -7170,8 +7648,10 @@ extension UTType {
             dx100ReadableVoiceFileTypes
         case .fb01:
             fb01ReadableVoiceFileTypes
+        case .tx81z:
+            tx81zReadableVoiceFileTypes
         case nil:
-            Array(Set(fb01ReadableVoiceFileTypes + dx100ReadableVoiceFileTypes))
+            Array(Set(fb01ReadableVoiceFileTypes + dx100ReadableVoiceFileTypes + tx81zReadableVoiceFileTypes))
         }
     }
 
@@ -7179,6 +7659,8 @@ extension UTType {
         switch device {
         case .dx100:
             dx100VoiceBankFileTypes
+        case .tx81z:
+            tx81zVoiceBankFileTypes
         case .fb01, nil:
             currentModuleVoiceBankFileTypes
         }

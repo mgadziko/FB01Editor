@@ -2,6 +2,7 @@
 
 Forest Editor is a macOS editor and librarian for Yamaha 4-operator FM
 hardware, with the Yamaha FB-01 and DX100/27 currently in active development.
+TX81Z current-voice support is beginning at the core and command-line layer.
 
 The app is centered on document windows: open, fetch, edit, save, and store
 individual voices and configurations without having to treat a synth as one
@@ -147,6 +148,33 @@ fetch and broader DX automation still remain under hardware investigation.
 For the current breakdown of shared 4-op voice parameters versus FB-01-only and
 DX100/27-only areas, see `Docs/FourOpCapabilityMatrix.md`.
 
+## TX81Z Voice Fetch (Initial)
+
+The first TX81Z implementation deliberately starts with a read-only, real-
+hardware-verified current-voice path. It requests the TX81Z Additional Voice
+Edit Data (ACED) and Voice Edit Data (VCED) blocks together, preserves both
+blocks for round-trip work, and exposes the shared four-operator voice data to
+the module boundary.
+
+The codec can fetch the current voice and the complete, fetch-only 32-voice
+Voice Bank I through `forest-cli`:
+
+```sh
+forest-cli select-device tx81z --source <input-index> --destination <output-index> --channel 1
+forest-cli fetch-current-voice
+forest-cli show-bank i
+```
+
+Forest Main View also includes a TX81Z device choice with its own MIDI route.
+`Voice > Fetch Current Voice from Device...` and `Voice > Show Voice Bank >
+Voice Bank I` open read-only TX81Z documents backed by this verified codec.
+Selecting a Voice Bank I tile selects that program and fetches its complete
+ACED plus VCED pair. These documents support live-keyboard note auditioning
+without sending a lossy edit-buffer rewrite.
+
+TX81Z file load/save, editing, voice store, additional banks, and performance
+documents are intentionally not exposed yet.
+
 ## Files And Document Types
 
 The app supports module-owned document types and Finder icons for:
@@ -199,6 +227,11 @@ swift run dx100-dump list
 swift run dx100-dump current-voice --source 0 --destination 0 --output current.dxv
 swift run dx100-dump voice-bank --source 0 --destination 0 --output current-bank.dxvb
 ```
+
+`forest-cli` provides a small device-oriented path for the supported
+current-voice operations. TX81Z currently supports `select-device tx81z`,
+`fetch-current-voice`, and `show-bank i`; it reads VMEM or ACED plus VCED and
+does not write hardware.
 
 ## Build And Run
 

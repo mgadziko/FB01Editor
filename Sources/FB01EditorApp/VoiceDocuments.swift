@@ -9,6 +9,7 @@ struct LoadedVoiceDocument: Sendable {
     var projectionOverlay: FB01VoiceProjectionOverlay
     var systemChannel: Int
     var sourceDevice: EditorDeviceSelection
+    var tx81zVoice: TX81ZVoiceData? = nil
 }
 
 struct LoadedDX100VoiceBankFile: Sendable {
@@ -340,10 +341,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     @Published var voiceCharacterType: VoiceCharacterType = .other
     @Published var performanceMacroValues = PerformanceMacro.neutralValues
     @Published var layoutRevision = 0
+    @Published private(set) var tx81zVoice: TX81ZVoiceData?
+    @Published private var savedTX81ZVoice: TX81ZVoiceData?
     var fb01BankFileOrigin: FB01BankFileVoiceOrigin?
     var fb01DeviceBankOrigin: FB01DeviceBankVoiceOrigin?
     var dx100BankFileOrigin: DX100BankFileVoiceOrigin?
     var dx100DeviceBankOrigin: DX100DeviceBankVoiceOrigin?
+    var tx81zVoiceBankOrigin: Int?
+    var tx81zVoiceBankOriginBank: Int?
     var suppressAutomaticKeyboardPreparation = false
     private var preparedKeyboardVoiceSignature: String?
     private var preparedKeyboardVoiceDate: Date?
@@ -393,7 +398,15 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     var isEdited: Bool {
-        neutralVoice != savedNeutralVoice
+        neutralVoice != savedNeutralVoice || tx81zVoice != savedTX81ZVoice
+    }
+
+    var isReadOnlyDeviceDocument: Bool {
+        sourceDevice == .tx81z
+    }
+
+    var isTX81ZDocument: Bool {
+        sourceDevice == .tx81z && tx81zVoice != nil
     }
 
     func reset() {
@@ -403,6 +416,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             savedNeutral: savedNeutralVoice,
             savedOverlay: savedProjectionOverlay
         )
+        tx81zVoice = savedTX81ZVoice
         resetPerformanceMacros()
         noteVoiceReplacement()
         errorMessage = nil
@@ -418,6 +432,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             savedNeutral: loadedDocument.neutralVoice,
             savedOverlay: loadedDocument.projectionOverlay
         )
+        tx81zVoice = loadedDocument.tx81zVoice
+        savedTX81ZVoice = loadedDocument.tx81zVoice
         resetPerformanceMacros()
         noteVoiceReplacement()
         errorMessage = nil
@@ -429,9 +445,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     var linkedBankWindowStoreTitle: String? {
-        sourceDevice == .dx100
-            ? "Store Current Voice in Current Bank Document..."
-            : "Store Voice to Open Bank Window (Forest Only)..."
+        switch sourceDevice {
+        case .dx100:
+            return "Store Current Voice in Current Bank Document..."
+        case .fb01:
+            return "Store Voice to Open Bank Window (Forest Only)..."
+        case .tx81z:
+            return nil
+        }
     }
 
     func updateVoice(_ edit: (FB01VoiceData) throws -> FB01VoiceData) {
@@ -453,6 +474,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     func setName(_ value: String) {
+        guard !isReadOnlyDeviceDocument else { return }
         if sourceDevice == .dx100 {
             let limited = String(value.prefix(DX100VoiceData.nameLength))
             guard limited != neutralVoice.name else { return }
@@ -466,6 +488,96 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         guard limited != neutralVoice.name else { return }
         updateNeutral { voice in
             voice.name = limited
+        }
+    }
+
+    func updateTX81ZVoice(_ edit: (TX81ZVoiceData) throws -> TX81ZVoiceData) {
+        guard let tx81zVoice else { return }
+        do {
+            let updated = try edit(tx81zVoice)
+            guard updated != tx81zVoice else { return }
+            self.tx81zVoice = updated
+            neutralVoice = updated.fourOperatorVoice
+            preparedKeyboardVoiceSignature = nil
+            preparedKeyboardVoiceDate = nil
+            errorMessage = nil
+                    statusMessage = "Edited TX81Z voice in Forest. Save it as a .txv file, send it to the edit buffer, or store it in Bank I."
+        } catch {
+            errorMessage = "TX81Z edit failed: \(error)"
+        }
+    }
+
+    func updateTX81ZNeutral(_ edit: (inout FourOperatorVoiceData) -> Void) {
+        guard let tx81zVoice else { return }
+        var updatedNeutral = tx81zVoice.fourOperatorVoice
+        edit(&updatedNeutral)
+        updateTX81ZVoice { try $0.applying(neutralVoice: updatedNeutral) }
+    }
+
+    func updateTX81ZOperatorExtension(
+        number: Int,
+        fixedFrequencyEnabled: Bool? = nil,
+        fixedFrequencyRange: Int? = nil,
+        fineFrequency: Int? = nil,
+        waveform: Int? = nil,
+        envelopeShift: Int? = nil
+    ) {
+        updateTX81ZVoice {
+            try $0.settingOperatorExtension(
+                number: number,
+                fixedFrequencyEnabled: fixedFrequencyEnabled,
+                fixedFrequencyRange: fixedFrequencyRange,
+                fineFrequency: fineFrequency,
+                waveform: waveform,
+                envelopeShift: envelopeShift
+            )
+        }
+    }
+
+    func setTX81ZReverbRate(_ value: Int) {
+        updateTX81ZVoice { try $0.settingReverbRate(value) }
+    }
+
+    func sendTX81ZEditBuffer(to device: DocumentModel) {
+        guard !isBusy else { return }
+        guard sourceDevice == .tx81z,
+              let tx81zVoice else {
+            errorMessage = "TX81Z edit-buffer send is unavailable for this document."
+            statusMessage = nil
+            return
+        }
+        guard device.selectedEditorDevice == .tx81z else {
+            errorMessage = "Select TX81Z before sending this voice to its edit buffer."
+            statusMessage = nil
+            return
+        }
+
+        let destinationIndex = device.selectedDestinationIndex(for: .tx81z)
+        let destinationName = device.selectedDestinationName(for: .tx81z)
+        let channel = device.systemChannel
+        isBusy = true
+        statusMessage = "Sending complete TX81Z ACED + VCED edit-buffer data to \(destinationName)..."
+        errorMessage = nil
+
+        Task { [weak self] in
+            do {
+                let messages = try TX81ZModuleServices.shared.voiceService.editBufferMessages(
+                    for: tx81zVoice,
+                    channel: channel
+                )
+                try await LiveMIDIPlaybackController.shared.sendPreparedMessages(
+                    messages,
+                    destinationIndex: destinationIndex,
+                    settleDelay: 0.15
+                )
+                guard let self else { return }
+                self.statusMessage = "Sent complete TX81Z ACED + VCED data to the edit buffer. Fetch Current Voice from Device to confirm it."
+                self.errorMessage = nil
+            } catch {
+                self?.errorMessage = "TX81Z edit-buffer send failed: \(error)"
+                self?.statusMessage = nil
+            }
+            self?.isBusy = false
         }
     }
 
@@ -491,7 +603,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         save(to: url, voiceNameFromFile: editorDocumentName(
             fromFileURL: url,
-            maxLength: sourceDevice == .dx100 ? DX100VoiceData.nameLength : FB01VoiceData.nameLength,
+            maxLength: sourceDevice == .dx100 || sourceDevice == .tx81z ? DX100VoiceData.nameLength : FB01VoiceData.nameLength,
             fallback: "voice"
         ))
     }
@@ -869,6 +981,76 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return
         }
 
+        if selectedDevice == .tx81z {
+            guard preselectedSource == nil || preselectedSource == .currentVoice || {
+                if case .tx81zVoiceBank = preselectedSource { return true }
+                return false
+            }() else {
+                errorMessage = "TX81Z currently supports fetching its current voice or a captured TX81Z bank voice."
+                statusMessage = nil
+                isBusy = false
+                return
+            }
+
+            let source = preselectedSource ?? .currentVoice
+            let capturedTX81ZVoice: TX81ZVoiceData? = {
+                guard case let .tx81zVoiceBank(bank, voiceNumber) = source,
+                      bank != 1,
+                      let capturedBank = device.tx81zCachedVoiceBank(bank) else {
+                    return nil
+                }
+                return try? capturedBank.voice(at: voiceNumber)
+            }()
+            let fetchTitle = recentTitle ?? source.title()
+            statusMessage = "Fetching \(fetchTitle) on \(systemChannelName)..."
+            let fetchProgressPanel = EditorProgressPanel(
+                title: "Fetching TX81Z Voice",
+                message: "Fetching \(fetchTitle). Please wait."
+            )
+            fetchProgressPanel.show()
+            Task {
+                do {
+                    let result = try await Task.detached(priority: .userInitiated) {
+                        try EditorVoiceDocumentService.fetchVoiceDocument(
+                            for: .tx81z,
+                            source: source,
+                            sourceIndex: sourceIndex,
+                            destinationIndex: destinationIndex,
+                            systemChannel: systemChannel,
+                            documentModel: device,
+                            tx81zCapturedVoice: capturedTX81ZVoice,
+                            recentTitle: recentTitle
+                        )
+                    }.value
+                    applyDocumentState(
+                        workingNeutral: result.neutralVoice,
+                        overlay: result.projectionOverlay,
+                        savedNeutral: result.neutralVoice,
+                        savedOverlay: result.projectionOverlay
+                    )
+                    self.tx81zVoice = result.tx81zVoice
+                    self.savedTX81ZVoice = result.tx81zVoice
+                    resetPerformanceMacros()
+                    self.systemChannel = result.systemChannel
+                    self.sourceDevice = result.sourceDevice
+                    self.updateOrigins(for: source, device: .tx81z, bankTitleProvider: { _ in "" })
+                    fileURL = nil
+                    noteVoiceReplacement()
+                    preparedKeyboardVoiceSignature = nil
+                    let fetchedName = result.neutralVoice.name.isEmpty ? "Untitled" : result.neutralVoice.name
+                    statusMessage = "Fetched \(fetchedName) from \(result.title) into this read-only TX81Z document."
+                    device.rememberRecentFetchedVoice(source, title: result.title)
+                    errorMessage = nil
+                } catch {
+                    errorMessage = "TX81Z fetch failed on \(systemChannelName): \(error)"
+                    statusMessage = nil
+                }
+                fetchProgressPanel.dismiss()
+                isBusy = false
+            }
+            return
+        }
+
         if preselectedSource == nil {
             statusMessage = "Fetching Bank 1 and Bank 2 voice names from FB-01 on \(systemChannelName)..."
         } else {
@@ -1004,6 +1186,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     func updateNeutral(_ edit: (inout FourOperatorVoiceData) -> Void) {
+        guard !isReadOnlyDeviceDocument else { return }
         var updated = neutralVoice
         edit(&updated)
         guard updated != neutralVoice else { return }
@@ -1085,6 +1268,15 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     func storeToDevice(device: DocumentModel) {
         guard !isBusy else { return }
+        if sourceDevice == .tx81z {
+            storeTX81ZVoiceToBankI(device: device)
+            return
+        }
+        guard !isReadOnlyDeviceDocument else {
+            errorMessage = "TX81Z voice storage is not available yet."
+            statusMessage = nil
+            return
+        }
         cancelKeyboardVoicePreparation()
         cancelDX100LiveResend()
         let voiceToStore = voice
@@ -1576,6 +1768,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 statusMessage = nil
                 errorMessage = "Store to bank window failed: \(error)"
             }
+        case .tx81z:
+            return
         }
     }
 
@@ -1904,7 +2098,11 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         }
     }
 
-    func scheduleKeyboardVoicePreparation(device: DocumentModel, delayNanoseconds: UInt64 = 0) {
+    func scheduleKeyboardVoicePreparation(
+        device: DocumentModel,
+        delayNanoseconds: UInt64 = 0,
+        force: Bool = false
+    ) {
         keyboardPreparationTask?.cancel()
         guard !suppressAutomaticKeyboardPreparation else {
             return
@@ -1919,7 +2117,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
         do {
             let signature = keyboardPreparationSignature(midiChannel: channel, portamento: device.externalKeyboardPortamento)
-            guard needsKeyboardPreparation(signature: signature) || !device.isAuditionBufferPrepared(signature: signature) else {
+            guard force || needsKeyboardPreparation(signature: signature) || !device.isAuditionBufferPrepared(signature: signature) else {
                 return
             }
 
@@ -2108,6 +2306,18 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     private func save(to url: URL, voiceNameFromFile: String? = nil) {
         do {
+            if sourceDevice == .tx81z, let tx81zVoice {
+                let messages = try tx81zVoice.bulkMessages(channel: systemChannel)
+                try Data(messages.flatMap { $0 }).write(to: url, options: .atomic)
+                savedTX81ZVoice = tx81zVoice
+                savedNeutralVoice = tx81zVoice.fourOperatorVoice
+                fileURL = url
+                rememberEditorSaveDirectory(for: url)
+                statusMessage = "Saved (url.lastPathComponent)."
+                errorMessage = nil
+                return
+            }
+
             let savedPayload: FB01VoiceData
             let savedNeutral: FourOperatorVoiceData
 
@@ -2173,6 +2383,25 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             )
         }
 
+        if sourceDevice == .tx81z {
+            let auditionMessages: [[UInt8]]
+            if tx81zVoiceBankOriginBank == 1, let slot = tx81zVoiceBankOrigin {
+                auditionMessages = [[0xC0 | UInt8(systemChannel), UInt8(slot)]]
+            } else if let tx81zVoice {
+                auditionMessages = try TX81ZModuleServices.shared.voiceService.editBufferMessages(
+                    for: tx81zVoice,
+                    channel: systemChannel
+                )
+            } else {
+                auditionMessages = []
+            }
+            return auditionMessages + (try device.liveKeyboardPortamentoMessages(
+                value: device.externalKeyboardPortamento,
+                systemChannel: systemChannel,
+                midiChannel: midiChannel
+            ))
+        }
+
         return try FB01VoiceDocumentService.auditionPreparationMessages(
             voice: voice,
             systemChannel: systemChannel,
@@ -2185,7 +2414,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     }
 
     private func keyboardPreparationSignature(midiChannel: Int, portamento: Int) -> String {
-        "\(systemChannel)-\(midiChannel)-\(voice.bytes)-portamento-\(portamento)"
+        let txBytes = (try? tx81zVoice?.bulkMessages(channel: systemChannel).flatMap { $0 }) ?? []
+        return "\(systemChannel)-\(midiChannel)-\(voice.bytes)-tx81z-\(txBytes)-bank-\(tx81zVoiceBankOriginBank ?? -1)-\(tx81zVoiceBankOrigin ?? -1)-portamento-\(portamento)"
     }
 
     private func isAuditionCompatible(with device: DocumentModel) -> Bool {
@@ -2207,6 +2437,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return DX100SynthModule.shared.fileProfile.singleVoiceExtension
         case .fb01:
             return FB01SynthModule.shared.fileProfile.singleVoiceExtension
+        case .tx81z:
+            return TX81ZSynthModule.shared.fileProfile.singleVoiceExtension
         }
     }
 
@@ -2242,6 +2474,8 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         case .fb01:
             dx100DeviceBankOrigin = nil
             dx100BankFileOrigin = nil
+            tx81zVoiceBankOrigin = nil
+            tx81zVoiceBankOriginBank = nil
             fb01BankFileOrigin = nil
             switch source {
             case let .storedSlot(location, voiceNumber):
@@ -2255,12 +2489,14 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 case .voiceRAM1:
                     fb01DeviceBankOrigin = nil
                 }
-            case .currentVoice, .instrument, .dx100Bank:
+            case .currentVoice, .instrument, .dx100Bank, .tx81zVoiceBank:
                 fb01DeviceBankOrigin = nil
             }
         case .dx100:
             fb01DeviceBankOrigin = nil
             fb01BankFileOrigin = nil
+            tx81zVoiceBankOrigin = nil
+            tx81zVoiceBankOriginBank = nil
             switch source {
             case let .dx100Bank(bank, voiceNumber):
                 dx100DeviceBankOrigin = DX100DeviceBankVoiceOrigin(
@@ -2268,8 +2504,20 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                     slotIndex: voiceNumber,
                     bankTitle: bankTitleProvider(bank)
                 )
-            case .storedSlot, .currentVoice, .instrument:
+            case .storedSlot, .currentVoice, .instrument, .tx81zVoiceBank:
                 dx100DeviceBankOrigin = nil
+            }
+        case .tx81z:
+            fb01DeviceBankOrigin = nil
+            fb01BankFileOrigin = nil
+            dx100DeviceBankOrigin = nil
+            dx100BankFileOrigin = nil
+            if case let .tx81zVoiceBank(bank, voiceNumber) = source {
+                tx81zVoiceBankOrigin = voiceNumber
+                tx81zVoiceBankOriginBank = bank
+            } else {
+                tx81zVoiceBankOrigin = nil
+                tx81zVoiceBankOriginBank = nil
             }
         }
     }
@@ -2285,6 +2533,15 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         let extensionHint = url.pathExtension.lowercased()
         let dxExtensions = Set(DX100SynthModule.shared.fileProfile.importExtensions.map { $0.lowercased() })
         let fbExtensions = Set(FB01SynthModule.shared.fileProfile.importExtensions.map { $0.lowercased() })
+        let txExtensions = Set(TX81ZSynthModule.shared.fileProfile.importExtensions.map { $0.lowercased() })
+
+        if txExtensions.contains(extensionHint), extensionHint != "syx" {
+            do {
+                return try readTX81ZVoiceDocument(from: url)
+            } catch {
+                throw FB01AppError.message("This file appears to be a TX81Z voice file, but it could not be read: " + String(describing: error))
+            }
+        }
 
         if dxExtensions.contains(extensionHint), extensionHint != "syx" {
             do {
@@ -2302,6 +2559,10 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             }
         }
 
+        if let loaded = try? readTX81ZVoiceDocument(from: url) {
+            return loaded
+        }
+
         if let loaded = try? readDX100VoiceDocument(from: url, context: context, extensionHint: extensionHint) {
             return loaded
         }
@@ -2310,7 +2571,20 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             return loaded
         }
 
-        throw FB01AppError.message("The file does not contain a readable FB-01 or DX100 voice.")
+        throw FB01AppError.message("The file does not contain a readable FB-01, DX100, or TX81Z voice.")
+    }
+
+    private static func readTX81ZVoiceDocument(from url: URL) throws -> LoadedVoiceDocument {
+        let bytes = [UInt8](try Data(contentsOf: url))
+        let voice = try TX81ZVoiceData(messages: TX81Z.splitSysExMessages(from: bytes))
+        let projected = try EditorVoiceProjectionBridge.loadedDocument(from: voice.voiceEdit, channel: voice.channel)
+        return LoadedVoiceDocument(
+            neutralVoice: voice.fourOperatorVoice,
+            projectionOverlay: projected.projectionOverlay,
+            systemChannel: voice.channel,
+            sourceDevice: .tx81z,
+            tx81zVoice: voice
+        )
     }
 
     private static func readFB01VoiceDocument(from url: URL) throws -> LoadedVoiceDocument {
@@ -2664,6 +2938,97 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
 
     private func shouldOfferDX100ManualInternalDumpFallback(device: DocumentModel) -> Bool {
         device.selectedEditorDevice == .dx100
+    }
+
+    private func storeTX81ZVoiceToBankI(device: DocumentModel) {
+        guard sourceDevice == .tx81z, let tx81zVoice else {
+            errorMessage = "TX81Z Bank I storage is unavailable for this document."
+            statusMessage = nil
+            return
+        }
+        guard device.selectedEditorDevice == .tx81z else {
+            errorMessage = "Select TX81Z before storing this voice in Bank I."
+            statusMessage = nil
+            return
+        }
+        guard let target = chooseTX81ZBankIStoreTarget(device: device) else { return }
+
+        let destinationIndex = device.selectedDestinationIndex(for: .tx81z)
+        let destinationName = device.selectedDestinationName(for: .tx81z)
+        let channel = device.systemChannel
+        let voiceName = tx81zVoice.name.isEmpty ? "Untitled Voice" : tx81zVoice.name
+        isBusy = true
+        errorMessage = nil
+        statusMessage = "Preparing TX81Z Bank I slot " + String(target + 1) + " for " + voiceName + "..."
+        let progressPanel = EditorProgressPanel(
+            title: "Store Voice",
+            message: "Fetching TX81Z Bank I before updating slot " + String(target + 1) + "..."
+        )
+        progressPanel.show()
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let bank = try await device.fetchTX81ZVoiceMemoryBankForOperation()
+                let updatedBank = try bank.replacingVoice(at: target, with: tx81zVoice)
+                progressPanel.update(message: "Writing " + voiceName + " to TX81Z Bank I slot " + String(target + 1) + "...")
+                let messages = try TX81ZModuleServices.shared.voiceService.voiceMemoryBankStoreMessages(
+                    for: updatedBank,
+                    channel: channel
+                )
+                guard let message = messages.first else {
+                    throw FB01AppError.message("Forest could not build a TX81Z Bank I store message.")
+                }
+                try await Task.detached(priority: .userInitiated) {
+                    try FB01MIDI.sendLongSysEx(message, destinationIndex: destinationIndex, timeout: 45)
+                }.value
+                device.noteTX81ZMemoryProtectResetAfterBulkReceive()
+                try await Task.sleep(nanoseconds: 500_000_000)
+
+                progressPanel.update(message: "Verifying TX81Z Bank I slot " + String(target + 1) + "...")
+                let verifiedBank = try await device.fetchTX81ZVoiceMemoryBankForOperation()
+                guard try verifiedBank.voice(at: target) == tx81zVoice else {
+                    throw FB01AppError.message("TX81Z Bank I slot " + String(target + 1) + " did not match the stored voice after verification.")
+                }
+
+                device.cacheTX81ZVoiceMemoryBank(verifiedBank)
+                tx81zVoiceBankOrigin = target
+                tx81zVoiceBankOriginBank = 1
+                savedTX81ZVoice = tx81zVoice
+                savedNeutralVoice = tx81zVoice.fourOperatorVoice
+                statusMessage = "Stored " + voiceName + " in TX81Z Bank I slot " + String(target + 1) + " on " + destinationName + "."
+                errorMessage = nil
+            } catch {
+                errorMessage = "TX81Z Bank I store failed: " + String(describing: error)
+                statusMessage = nil
+            }
+            progressPanel.dismiss()
+            isBusy = false
+        }
+    }
+
+    @MainActor
+    private func chooseTX81ZBankIStoreTarget(device: DocumentModel) -> Int? {
+        let alert = NSAlert()
+        alert.messageText = "Store Voice to TX81Z Bank I Slot"
+        alert.informativeText = "Choose a Bank I slot for " + displayName + ". Forest will fetch the current 32-voice Bank I image, replace only this slot, write the rebuilt bank to the TX81Z, and verify the result."
+        alert.addButton(withTitle: "Store")
+        alert.addButton(withTitle: "Cancel")
+        alert.alertStyle = .warning
+
+        let slotPopup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 420, height: 26), pullsDown: false)
+        for slot in 0..<TX81ZVoiceBankData.voiceCount {
+            let number = String(slot + 1)
+            let name = device.cachedTX81ZVoiceName(slotIndex: slot) ?? "Voice " + number
+            slotPopup.addItem(withTitle: number + " " + name)
+        }
+        if let tx81zVoiceBankOrigin {
+            slotPopup.selectItem(at: tx81zVoiceBankOrigin)
+        }
+        alert.accessoryView = labelledEditorPopup(label: "Bank I slot:", popup: slotPopup)
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        return slotPopup.indexOfSelectedItem
     }
 
 }

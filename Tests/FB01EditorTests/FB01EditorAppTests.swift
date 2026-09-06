@@ -281,6 +281,53 @@ import UniformTypeIdentifiers
     #expect(UTType.voiceFileTypes(for: .dx100).first?.preferredFilenameExtension == "dxv")
     #expect(UTType.readableVoiceFileTypes(for: .dx100).map(\.preferredFilenameExtension).contains("dxvb"))
     #expect(UTType.readableVoiceFileTypes(for: nil).map(\.preferredFilenameExtension).contains("dxv"))
+    #expect(UTType.voiceFileTypes(for: .tx81z).first?.preferredFilenameExtension == "txv")
+    #expect(UTType.readableVoiceFileTypes(for: .tx81z).map(\.preferredFilenameExtension).contains("txv"))
+}
+
+@MainActor
+@Test func tx81zExposesWritableBankIAndFetchOnlyFactoryBanksInTheVoiceBankMenu() {
+    let model = DocumentModel()
+    model.selectDevice(.tx81z)
+    #expect(model.selectedDeviceVoiceBanks == [1, 2, 3, 4, 5])
+    #expect(model.selectedDeviceWritableVoiceBanks == [1])
+    #expect(model.selectedDeviceVoiceBankTitle(1) == "TX81Z Bank - Voice Bank I")
+    #expect(model.selectedDeviceVoiceBankTitle(2) == "TX81Z Bank - Bank A")
+    #expect(model.selectedDeviceVoiceBankTitle(5) == "TX81Z Bank - Bank D")
+}
+
+@MainActor
+@Test func tx81zVoiceFilesLoadCompleteACEDAndVCEDDocuments() throws {
+    var vcedBytes = Array(repeating: UInt8(0), count: DX100VoiceData.byteCount)
+    vcedBytes[3] = 1
+    vcedBytes[16] = 1
+    vcedBytes[29] = 1
+    vcedBytes[42] = 1
+    vcedBytes.replaceSubrange(77..<87, with: Array("TX File   ".utf8))
+    let vced = try DX100VoiceData(bytes: vcedBytes)
+
+    var acedBytes = Array(repeating: UInt8(0), count: TX81ZAdditionalVoiceData.byteCount)
+    acedBytes[0] = 1
+    acedBytes[3] = 7
+    acedBytes[20] = 4
+    let aced = try TX81ZAdditionalVoiceData(bytes: acedBytes)
+    let txVoice = try TX81ZVoiceData(voiceEdit: vced, additionalVoice: aced, channel: 2)
+
+    let tempDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDirectory) }
+    let url = tempDirectory.appendingPathComponent("TX File.txv")
+    try Data(try txVoice.bulkMessages(channel: 2).flatMap { $0 }).write(to: url)
+
+    let loaded = try VoiceDocumentModel.readVoiceDocument(from: url)
+    let document = try #require(VoiceDocumentModel.loadFromDisk(url: url))
+    #expect(loaded.sourceDevice == .tx81z)
+    #expect(loaded.systemChannel == 2)
+    #expect(loaded.tx81zVoice == txVoice)
+    #expect(document.sourceDevice == .tx81z)
+    #expect(document.tx81zVoice == txVoice)
+    #expect(document.fileURL == url)
 }
 
 @MainActor

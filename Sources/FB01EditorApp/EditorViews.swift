@@ -161,6 +161,13 @@ struct VoiceSelectorCommands: View {
                              workspace.openDX100VoiceBankFileSelectors.count != 1)
                         )
                     )
+                } else if document.selectedEditorDevice == .tx81z {
+                    Button(document.selectedDeviceVoiceBankTitle(1)) {
+                        if let sourceBank = activeVoiceBankSelector, sourceBank.device == .tx81z {
+                            document.storeTX81ZVoiceBankFromSelector(sourceBank: sourceBank.bank)
+                        }
+                    }
+                    .disabled(document.isBusy || activeVoiceBankSelector?.device != .tx81z)
                 } else {
                     ForEach(document.selectedDeviceWritableVoiceBanks, id: \.self) { targetBank in
                         Button(document.selectedDeviceVoiceBankTitle(targetBank)) {
@@ -191,6 +198,8 @@ struct VoiceSelectorCommands: View {
                     ? (((activeVoiceBankSelector == nil || activeVoiceBankSelector?.device != .dx100) &&
                         activeDX100VoiceBankFileSelector == nil &&
                         workspace.openDX100VoiceBankFileSelectors.count != 1))
+                    : document.selectedEditorDevice == .tx81z
+                        ? activeVoiceBankSelector?.device != .tx81z
                     : (activeVoiceBankSelector == nil &&
                        activeFB01VoiceBankFileSelector == nil &&
                        workspace.openFB01VoiceBankFileSelectors.count != 1))
@@ -276,6 +285,8 @@ struct VoiceBankSelectorWindow: View {
             guard !isLoading else { return }
             if selection.device == .dx100 {
                 items = document.dx100VoiceBankSelectorItems(bank: bank, device: selection.device)
+            } else if selection.device == .tx81z {
+                items = document.tx81zVoiceBankSelectorItems(bank: bank)
             } else {
                 items = document.voiceBankSelectorItems(bank: bank)
             }
@@ -383,6 +394,8 @@ struct VoiceBankSelectorWindow: View {
             return selection.bank == 1 ? "Writable Bank" : "Fetch Only"
         case .fb01:
             return EditorSynthModule.module.isWritableVoiceBank(selection.bank) ? "Writable Bank" : "Fetch Only"
+        case .tx81z:
+            return TX81ZModuleServices.shared.module.writableVoiceBanks.contains(selection.bank) ? "Writable Bank" : "Fetch Only"
         }
     }
 
@@ -392,6 +405,8 @@ struct VoiceBankSelectorWindow: View {
             return selection.bank == 1 ? .green : .blue
         case .fb01:
             return EditorSynthModule.module.isWritableVoiceBank(selection.bank) ? .green : .blue
+        case .tx81z:
+            return TX81ZModuleServices.shared.module.writableVoiceBanks.contains(selection.bank) ? .green : .blue
         }
     }
 
@@ -798,7 +813,7 @@ struct ConfigurationSelectorWindow: View {
     }
 }
 
-private struct SelectorWindowLayout<Content: View>: View {
+struct SelectorWindowLayout<Content: View>: View {
     var title: String
     var subtitle: String
     var isLoading: Bool
@@ -862,7 +877,7 @@ private struct SelectorWindowLayout<Content: View>: View {
     }
 }
 
-private struct SelectorGridButton: View {
+struct SelectorGridButton: View {
     enum InteractionStyle {
         case button
         case gesture
@@ -921,7 +936,7 @@ private struct SelectorGridButton: View {
     }
 }
 
-private func selectorGrid<Item: Identifiable, ButtonView: View>(
+func selectorGrid<Item: Identifiable, ButtonView: View>(
     items: [Item],
     layout: SynthSelectorGridLayout,
     @ViewBuilder button: @escaping (Item) -> ButtonView
@@ -950,7 +965,7 @@ private func columnItems<Item>(
     return Array(items[start..<end])
 }
 
-private struct WindowIdentifierSetter: NSViewRepresentable {
+struct WindowIdentifierSetter: NSViewRepresentable {
     var identifier: String
     var title: String?
 
@@ -1824,6 +1839,7 @@ struct GlobalStatusView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         deviceSelectionRow(.dx100, title: "DX100")
                         deviceSelectionRow(.fb01, title: "FB-01")
+                        deviceSelectionRow(.tx81z, title: "TX81Z")
                     }
                 }
 
@@ -1981,12 +1997,14 @@ struct SystemSettingsView: View {
     }
 
     private var content: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        let usesFB01SystemControls = document.selectedEditorDevice == .fb01
+        let usesTX81ZSystemControls = document.selectedEditorDevice == .tx81z
+        return VStack(alignment: .leading, spacing: 18) {
             if showsSummary {
                 SummaryPanel(rows: [
                     KeyValueRow("Destination", document.selectedDestinationName),
                     KeyValueRow("System Channel", "\(document.systemChannel + 1)"),
-                    KeyValueRow("Protect", document.systemMemoryProtectEnabled ? "On" : "Off"),
+                    KeyValueRow("Protect", usesTX81ZSystemControls ? (document.tx81zMemoryProtectEnabled ? "On" : "Off") : (document.systemMemoryProtectEnabled ? "On" : "Off")),
                     KeyValueRow("Master Output", "\(document.systemMasterOutputLevel)"),
                 ])
             }
@@ -2004,7 +2022,7 @@ struct SystemSettingsView: View {
                     .pickerStyle(.menu)
                     .frame(width: 170)
                     .padding(.top, 4)
-                    .forestHoverHelp("Chooses the FB-01 system channel used for device-level commands.")
+                    .forestHoverHelp("Chooses the MIDI system channel used for device-level commands.")
                 } label: {
                     SectionTitle("System Channel")
                 }
@@ -2012,31 +2030,41 @@ struct SystemSettingsView: View {
 
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
-                        RockerSwitch(label: EditorSynthModule.vocabulary.memoryProtectDisplayName, isOn: Binding(
-                            get: { document.systemMemoryProtectEnabled },
-                            set: { document.setMemoryProtect($0) }
-                        ))
-                        .disabled(document.selectedEditorDevice == .dx100)
-                        .forestHoverHelp(
-                            document.selectedEditorDevice == .dx100
-                            ? "DX100 memory protect is not controlled from Forest yet. Use the synth front panel before permanent stores."
-                            : "Turns FB-01 memory protection on or off. Protect must be off before stored voices or configurations can be written."
-                        )
+                        HStack(alignment: .top, spacing: 16) {
+                            RockerSwitch(label: "FB-01 Memory Protect", isOn: Binding(
+                                get: { document.systemMemoryProtectEnabled },
+                                set: { document.setMemoryProtect($0) }
+                            ), width: 96)
+                            .disabled(!usesFB01SystemControls)
+                            .forestHoverHelp(
+                                usesFB01SystemControls
+                                ? "Turns FB-01 memory protection on or off. Protect must be off before stored voices or configurations can be written."
+                                : "FB-01 Memory Protect is available when FB-01 is selected."
+                            )
+
+                            RockerSwitch(label: "TX81Z Memory Protect", isOn: Binding(
+                                get: { document.tx81zMemoryProtectEnabled },
+                                set: { document.setTX81ZMemoryProtect($0) }
+                            ), width: 96)
+                            .disabled(!usesTX81ZSystemControls)
+                            .forestHoverHelp(
+                                usesTX81ZSystemControls
+                                ? "Turns TX81Z Memory Protect on or off. The TX81Z turns it back on after power-up and after receiving bulk data."
+                                : "TX81Z Memory Protect is available when TX81Z is selected."
+                            )
+                        }
 
                         Text(
-                            document.selectedEditorDevice == .dx100
-                            ? "DX100 memory protect is currently front-panel only. Forest does not change it yet."
-                            : "Protect ON blocks stored voices and configurations. Store operations set Protect OFF before storing."
+                            usesTX81ZSystemControls
+                            ? "Protect ON blocks Bank I writes. The TX81Z turns Protect ON after every bulk receive."
+                            : (usesFB01SystemControls
+                               ? "Protect ON blocks stored voices and configurations. Store operations set Protect OFF before storing."
+                               : "Select FB-01 or TX81Z to change its Memory Protect setting.")
                         )
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        if document.selectedEditorDevice == .dx100 {
-                            Text("FB-01 only")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                        }
                     }
                     .padding(.top, 4)
                 } label: {
@@ -2061,7 +2089,7 @@ struct SystemSettingsView: View {
                         Label("Send Output Level", systemImage: "speaker.wave.2")
                     }
                     .padding(.top, 10)
-                    .disabled(document.isBusy)
+                    .disabled(document.isBusy || !usesFB01SystemControls)
                     .forestHoverHelp("Sends the current master output level to the FB-01.")
                 } label: {
                     SectionTitle("Master Output")
@@ -2080,7 +2108,7 @@ struct SystemSettingsView: View {
                     } label: {
                         Label("Request Unit ID", systemImage: "info.circle")
                     }
-                    .disabled(document.isBusy)
+                    .disabled(document.isBusy || !usesFB01SystemControls)
                     .forestHoverHelp("Asks the connected FB-01 to identify itself and reports the last response.")
                 }
                 .padding(.top, 4)
@@ -2740,7 +2768,10 @@ struct VoiceDocumentLiveKeyboardView: View {
         .background(WindowActivationObserver(
             onBecomeKey: {
                 registerExternalKeyboardHandler()
-                document.scheduleKeyboardVoicePreparation(device: device)
+                document.scheduleKeyboardVoicePreparation(
+                    device: device,
+                    force: document.sourceDevice == .tx81z
+                )
             },
             onResignKey: {
                 document.cancelKeyboardVoicePreparation()
@@ -2852,6 +2883,127 @@ struct ConfigurationDocumentLiveKeyboardView: View {
     }
 }
 
+struct TX81ZVoiceEditingPanel: View {
+    @ObservedObject var document: VoiceDocumentModel
+    @ObservedObject var device: DocumentModel
+
+    var body: some View {
+        GroupBox("TX81Z Voice") {
+            VStack(alignment: .leading, spacing: 10) {
+                TextField("Name", text: Binding(
+                    get: { document.neutralVoice.name },
+                    set: { value in
+                        document.updateTX81ZNeutral { $0.name = String(value.prefix(DX100VoiceData.nameLength)) }
+                    }
+                ))
+
+                HStack(alignment: .top, spacing: 18) {
+                    ParameterKnob(label: "Algorithm", value: Binding(
+                        get: { document.neutralVoice.algorithm + 1 },
+                        set: { value in document.updateTX81ZAlgorithm(value - 1) }
+                    ), range: 1...8)
+
+                    ParameterKnob(label: "Feedback", value: Binding(
+                        get: { document.neutralVoice.feedback },
+                        set: { value in document.updateTX81ZNeutral { $0.feedback = value } }
+                    ), range: 0...7)
+
+                    ParameterKnob(label: "Reverb Rate", value: Binding(
+                        get: { document.tx81zVoice?.additionalVoice.reverbRate ?? 0 },
+                        set: { document.setTX81ZReverbRate($0) }
+                    ), range: 0...7)
+                }
+
+                ForEach(1...4, id: \.self) { operatorNumber in
+                    let details = operatorDetails(number: operatorNumber)
+                    Divider()
+                    HStack(spacing: 14) {
+                        Text("Operator \(operatorNumber)")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(width: 78, alignment: .leading)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Waveform")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Picker("", selection: Binding(
+                                get: { details.waveform },
+                                set: { document.updateTX81ZOperatorExtension(number: operatorNumber, waveform: $0) }
+                            )) {
+                                ForEach(0..<8, id: \.self) { value in
+                                    Text("W\(value + 1)").tag(value)
+                                }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .frame(width: 92)
+                        }
+                        .forestHoverHelp("TX81Z oscillator waveform. Yamaha identifies these waveforms as W1 through W8.")
+
+                        Toggle("Fixed", isOn: Binding(
+                            get: { details.fixedFrequencyEnabled },
+                            set: { document.updateTX81ZOperatorExtension(number: operatorNumber, fixedFrequencyEnabled: $0) }
+                        ))
+                        .toggleStyle(.switch)
+
+                        Stepper("Range \(details.fixedFrequencyRange)", value: Binding(
+                            get: { details.fixedFrequencyRange },
+                            set: { document.updateTX81ZOperatorExtension(number: operatorNumber, fixedFrequencyRange: $0) }
+                        ), in: 0...7)
+
+                        Stepper("Fine \(details.fineFrequency)", value: Binding(
+                            get: { details.fineFrequency },
+                            set: { document.updateTX81ZOperatorExtension(number: operatorNumber, fineFrequency: $0) }
+                        ), in: 0...15)
+
+                        Picker("EG Shift", selection: Binding(
+                            get: { details.envelopeShift },
+                            set: { document.updateTX81ZOperatorExtension(number: operatorNumber, envelopeShift: $0) }
+                        )) {
+                            Text("0 dB").tag(0)
+                            Text("48 dB").tag(1)
+                            Text("24 dB").tag(2)
+                            Text("12 dB").tag(3)
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 104)
+                    }
+                }
+
+            }
+            .padding(.vertical, 4)
+        }
+        .disabled(document.isBusy)
+    }
+
+    private func operatorDetails(number: Int) -> TX81ZOperatorExtensionData {
+        (try? document.tx81zVoice?.additionalVoice.operator(number: number))
+            ?? TX81ZOperatorExtensionData(
+                operatorNumber: number,
+                fixedFrequencyEnabled: false,
+                fixedFrequencyRange: 0,
+                fineFrequency: 0,
+                waveform: 0,
+                envelopeShift: 0
+            )
+    }
+}
+
+private extension VoiceDocumentModel {
+    func updateTX81ZAlgorithm(_ value: Int) {
+        let algorithm = min(max(value, 0), 7)
+        let carriers = FourOperatorVoiceData.carrierOperatorNumbers(forAlgorithm: algorithm)
+        updateTX81ZNeutral { voice in
+            voice.algorithm = algorithm
+            voice.operators = voice.operators.map { operatorData in
+                var updated = operatorData
+                updated.isCarrier = carriers.contains(updated.operatorNumber)
+                return updated
+            }
+        }
+    }
+}
+
 struct VoiceDocumentWindow: View {
     @ObservedObject var document: VoiceDocumentModel
     @ObservedObject var device: DocumentModel
@@ -2889,6 +3041,17 @@ struct VoiceDocumentWindow: View {
                     KeyValueRow("Feedback", "\(document.neutralVoice.feedback)"),
                 ])
 
+                if document.isReadOnlyDeviceDocument {
+                    Text("TX81Z edits can be saved as .txv files, sent to the volatile edit buffer, or stored in Bank I.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if document.isTX81ZDocument {
+                    TX81ZVoiceEditingPanel(document: document, device: device)
+                }
+
+                Group {
                 if device.voiceEditorParadigm == .consoleSections {
                     VoiceEditorControls(
                         name: Binding(
@@ -3075,6 +3238,8 @@ struct VoiceDocumentWindow: View {
                         }
                     )
                 }
+                }
+                .disabled(document.isReadOnlyDeviceDocument)
 
                 DocumentStatusFooter(errorMessage: document.errorMessage, statusMessage: document.statusMessage, isBusy: document.isBusy)
             }
@@ -3192,6 +3357,8 @@ struct VoiceDocumentWindow: View {
             storeToLinkedBankWindowTitle: document.linkedBankWindowStoreTitle,
             storeToDevice: { device in document.storeToDevice(device: device) },
             storeToDeviceTitle: device.selectedDeviceVoiceStoreCommandTitle,
+            sendToEditBuffer: document.isTX81ZDocument ? { device in document.sendTX81ZEditBuffer(to: device) } : nil,
+            sendToEditBufferTitle: document.isTX81ZDocument ? "Send Voice to TX81Z Edit Buffer" : nil,
             isEdited: document.isEdited,
             isBusy: document.isBusy
         ))

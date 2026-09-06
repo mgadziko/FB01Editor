@@ -7,6 +7,7 @@ struct EditorFetchedVoiceDocument: Sendable {
     var systemChannel: Int
     var title: String
     var sourceDevice: EditorDeviceSelection
+    var tx81zVoice: TX81ZVoiceData? = nil
 }
 
 enum EditorVoiceDocumentService {
@@ -291,6 +292,7 @@ enum EditorVoiceDocumentService {
         destinationIndex: Int,
         systemChannel: Int,
         documentModel _: DocumentModel,
+        tx81zCapturedVoice: TX81ZVoiceData? = nil,
         recentTitle: String? = nil
     ) throws -> EditorFetchedVoiceDocument {
         switch device {
@@ -342,9 +344,48 @@ enum EditorVoiceDocumentService {
                     title: recentTitle ?? "DX100 \(bankTitle) Voice \(voiceNumber + 1): \(voiceName)",
                     sourceDevice: .dx100
                 )
-            case .some(.storedSlot):
+            case .some(.storedSlot), .some(.tx81zVoiceBank):
                 throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.dx100)
             }
+        case .tx81z:
+            let fetched: TX81ZFetchedVoice
+            switch source {
+            case nil, .some(.currentVoice):
+                fetched = try TX81ZModuleServices.shared.voiceService.fetchCurrentVoice(
+                    sourceIndex: sourceIndex,
+                    destinationIndex: destinationIndex,
+                    channel: systemChannel
+                )
+            case .some(.tx81zVoiceBank(let bank, let voiceNumber)):
+                if bank == 1 {
+                    fetched = try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryVoice(
+                        at: voiceNumber,
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        channel: systemChannel
+                    )
+                } else {
+                    guard let capturedVoice = tx81zCapturedVoice else {
+                        throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.tx81z)
+                    }
+                    fetched = TX81ZFetchedVoice(
+                        voice: capturedVoice,
+                        channel: systemChannel,
+                        title: "TX81Z Bank \(bank) Voice \(voiceNumber + 1): \(capturedVoice.name.isEmpty ? "Untitled" : capturedVoice.name)"
+                    )
+                }
+            case .some(.instrument), .some(.storedSlot), .some(.dx100Bank):
+                throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.tx81z)
+            }
+            let loaded = try EditorVoiceProjectionBridge.loadedDocument(from: fetched.voice.voiceEdit, channel: fetched.channel)
+            return EditorFetchedVoiceDocument(
+                neutralVoice: fetched.voice.fourOperatorVoice,
+                projectionOverlay: loaded.projectionOverlay,
+                systemChannel: fetched.channel,
+                title: recentTitle ?? fetched.title,
+                sourceDevice: .tx81z,
+                tx81zVoice: fetched.voice
+            )
         }
     }
 
@@ -369,6 +410,8 @@ enum EditorVoiceDocumentService {
                 maxMessages: 1,
                 delayBetweenMessages: 0.05
             )
+        case .tx81z:
+            throw EditorVoiceDocumentServiceError.unsupportedRecentVoiceFetchForDevice(.tx81z)
         }
     }
 
