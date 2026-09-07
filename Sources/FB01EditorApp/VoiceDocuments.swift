@@ -2962,7 +2962,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
         statusMessage = "Preparing TX81Z Bank I slot " + String(target + 1) + " for " + voiceName + "..."
         let progressPanel = EditorProgressPanel(
             title: "Store Voice",
-            message: "Fetching TX81Z Bank I before updating slot " + String(target + 1) + "..."
+            message: "Fetching and backing up TX81Z Bank I before updating slot " + String(target + 1) + "..."
         )
         progressPanel.show()
 
@@ -2971,19 +2971,24 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
             do {
                 let bank = try await device.fetchTX81ZVoiceMemoryBankForOperation()
                 let updatedBank = try bank.replacingVoice(at: target, with: tx81zVoice)
-                progressPanel.update(message: "Writing " + voiceName + " to TX81Z Bank I slot " + String(target + 1) + "...")
-                let messages = try TX81ZModuleServices.shared.voiceService.voiceMemoryBankStoreMessages(
-                    for: updatedBank,
-                    channel: channel
+                let backupDirectory = try ensureDefaultEditorBackupDirectory()
+                let backupURL = backupDirectory.appendingPathComponent(
+                    "TX81Z-Bank-I-before-voice-\(target + 1)-\(Int(Date().timeIntervalSince1970)).\(TX81ZSynthModule.shared.fileProfile.voiceBankExtension)"
                 )
-                guard let message = messages.first else {
-                    throw FB01AppError.message("Forest could not build a TX81Z Bank I store message.")
-                }
+                let backupBytes = try bank.voiceMemoryBulkSysEx(channel: channel)
                 try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendLongSysEx(message, destinationIndex: destinationIndex, timeout: 45)
+                    try Data(backupBytes).write(to: backupURL, options: .atomic)
                 }.value
-                device.noteTX81ZMemoryProtectResetAfterBulkReceive()
-                try await Task.sleep(nanoseconds: 500_000_000)
+
+                progressPanel.update(message: "Turning TX81Z Memory Protect OFF and writing " + voiceName + " to Bank I slot " + String(target + 1) + "...")
+                try await Task.detached(priority: .userInitiated) {
+                    try TX81ZModuleServices.shared.voiceService.writeVoiceMemoryBank(
+                        updatedBank,
+                        destinationIndex: destinationIndex,
+                        channel: channel
+                    )
+                }.value
+                device.noteTX81ZMemoryProtectDisabledAfterBulkStore()
 
                 progressPanel.update(message: "Verifying TX81Z Bank I slot " + String(target + 1) + "...")
                 let verifiedBank = try await device.fetchTX81ZVoiceMemoryBankForOperation()
@@ -2996,7 +3001,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
                 tx81zVoiceBankOriginBank = 1
                 savedTX81ZVoice = tx81zVoice
                 savedNeutralVoice = tx81zVoice.fourOperatorVoice
-                statusMessage = "Stored " + voiceName + " in TX81Z Bank I slot " + String(target + 1) + " on " + destinationName + "."
+                statusMessage = "Stored and verified " + voiceName + " in TX81Z Bank I slot " + String(target + 1) + " on " + destinationName + ". Backup saved to " + backupURL.lastPathComponent + ". Memory Protect remains OFF after the bulk write."
                 errorMessage = nil
             } catch {
                 errorMessage = "TX81Z Bank I store failed: " + String(describing: error)
@@ -3011,7 +3016,7 @@ final class VoiceDocumentModel: ObservableObject, Identifiable {
     private func chooseTX81ZBankIStoreTarget(device: DocumentModel) -> Int? {
         let alert = NSAlert()
         alert.messageText = "Store Voice to TX81Z Bank I Slot"
-        alert.informativeText = "Choose a Bank I slot for " + displayName + ". Forest will fetch the current 32-voice Bank I image, replace only this slot, write the rebuilt bank to the TX81Z, and verify the result."
+        alert.informativeText = "Choose a Bank I slot for " + displayName + ". Forest will fetch and back up the current 32-voice Bank I image, turn Memory Protect OFF, replace only this slot, write the rebuilt bank, and verify the result."
         alert.addButton(withTitle: "Store")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning

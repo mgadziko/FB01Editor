@@ -37,8 +37,25 @@ struct ActiveEditorDocumentActions {
     var isBusy: Bool
 }
 
+struct ActiveTX81ZPerformanceActions {
+    var save: () -> Void
+    var saveTitle: String
+    var reset: () -> Void
+    var importFromDisk: () -> Void
+    var importFromDiskTitle: String
+    var sendToEditBuffer: () -> Void
+    var storeToDevice: () -> Void
+    var isAvailable: Bool
+    var isEdited: Bool
+    var isBusy: Bool
+}
+
 private struct ActiveEditorDocumentActionsKey: FocusedValueKey {
     typealias Value = ActiveEditorDocumentActions
+}
+
+private struct ActiveTX81ZPerformanceActionsKey: FocusedValueKey {
+    typealias Value = ActiveTX81ZPerformanceActions
 }
 
 private struct ActiveVoiceBankSelectorKey: FocusedValueKey {
@@ -57,6 +74,11 @@ extension FocusedValues {
     var activeEditorDocumentActions: ActiveEditorDocumentActions? {
         get { self[ActiveEditorDocumentActionsKey.self] }
         set { self[ActiveEditorDocumentActionsKey.self] = newValue }
+    }
+
+    var activeTX81ZPerformanceActions: ActiveTX81ZPerformanceActions? {
+        get { self[ActiveTX81ZPerformanceActionsKey.self] }
+        set { self[ActiveTX81ZPerformanceActionsKey.self] = newValue }
     }
 
     var activeVoiceBankSelector: DeviceVoiceBankWindowSelection? {
@@ -90,6 +112,7 @@ struct EditorDocumentCommands: View {
     @ObservedObject var workspace: EditorDocumentWorkspace
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
+    @FocusedValue(\.activeTX81ZPerformanceActions) private var activePerformanceActions
     @FocusedValue(\.activeVoiceBankSelector) private var activeVoiceBankSelector
     @FocusedValue(\.activeDX100VoiceBankFileSelector) private var activeDX100VoiceBankFileSelector
     @FocusedValue(\.activeFB01VoiceBankFileSelector) private var activeFB01VoiceBankFileSelector
@@ -97,6 +120,9 @@ struct EditorDocumentCommands: View {
     private var canSaveFocusedDocumentOrLibrary: Bool {
         if let activeDocumentActions {
             return !activeDocumentActions.isBusy
+        }
+        if let activePerformanceActions {
+            return !activePerformanceActions.isBusy
         }
         return document.hasDocument && !document.isBusy
     }
@@ -109,14 +135,12 @@ struct EditorDocumentCommands: View {
         "Load Voice Bank Document from Voice Bank File..."
     }
 
-    private var selectedDeviceSupportsConfigurations: Bool {
+    private var selectedDeviceSupportsConfigurationFiles: Bool {
         switch document.selectedEditorDevice {
         case .fb01:
             return FB01ModuleServices.shared.module.capabilities.supportsConfigurations
-        case .dx100:
-            return DX100ModuleServices.shared.module.capabilities.supportsConfigurations
-        case .tx81z:
-            return TX81ZModuleServices.shared.module.capabilities.supportsConfigurations
+        case .dx100, .tx81z:
+            return false
         case nil:
             return true
         }
@@ -129,7 +153,7 @@ struct EditorDocumentCommands: View {
         }
         .keyboardShortcut("n", modifiers: .command)
 
-        if selectedDeviceSupportsConfigurations {
+        if selectedDeviceSupportsConfigurationFiles {
             Button("New Configuration Document") {
                 let id = workspace.createConfigurationDocument()
                 openWindow(id: "configuration-document", value: id)
@@ -151,7 +175,7 @@ struct EditorDocumentCommands: View {
         }
         .disabled(!document.canOpenSelectedVoiceAsDocument)
 
-        if selectedDeviceSupportsConfigurations {
+        if selectedDeviceSupportsConfigurationFiles {
             Button("New Configuration Document from Selected Library Configuration") {
                 if let payload = document.selectedConfigurationDocumentPayload() {
                     let id = workspace.createConfigurationDocument(
@@ -239,7 +263,7 @@ struct EditorDocumentCommands: View {
         }
         .disabled(document.isBusy || (activeVoiceBankSelector == nil && activeDX100VoiceBankFileSelector == nil && activeFB01VoiceBankFileSelector == nil))
 
-        if selectedDeviceSupportsConfigurations {
+        if selectedDeviceSupportsConfigurationFiles {
             Divider()
 
             Button("Load Configuration Document from Configuration File...") {
@@ -274,12 +298,27 @@ struct EditorDocumentCommands: View {
             }
         }
 
+        if document.selectedEditorDevice == .tx81z {
+            Divider()
+
+            Button("Load Performance Document from Performance File...") {
+                if let id = workspace.loadTX81ZPerformanceDocument() {
+                    openWindow(id: "tx81z-performance-document", value: id)
+                }
+            }
+            .keyboardShortcut("o", modifiers: [.command, .option, .shift])
+        }
+
         Divider()
 
-        Button(activeDocumentActions?.importFromDiskTitle ?? "Import from File into Current Document...") {
-            activeDocumentActions?.importFromDisk()
+        Button(activeDocumentActions?.importFromDiskTitle ?? activePerformanceActions?.importFromDiskTitle ?? "Import from File into Current Document...") {
+            if let activeDocumentActions {
+                activeDocumentActions.importFromDisk()
+            } else {
+                activePerformanceActions?.importFromDisk()
+            }
         }
-        .disabled(activeDocumentActions == nil || activeDocumentActions?.isBusy == true)
+        .disabled((activeDocumentActions == nil && activePerformanceActions == nil) || activeDocumentActions?.isBusy == true || activePerformanceActions?.isBusy == true)
 
         Button(activeDocumentActions?.importFromLibraryTitle ?? "Import Selected Library Item Into Current Document") {
             activeDocumentActions?.importFromLibrary(document)
@@ -288,9 +327,11 @@ struct EditorDocumentCommands: View {
 
         Divider()
 
-        Button(activeDocumentActions?.saveTitle ?? "Save Library to File...") {
+        Button(activeDocumentActions?.saveTitle ?? activePerformanceActions?.saveTitle ?? "Save Library to File...") {
             if let activeDocumentActions {
                 activeDocumentActions.save()
+            } else if let activePerformanceActions {
+                activePerformanceActions.save()
             } else {
                 document.saveSysEx()
             }
@@ -299,9 +340,13 @@ struct EditorDocumentCommands: View {
         .disabled(!canSaveFocusedDocumentOrLibrary)
 
         Button("Revert Document") {
-            activeDocumentActions?.reset()
+            if let activeDocumentActions {
+                activeDocumentActions.reset()
+            } else {
+                activePerformanceActions?.reset()
+            }
         }
-        .disabled(activeDocumentActions?.isEdited != true || activeDocumentActions?.isBusy == true)
+        .disabled(activeDocumentActions?.isEdited != true && activePerformanceActions?.isEdited != true || activeDocumentActions?.isBusy == true || activePerformanceActions?.isBusy == true)
 
         Divider()
     }
@@ -462,6 +507,7 @@ struct ConfigurationDocumentDeviceCommands: View {
     @ObservedObject var workspace: EditorDocumentWorkspace
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.activeEditorDocumentActions) private var activeDocumentActions
+    @FocusedValue(\.activeTX81ZPerformanceActions) private var activePerformanceActions
 
     var body: some View {
         if document.selectedEditorDevice == .tx81z {
@@ -478,6 +524,18 @@ struct ConfigurationDocumentDeviceCommands: View {
                 }
             }
             .disabled(document.isBusy)
+
+            Divider()
+
+            Button("Send Performance to TX81Z Edit Buffer") {
+                activePerformanceActions?.sendToEditBuffer()
+            }
+            .disabled(activePerformanceActions?.isAvailable != true || activePerformanceActions?.isBusy == true || document.isBusy)
+
+            Button("Store Performance to TX81Z...") {
+                activePerformanceActions?.storeToDevice()
+            }
+            .disabled(activePerformanceActions?.isAvailable != true || activePerformanceActions?.isBusy == true || document.isBusy)
         } else {
             Button("Fetch Configuration from Device...") {
                 let id = workspace.createConfigurationDocument()
@@ -662,6 +720,14 @@ final class EditorDocumentWorkspace: ObservableObject {
             return nil
         }
         insertConfigurationDocument(loaded)
+        return loaded.id
+    }
+
+    func loadTX81ZPerformanceDocument() -> UUID? {
+        guard let loaded = TX81ZPerformanceDocumentModel.loadFromDisk() else {
+            return nil
+        }
+        tx81zPerformanceDocuments[loaded.id] = loaded
         return loaded.id
     }
 

@@ -1,12 +1,13 @@
 import Foundation
 
-/// TX81Z Performance data. PCED is the 120-byte Performance edit buffer;
-/// PMEM is a bank of 32 compact 76-byte Performance records.
+/// TX81Z Performance data. PCED's declared 120-byte data block includes the
+/// ten-byte Yamaha identifier, leaving 110 editable parameter bytes. PMEM is
+/// a bank of 32 compact 76-byte Performance records.
 public struct TX81ZPerformanceData: Equatable, Sendable {
-    public static let editDataLength = 120
+    public static let editDataLength = 110
     public static let memoryDataLength = 76
     public static let nameLength = 10
-    public static let editNameOffset = 110
+    public static let editNameOffset = 100
     public static let memoryNameOffset = 66
 
     public let bytes: [UInt8]
@@ -32,6 +33,37 @@ public struct TX81ZPerformanceData: Equatable, Sendable {
         let offset = isEditBuffer ? Self.editNameOffset : Self.memoryNameOffset
         return String(bytes: bytes[offset..<(offset + Self.nameLength)], encoding: .ascii)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    public func settingName(_ name: String) throws -> TX81ZPerformanceData {
+        guard isEditBuffer else { throw TX81ZSysExError.performanceRequiresEditBuffer }
+        var updated = bytes
+        let encoded = Array(name.uppercased().utf8.prefix(Self.nameLength)).map { min(max($0, 32), 127) }
+        updated.replaceSubrange(
+            Self.editNameOffset..<(Self.editNameOffset + Self.nameLength),
+            with: encoded + Array(repeating: UInt8(ascii: " "), count: Self.nameLength - encoded.count)
+        )
+        return try TX81ZPerformanceData(editBytes: updated)
+    }
+
+    public func settingInstrument(_ number: Int, parameter: Int, value: Int) throws -> TX81ZPerformanceData {
+        guard isEditBuffer else { throw TX81ZSysExError.performanceRequiresEditBuffer }
+        guard (1...8).contains(number), (0...11).contains(parameter), (0...127).contains(value) else {
+            throw TX81ZSysExError.invalidPerformanceParameter
+        }
+        var updated = bytes
+        updated[(number - 1) * 12 + parameter] = UInt8(value)
+        return try TX81ZPerformanceData(editBytes: updated)
+    }
+
+    public func performanceEditBulkSysEx(channel: Int = 0) throws -> [UInt8] {
+        guard isEditBuffer else { throw TX81ZSysExError.performanceRequiresEditBuffer }
+        guard (0...15).contains(channel) else { throw TX81ZSysExError.invalidChannel(channel) }
+        let identifier = TX81Z.performanceEditIdentifier
+        return [TX81Z.start, TX81Z.yamahaID, UInt8(channel), TX81Z.additionalVoiceFormat, 0, 0x78]
+            + identifier
+            + bytes
+            + [TX81Z.performanceChecksum(identifier: identifier, data: bytes), TX81Z.end]
     }
 
     public var instruments: [TX81ZPerformanceInstrument] {
@@ -115,6 +147,8 @@ public struct TX81ZPerformanceBankData: Equatable, Sendable {
 public extension TX81Z {
     static let performanceEditIdentifier = Array("LM  8976PE".utf8)
     static let performanceMemoryIdentifier = Array("LM  8976PM".utf8)
+    static let programChangeTableIdentifier = Array("LM  8976S1".utf8)
+    static let systemSetupIdentifier = Array("LM  8976S0".utf8)
 
     static func requestPerformanceEditData(channel: Int = 0) throws -> [UInt8] {
         guard (0...15).contains(channel) else { throw TX81ZSysExError.invalidChannel(channel) }
@@ -126,6 +160,18 @@ public extension TX81Z {
         guard (0...15).contains(channel) else { throw TX81ZSysExError.invalidChannel(channel) }
         return [start, yamahaID, dumpRequestStatusBase | UInt8(channel), additionalVoiceFormat]
             + performanceMemoryIdentifier + [end]
+    }
+
+    static func requestProgramChangeTable(channel: Int = 0) throws -> [UInt8] {
+        guard (0...15).contains(channel) else { throw TX81ZSysExError.invalidChannel(channel) }
+        return [start, yamahaID, dumpRequestStatusBase | UInt8(channel), additionalVoiceFormat]
+            + programChangeTableIdentifier + [end]
+    }
+
+    static func requestSystemSetup(channel: Int = 0) throws -> [UInt8] {
+        guard (0...15).contains(channel) else { throw TX81ZSysExError.invalidChannel(channel) }
+        return [start, yamahaID, dumpRequestStatusBase | UInt8(channel), additionalVoiceFormat]
+            + systemSetupIdentifier + [end]
     }
 
     static func performanceChecksum(identifier: [UInt8], data: [UInt8]) -> UInt8 {

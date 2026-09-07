@@ -129,8 +129,16 @@ struct ForestCLI {
             try storeTX81ZBankI(arguments: Array(arguments.dropFirst()))
         case "store-bank-i-slot":
             try storeTX81ZBankISlot(arguments: Array(arguments.dropFirst()))
+        case "fetch-bank-i-slot":
+            try fetchTX81ZBankISlot(arguments: Array(arguments.dropFirst()))
         case "tx81z-data-plus":
             try tx81zDataEntryPlus(arguments: Array(arguments.dropFirst()))
+        case "tx81z-copy-performance":
+            try copyTX81ZPerformance(arguments: Array(arguments.dropFirst()))
+        case "tx81z-memory-protect":
+            try printTX81ZMemoryProtect(arguments: Array(arguments.dropFirst()))
+        case "tx81z-list-performances":
+            try listTX81ZPerformances(arguments: Array(arguments.dropFirst()))
         default:
             throw ForestCLIError.usage("Unknown command '\(command)'. Run `forest-cli help`.")
         }
@@ -150,15 +158,23 @@ struct ForestCLI {
               forest-cli store-internal-slot <1-24>
               forest-cli store-bank-i
               forest-cli store-bank-i-slot <1-32>
+              forest-cli fetch-bank-i-slot <1-32>
               forest-cli tx81z-data-plus
+              forest-cli tx81z-copy-performance <source-1-24> <destination-1-24>
+              forest-cli tx81z-memory-protect
+              forest-cli tx81z-list-performances
 
             Notes:
               - This first CLI slice is optimized for high-value current-voice, DX100 Internal-bank, and TX81Z Bank I workflows.
               - `fetch-current-voice` caches the fetched voice in tmp/forest-cli-state.json.
               - `store-internal-slot` stores the cached DX100 voice into the selected Internal slot.
-              - `store-bank-i` rewrites the current TX81Z Bank I image and verifies it by refetching Bank I.
-              - `store-bank-i-slot` stores the cached TX81Z current voice in a chosen Bank I slot and verifies that slot.
+              - `store-bank-i` saves a timestamped backup, turns TX81Z Memory Protect OFF, rewrites Bank I, and verifies it by refetching.
+              - `store-bank-i-slot` saves a timestamped backup, turns TX81Z Memory Protect OFF, stores the cached voice in Bank I, and verifies that slot.
+              - `fetch-bank-i-slot` selects one Bank I voice, fetches its complete ACED + VCED data, and caches it for a later slot store.
               - `tx81z-data-plus` presses the TX81Z's documented remote DATA ENTRY + switch once.
+              - `tx81z-copy-performance` copies one stored TX81Z Performance into another slot and verifies the result.
+              - `tx81z-memory-protect` reads the TX81Z System Setup MLOCK state.
+              - `tx81z-list-performances` reads and lists all 32 PMEM Performance names.
             """
         )
     }
@@ -369,17 +385,15 @@ struct ForestCLI {
             channel: state.systemChannel,
             timeout: 12
         )
-        let messages = try TX81ZModuleServices.shared.voiceService.voiceMemoryBankStoreMessages(
-            for: bank,
+        let backupURL = try saveTX81ZBankIBackup(bank, channel: state.systemChannel)
+        print("Backup saved to \(backupURL.path).")
+
+        print("Turning TX81Z Memory Protect OFF and writing the unchanged Bank I image...")
+        try TX81ZModuleServices.shared.voiceService.writeVoiceMemoryBank(
+            bank,
+            destinationIndex: state.destinationIndex,
             channel: state.systemChannel
         )
-        guard let message = messages.first else {
-            throw ForestCLIError.stateMissing("Forest could not build a TX81Z Bank I store message.")
-        }
-
-        print("Writing the unchanged TX81Z Bank I image...")
-        try FB01MIDI.sendLongSysEx(message, destinationIndex: state.destinationIndex, timeout: 45)
-        Thread.sleep(forTimeInterval: 1.0)
 
         print("Refetching TX81Z Bank I for verification...")
         let verified = try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
@@ -391,7 +405,7 @@ struct ForestCLI {
         guard verified == bank else {
             throw ForestCLIError.stateMissing("TX81Z Bank I verification mismatch after store.")
         }
-        print("Stored and verified TX81Z Bank I (unchanged image).")
+        print("Stored and verified TX81Z Bank I (unchanged image). Memory Protect remains OFF after the bulk write.")
     }
 
     private func storeTX81ZBankISlot(arguments: [String]) throws {
@@ -418,17 +432,15 @@ struct ForestCLI {
             timeout: 12
         )
         let updatedBank = try bank.replacingVoice(at: slotNumber - 1, with: voice)
-        let messages = try TX81ZModuleServices.shared.voiceService.voiceMemoryBankStoreMessages(
-            for: updatedBank,
+        let backupURL = try saveTX81ZBankIBackup(bank, channel: state.systemChannel)
+        print("Backup saved to \(backupURL.path).")
+
+        print("Turning TX81Z Memory Protect OFF and writing Bank I slot " + String(slotNumber) + "...")
+        try TX81ZModuleServices.shared.voiceService.writeVoiceMemoryBank(
+            updatedBank,
+            destinationIndex: state.destinationIndex,
             channel: state.systemChannel
         )
-        guard let message = messages.first else {
-            throw ForestCLIError.stateMissing("Forest could not build a TX81Z Bank I slot store message.")
-        }
-
-        print("Writing TX81Z Bank I slot " + String(slotNumber) + "...")
-        try FB01MIDI.sendLongSysEx(message, destinationIndex: state.destinationIndex, timeout: 45)
-        Thread.sleep(forTimeInterval: 1.0)
 
         print("Verifying TX81Z Bank I slot " + String(slotNumber) + "...")
         let verified = try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
@@ -440,7 +452,33 @@ struct ForestCLI {
         guard try verified.voice(at: slotNumber - 1) == voice else {
             throw ForestCLIError.stateMissing("TX81Z Bank I slot " + String(slotNumber) + " did not match the stored voice after verification.")
         }
-        print("Stored and verified " + cachedVoice.title + " in TX81Z Bank I slot " + String(slotNumber) + ".")
+        print("Stored and verified " + cachedVoice.title + " in TX81Z Bank I slot " + String(slotNumber) + ". Memory Protect remains OFF after the bulk write.")
+    }
+
+    private func fetchTX81ZBankISlot(arguments: [String]) throws {
+        guard arguments.count == 1,
+              let slotNumber = Int(arguments[0]),
+              (1...TX81ZVoiceBankData.voiceCount).contains(slotNumber) else {
+            throw ForestCLIError.usage("Usage: forest-cli fetch-bank-i-slot <1-32>")
+        }
+        var state = try ForestCLIStateStore.load()
+        guard state.selectedDevice == .tx81z else {
+            throw ForestCLIError.unsupported("fetch-bank-i-slot currently supports TX81Z only.")
+        }
+        let fetched = try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryVoice(
+            at: slotNumber - 1,
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel
+        )
+        let title = fetched.voice.name.isEmpty ? "Untitled" : fetched.voice.name
+        state.cachedVoice = ForestCLICachedVoice(
+            device: .tx81z,
+            title: title,
+            sysExBytes: try fetched.voice.bulkMessages(channel: fetched.channel).flatMap { $0 }
+        )
+        try ForestCLIStateStore.save(state)
+        print("Fetched and cached TX81Z Bank I slot \(slotNumber): \(title)")
     }
 
     private func tx81zDataEntryPlus(arguments: [String]) throws {
@@ -457,6 +495,107 @@ struct ForestCLI {
         )
         try FB01MIDI.sendSysEx(messages, destinationIndex: state.destinationIndex, delayBetweenMessages: 0.1)
         print("Sent TX81Z remote DATA ENTRY +.")
+    }
+
+    private func copyTX81ZPerformance(arguments: [String]) throws {
+        guard arguments.count == 2,
+              let sourceNumber = Int(arguments[0]),
+              let destinationNumber = Int(arguments[1]),
+              (1...24).contains(sourceNumber),
+              (1...24).contains(destinationNumber) else {
+            throw ForestCLIError.usage("Usage: forest-cli tx81z-copy-performance <source-1-24> <destination-1-24>")
+        }
+        let state = try ForestCLIStateStore.load()
+        guard state.selectedDevice == .tx81z else {
+            throw ForestCLIError.unsupported("tx81z-copy-performance currently supports TX81Z only.")
+        }
+
+        let service = TX81ZModuleServices.shared.voiceService
+        let source = try service.fetchStoredPerformance(
+            at: sourceNumber - 1,
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel,
+            progress: { fputs("[TX81Z source] \($0)\n", stderr) }
+        )
+        try service.storePerformance(
+            source,
+            at: destinationNumber - 1,
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel,
+            progress: { fputs("[TX81Z store] \($0)\n", stderr) }
+        )
+        let verified = try service.fetchStoredPerformance(
+            at: destinationNumber - 1,
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel
+        )
+        guard verified == source else {
+            throw ForestCLIError.stateMissing(
+                "TX81Z Performance \(destinationNumber) did not match Performance \(sourceNumber) after storage. "
+                    + "Expected '\(source.name)', edit buffer returned '\(verified.name)'."
+            )
+        }
+        let bank = try service.fetchPerformanceMemoryBank(
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel
+        )
+        let bankEntry = bank.performances[destinationNumber - 1]
+        guard bankEntry.name.caseInsensitiveCompare(source.name) == .orderedSame else {
+            throw ForestCLIError.stateMissing("TX81Z PMEM slot \(destinationNumber) contains '\(bankEntry.name)' after storing '\(source.name)'.")
+        }
+        print("Copied and verified TX81Z Performance \(sourceNumber) as Performance \(destinationNumber): \(source.name)")
+    }
+
+    private func printTX81ZMemoryProtect(arguments: [String]) throws {
+        guard arguments.isEmpty else {
+            throw ForestCLIError.usage("Usage: forest-cli tx81z-memory-protect")
+        }
+        let state = try ForestCLIStateStore.load()
+        guard state.selectedDevice == .tx81z else {
+            throw ForestCLIError.unsupported("tx81z-memory-protect currently supports TX81Z only.")
+        }
+        let enabled = try TX81ZModuleServices.shared.voiceService.fetchMemoryProtectEnabled(
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel
+        )
+        print("TX81Z Memory Protect is \(enabled ? "ON" : "OFF").")
+    }
+
+    private func listTX81ZPerformances(arguments: [String]) throws {
+        guard arguments.isEmpty else {
+            throw ForestCLIError.usage("Usage: forest-cli tx81z-list-performances")
+        }
+        let state = try ForestCLIStateStore.load()
+        guard state.selectedDevice == .tx81z else {
+            throw ForestCLIError.unsupported("tx81z-list-performances currently supports TX81Z only.")
+        }
+        let bank = try TX81ZModuleServices.shared.voiceService.fetchPerformanceMemoryBank(
+            sourceIndex: state.sourceIndex,
+            destinationIndex: state.destinationIndex,
+            channel: state.systemChannel
+        )
+        for (offset, performance) in bank.performances.enumerated() {
+            print(String(format: "%2d  %@", offset + 1, performance.name))
+        }
+    }
+
+    private func saveTX81ZBankIBackup(_ bank: TX81ZVoiceBankData, channel: Int) throws -> URL {
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent("Forest Editor", isDirectory: true)
+            .appendingPathComponent("Backups", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let url = directory.appendingPathComponent("TX81Z-Bank-I-before-store-\(formatter.string(from: Date())).txvb")
+        try Data(try bank.voiceMemoryBulkSysEx(channel: channel)).write(to: url, options: .atomic)
+        return url
     }
 
     private func fetchDX100InternalBank(

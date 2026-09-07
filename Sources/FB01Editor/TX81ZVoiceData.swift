@@ -9,6 +9,10 @@ public enum TX81ZSysExError: Error, Equatable, CustomStringConvertible {
     case missingAdditionalVoiceData
     case invalidPerformanceDataLength(expected: Int, actual: Int)
     case invalidPerformanceBulkHeader
+    case performanceRequiresEditBuffer
+    case invalidPerformanceParameter
+    case performanceSelectionFailed(expected: String, actual: String)
+    case factoryVoiceCaptureDidNotAdvance(slot: Int)
     case operatorNumberOutOfRange(Int)
 
     public var description: String {
@@ -29,6 +33,14 @@ public enum TX81ZSysExError: Error, Equatable, CustomStringConvertible {
             "Invalid TX81Z Performance data length: expected \(expected), got \(actual)"
         case .invalidPerformanceBulkHeader:
             "Invalid TX81Z Performance bulk data header"
+        case .performanceRequiresEditBuffer:
+            "This operation requires a TX81Z Performance edit-buffer record."
+        case .invalidPerformanceParameter:
+            "Invalid TX81Z Performance parameter."
+        case let .performanceSelectionFailed(expected, actual):
+            "TX81Z could not select Performance '\(expected)' (currently '\(actual)')."
+        case let .factoryVoiceCaptureDidNotAdvance(slot):
+            "TX81Z factory-bank capture did not advance after Voice \(slot). Confirm PLAY SINGLE and the selected factory bank, then try again."
         case let .operatorNumberOutOfRange(number):
             "TX81Z operator number must be 1...4, got \(number)"
         }
@@ -79,8 +91,8 @@ public enum TX81Z {
         return [start, yamahaID, dumpRequestStatusBase | UInt8(channel), DX100.thirtyTwoVoiceFormat, end]
     }
 
-    /// Sets TX81Z System Setup MLOCK (Memory Protect). The TX resets MLOCK
-    /// to ON after power-up and after receiving any bulk data message.
+    /// Sets TX81Z System Setup MLOCK (Memory Protect). This System Setup
+    /// parameter change enters Single Utility mode.
     public static func memoryProtectMessage(channel: Int = 0, enabled: Bool) throws -> [UInt8] {
         guard (0...15).contains(channel) else {
             throw TX81ZSysExError.invalidChannel(channel)

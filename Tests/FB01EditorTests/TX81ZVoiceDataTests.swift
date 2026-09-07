@@ -71,6 +71,20 @@ private func makeTX81ZACED() throws -> [UInt8] {
     #expect(bank.performances[0].instruments[0].isCompactMemoryRecord)
 }
 
+@Test func tx81zPerformanceEditBufferEditsAndRoundTrips() throws {
+    var bytes = Array(repeating: UInt8(0), count: TX81ZPerformanceData.editDataLength)
+    bytes.replaceSubrange(100..<110, with: Array("OLD NAME  ".utf8))
+    bytes[0] = 8
+    let original = try TX81ZPerformanceData(editBytes: bytes)
+    let edited = try original.settingName("New Setup").settingInstrument(1, parameter: 0, value: 4)
+    let message = try edited.performanceEditBulkSysEx(channel: 2)
+
+    #expect(edited.name == "NEW SETUP")
+    #expect(edited.instruments[0].maximumNotes == 4)
+    #expect(Array(message.prefix(6)) == [0xF0, 0x43, 0x02, 0x7E, 0x00, 0x78])
+    #expect(try TX81ZVoiceService.shared.currentPerformance(from: message) == edited)
+}
+
 @Test func tx81zVoiceMemoryBankParsesAllThirtyTwoNames() throws {
     let first = try makeTX81ZVCED(name: "Bank One")
     let second = try makeTX81ZVCED(name: "Bank Two")
@@ -214,6 +228,16 @@ private func makeTX81ZACED() throws -> [UInt8] {
     #expect(try TX81ZModuleServices.shared.voiceService.remoteSwitchMessages(.dataEntryPlus, channel: 0) == [
         [0xF0, 0x43, 0x10, 0x13, 72, 0x7F, 0xF7],
         [0xF0, 0x43, 0x10, 0x13, 72, 0x00, 0xF7],
+    ])
+    #expect(try TX81ZModuleServices.shared.voiceService.remoteSwitchMessage(.store, pressed: true, channel: 0) ==
+        [0xF0, 0x43, 0x10, 0x13, 65, 0x7F, 0xF7]
+    )
+    #expect(try TX81ZModuleServices.shared.voiceService.performanceModePreparationMessages(channel: 0) == [
+        [0xF0, 0x43, 0x10, 0x12, 63, 0, 0xF7],
+        [0xF0, 0x43, 0x10, 0x13, 68, 0x7F, 0xF7],
+        [0xF0, 0x43, 0x10, 0x13, 68, 0x00, 0xF7],
+        [0xF0, 0x43, 0x10, 0x13, 68, 0x7F, 0xF7],
+        [0xF0, 0x43, 0x10, 0x13, 68, 0x00, 0xF7],
     ])
     #expect(try TX81Z.memoryProtectMessage(channel: 0, enabled: false) == [0xF0, 0x43, 0x10, 0x10, 0x7B, 8, 0, 0xF7])
     #expect(try TX81Z.memoryProtectMessage(channel: 0, enabled: true) == [0xF0, 0x43, 0x10, 0x10, 0x7B, 8, 1, 0xF7])

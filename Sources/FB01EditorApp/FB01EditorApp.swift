@@ -159,7 +159,7 @@ struct FB01EditorApplication: App {
         }
         .defaultSize(width: voiceSelectorLayout.windowWidth, height: voiceSelectorLayout.minimumWindowHeight)
         .windowResizability(.contentSize)
-        WindowGroup("Configuration Bank", id: "configuration-bank-selector") {
+        WindowGroup(document.selectedEditorDevice == .tx81z ? "Performance Bank" : "Configuration Bank", id: "configuration-bank-selector") {
             if document.selectedEditorDevice == .tx81z {
                 TX81ZPerformanceSelectorWindow(document: document, workspace: documentWorkspace)
             } else {
@@ -302,8 +302,14 @@ struct FB01EditorApplication: App {
             }
 
             if document.selectedDeviceShowsConfigurationMenu {
-                CommandMenu("Configuration") {
-                    if document.selectedDeviceSupportsConfigurations {
+                CommandMenu(document.selectedEditorDevice == .tx81z ? "Performance" : "Configuration") {
+                    if document.selectedEditorDevice == .tx81z {
+                        ConfigurationDocumentDeviceCommands(document: document, workspace: documentWorkspace)
+
+                        Divider()
+
+                        ConfigurationSelectorCommands(document: document, workspace: documentWorkspace)
+                    } else if document.selectedDeviceSupportsConfigurations {
                         ConfigurationDocumentDeviceCommands(document: document, workspace: documentWorkspace)
 
                         Divider()
@@ -325,14 +331,18 @@ struct FB01EditorApplication: App {
                         Text(document.selectedEditorDevice == nil ? "Select a device first." : "No configuration commands for \(document.selectedEditorDevice?.displayName ?? "this device").")
                     }
 
-                    if !document.selectedDeviceSupportsConfigurations, document.supportsSelectedDeviceCommand(.refreshDeviceCache) {
+                    if document.selectedEditorDevice != .tx81z,
+                       !document.selectedDeviceSupportsConfigurations,
+                       document.supportsSelectedDeviceCommand(.refreshDeviceCache) {
                         Button(document.selectedDeviceCommandTitle(.refreshDeviceCache, fallback: "Refresh Device Cache")) {
                             EditorModuleCommandRunner.run(.refreshDeviceCache, document: document)
                         }
                         .disabled(document.isBusy)
                     }
 
-                    if document.selectedDeviceSupportsConfigurations, document.voiceEditorParadigm == .consoleSections {
+                    if document.selectedEditorDevice != .tx81z,
+                       document.selectedDeviceSupportsConfigurations,
+                       document.voiceEditorParadigm == .consoleSections {
                         Divider()
 
                         Button(document.selectedDeviceCommandTitle(.sendSelectedConfigurationToEditBuffer, fallback: "Send Selected Configuration to Current Edit Buffer...")) {

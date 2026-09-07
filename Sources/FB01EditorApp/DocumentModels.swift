@@ -658,7 +658,7 @@ final class DocumentModel: ObservableObject {
     }
 
     var selectedDeviceShowsConfigurationMenu: Bool {
-        selectedEditorDevice == .fb01 || selectedEditorDevice == nil
+        selectedEditorDevice == .fb01 || selectedEditorDevice == .tx81z || selectedEditorDevice == nil
     }
 
     var selectedDeviceVoiceBankSelectorLayout: SynthSelectorGridLayout {
@@ -2145,6 +2145,11 @@ final class DocumentModel: ObservableObject {
         cachedTX81ZPerformanceBank
     }
 
+    func cacheTX81ZPerformanceBank(_ bank: TX81ZPerformanceBankData) {
+        cachedTX81ZPerformanceBank = bank
+        configurationSelectorRevision += 1
+    }
+
     func fetchTX81ZCurrentPerformance() async -> TX81ZPerformanceData? {
         guard !isBusy else { return nil }
         let sourceIndex = selectedSourceIndex(for: .tx81z)
@@ -2243,7 +2248,7 @@ final class DocumentModel: ObservableObject {
 
         let alert = NSAlert()
         alert.messageText = "Store TX81Z Bank I"
-        alert.informativeText = "Forest will overwrite all 32 writable Bank I voices on the TX81Z, then refetch Bank I to verify the transfer. Confirm that MEMORY PROTECT is OFF."
+        alert.informativeText = "Forest will save a timestamped backup of the current Bank I, turn Memory Protect OFF, overwrite all 32 writable Bank I voices, then refetch the bank to verify the transfer."
         alert.addButton(withTitle: "Store Bank I")
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
@@ -2265,18 +2270,32 @@ final class DocumentModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let messages = try TX81ZModuleServices.shared.voiceService.voiceMemoryBankStoreMessages(
-                    for: bank,
-                    channel: channel
+                let backupDirectory = try ensureDefaultEditorBackupDirectory()
+                let backupURL = backupDirectory.appendingPathComponent(
+                    "TX81Z-Bank-I-before-store-\(Int(Date().timeIntervalSince1970)).\(TX81ZSynthModule.shared.fileProfile.voiceBankExtension)"
                 )
-                guard let message = messages.first else {
-                    throw FB01AppError.message("Forest could not build a TX81Z Bank I store message.")
-                }
-                try await Task.detached(priority: .userInitiated) {
-                    try FB01MIDI.sendLongSysEx(message, destinationIndex: destinationIndex, timeout: 45)
+                progressPanel.update(message: "Backing up the current TX81Z Bank I before overwrite...")
+                let original = try await Task.detached(priority: .userInitiated) {
+                    try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
+                        sourceIndex: sourceIndex,
+                        destinationIndex: destinationIndex,
+                        channel: channel
+                    )
                 }.value
-                noteTX81ZMemoryProtectResetAfterBulkReceive()
-                try await Task.sleep(nanoseconds: 500_000_000)
+                let backupBytes = try original.voiceMemoryBulkSysEx(channel: channel)
+                try await Task.detached(priority: .userInitiated) {
+                    try Data(backupBytes).write(to: backupURL, options: .atomic)
+                }.value
+
+                progressPanel.update(message: "Turning TX81Z Memory Protect OFF and writing all 32 Bank I voices...")
+                try await Task.detached(priority: .userInitiated) {
+                    try TX81ZModuleServices.shared.voiceService.writeVoiceMemoryBank(
+                        bank,
+                        destinationIndex: destinationIndex,
+                        channel: channel
+                    )
+                }.value
+                noteTX81ZMemoryProtectDisabledAfterBulkStore()
                 progressPanel.update(message: "Refetching TX81Z Bank I to verify the transfer...")
                 let verified = try await Task.detached(priority: .userInitiated) {
                     try TX81ZModuleServices.shared.voiceService.fetchVoiceMemoryBank(
@@ -2289,7 +2308,7 @@ final class DocumentModel: ObservableObject {
                     throw FB01AppError.message("The refetched Bank I did not match the bank Forest sent.")
                 }
                 cacheTX81ZVoiceMemoryBank(verified)
-                statusMessage = "Stored and verified TX81Z Bank I on \(destinationName)."
+                statusMessage = "Stored and verified TX81Z Bank I on \(destinationName). Backup saved to \(backupURL.lastPathComponent). Memory Protect remains OFF after the bulk write."
                 errorMessage = nil
             } catch {
                 errorMessage = "TX81Z Bank I store failed: \(error)"
@@ -2534,7 +2553,14 @@ final class DocumentModel: ObservableObject {
                         sourceIndex: sourceIndex,
                         destinationIndex: destinationIndex,
                         channel: channel,
-                        shouldCancel: { Task.isCancelled }
+                        shouldCancel: { Task.isCancelled },
+                        progress: { slot, voiceName in
+                            Task { @MainActor [weak self] in
+                                let title = voiceName.isEmpty ? "Voice \(slot)" : "Voice \(slot): \(voiceName)"
+                                self?.statusMessage = "Captured \(bankTitle) \(title)."
+                                progressPanel.update(message: "Capturing \(bankTitle).\nCaptured \(slot) of \(TX81ZVoiceBankData.voiceCount): \(voiceName.isEmpty ? "Untitled" : voiceName)")
+                            }
+                        }
                     )
                 }.value
                 try Task.checkCancellation()
@@ -3434,9 +3460,14 @@ final class DocumentModel: ObservableObject {
         }
     }
 
-    func noteTX81ZMemoryProtectResetAfterBulkReceive() {
-        tx81zMemoryProtectEnabled = true
-        UserDefaults.standard.set(true, forKey: DefaultsKey.tx81zMemoryProtect)
+    func noteTX81ZMemoryProtectDisabledAfterBulkStore() {
+        tx81zMemoryProtectEnabled = false
+        UserDefaults.standard.set(false, forKey: DefaultsKey.tx81zMemoryProtect)
+    }
+
+    func noteTX81ZMemoryProtectDisabledForStore() {
+        tx81zMemoryProtectEnabled = false
+        UserDefaults.standard.set(false, forKey: DefaultsKey.tx81zMemoryProtect)
     }
 
     func setMasterOutputLevel(_ level: Int) {
@@ -7544,6 +7575,7 @@ extension UTType {
     static let dx100VoiceBank = UTType(filenameExtension: DX100SynthModule.shared.fileProfile.voiceBankExtension)!
     static let dx100GenericSysEx = UTType(filenameExtension: DX100SynthModule.shared.fileProfile.genericSysExExtension)!
     static let tx81zSingleVoice = UTType(filenameExtension: TX81ZSynthModule.shared.fileProfile.singleVoiceExtension)!
+    static let tx81zPerformance = UTType(filenameExtension: TX81ZSynthModule.shared.fileProfile.singleConfigurationExtension)!
     static let tx81zVoiceBank = UTType(filenameExtension: TX81ZSynthModule.shared.fileProfile.voiceBankExtension)!
     static let tx81zGenericSysEx = UTType(filenameExtension: TX81ZSynthModule.shared.fileProfile.genericSysExExtension)!
 
