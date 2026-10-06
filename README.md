@@ -34,6 +34,7 @@ Forest Editor currently supports:
 - send the current editable voice to the DX100/27 current edit buffer for live audition
 - use a floating live on-screen keyboard and an external MIDI keyboard for auditioning
 - pass through external MIDI performance messages such as notes, modulation, and pitch bend
+- reorder voices in the DX100/27 Internal-bank window by drag and drop
 
 Current DX100/27 limits:
 
@@ -129,6 +130,10 @@ mouse interaction and note auditioning responsive.
 | Configuration support         | Yes                           | No                                        |
 | General MIDI bank install     | Yes                           | No                                        |
 
+TX81Z is intentionally not included in this table because its graphical app
+surface remains read-only. Its separate command-line maintenance workflows are
+described below.
+
 ## Module Boundary
 
 The app shell now talks to module services rather than directly embedding synth
@@ -148,7 +153,7 @@ fetch and broader DX automation still remain under hardware investigation.
 For the current breakdown of shared 4-op voice parameters versus FB-01-only and
 DX100/27-only areas, see `Docs/FourOpCapabilityMatrix.md`.
 
-## TX81Z Voice Fetch (Initial)
+## TX81Z Voice Fetch And Maintenance (Initial)
 
 The first TX81Z implementation deliberately starts with a read-only, real-
 hardware-verified current-voice path. It requests the TX81Z Additional Voice
@@ -172,8 +177,35 @@ Selecting a Voice Bank I tile selects that program and fetches its complete
 ACED plus VCED pair. These documents support live-keyboard note auditioning
 without sending a lossy edit-buffer rewrite.
 
-TX81Z file load/save, editing, voice store, additional banks, and performance
-documents are intentionally not exposed yet.
+The graphical app deliberately remains read-only for TX81Z: file load/save,
+voice editing, voice store, additional voice banks, and Performance documents
+are not exposed in the app UI.
+
+The command-line layer provides a narrow, separately verified set of TX81Z
+maintenance workflows. After selecting the TX81Z MIDI route, `forest-cli` can:
+
+- fetch an exact Voice Bank I slot and cache its full ACED + VCED pair;
+- write that cached voice into a selected Voice Bank I slot;
+- rewrite and verify an entire Voice Bank I image;
+- report the TX81Z Memory Protect state;
+- list all 32 PMEM Performance names; and
+- copy and verify a stored Performance between supported slots 1-24.
+
+For example:
+
+```sh
+forest-cli select-device tx81z --source <input-index> --destination <output-index> --channel 1
+forest-cli fetch-bank-i-slot 12
+forest-cli store-bank-i-slot 12
+forest-cli tx81z-memory-protect
+forest-cli tx81z-list-performances
+forest-cli tx81z-copy-performance 1 2
+```
+
+`store-bank-i` and `store-bank-i-slot` create a timestamped backup, turn TX81Z
+Memory Protect off, and verify the result by refetching. They leave Memory
+Protect off afterward. These are maintenance commands, not an editable TX81Z
+document workflow; confirm the hardware state before and after using them.
 
 ## Files And Document Types
 
@@ -228,10 +260,11 @@ swift run dx100-dump current-voice --source 0 --destination 0 --output current.d
 swift run dx100-dump voice-bank --source 0 --destination 0 --output current-bank.dxvb
 ```
 
-`forest-cli` provides a small device-oriented path for the supported
-current-voice operations. TX81Z currently supports `select-device tx81z`,
-`fetch-current-voice`, and `show-bank i`; it reads VMEM or ACED plus VCED and
-does not write hardware.
+`forest-cli` provides a small device-oriented path for supported current-voice
+and maintenance operations. Alongside the TX81Z read operations described
+above, it can safely copy a stored TX81Z Performance and perform verified
+Voice Bank I writes. These TX81Z write commands are intentionally command-line
+only; they do not make the TX81Z graphical editor writable.
 
 ## Build And Run
 
